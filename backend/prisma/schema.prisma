@@ -1,0 +1,124 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String       @id @default(uuid())
+  email        String       @unique
+  passwordHash String
+  name         String
+  role         UserRole     @default(USER)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  teams        TeamMember[]
+}
+
+model Team {
+  id         String       @id @default(uuid())
+  name       String
+  slug       String       @unique
+  plan       Plan         @default(FREE)
+  createdAt  DateTime     @default(now())
+  members    TeamMember[]
+  sources    LogSource[]
+  alerts     AlertRule[]
+  dashboards Dashboard[]
+}
+
+model TeamMember {
+  id       String   @id @default(uuid())
+  teamId   String
+  userId   String
+  role     TeamRole @default(MEMBER)
+  joinedAt DateTime @default(now())
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+}
+
+model LogSource {
+  id            String   @id @default(uuid())
+  teamId        String
+  name          String
+  type          SourceType
+  config        Json
+  schema        Json?
+  retentionDays Int      @default(7)
+  createdAt     DateTime @default(now())
+  team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+}
+
+model AlertRule {
+  id            String   @id @default(uuid())
+  teamId        String
+  name          String
+  description   String?
+  query         String
+  queryType     QueryType      @default(SQL)
+  condition     AlertCondition
+  threshold     Int
+  windowMinutes Int            @default(5)
+  enabled       Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  team          Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+}
+
+model Dashboard {
+  id        String   @id @default(uuid())
+  teamId    String
+  name      String
+  layout    Json
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum TeamRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum Plan {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+enum SourceType {
+  HTTP
+  SYSLOG_UDP
+  SYSLOG_TCP
+  FILEBEAT
+  DOCKER
+  CLOUDWATCH
+}
+
+enum QueryType {
+  SQL
+  NATURAL_LANGUAGE
+}
+
+enum AlertCondition {
+  GREATER_THAN
+  LESS_THAN
+  EQUALS
+  CHANGES_BY
+  ANOMALY_DETECTED
+}
+

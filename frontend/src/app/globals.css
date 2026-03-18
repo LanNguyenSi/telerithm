@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-paper: #f6f7fb;
+  --color-panel: #ffffffcc;
+  --color-ink: #0f172a;
+  --color-muted: #5b6473;
+  --color-signal: #0891b2;
+  --color-danger: #be123c;
+  --color-line: rgba(15, 23, 42, 0.08);
+  --font-space-grotesk: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-ibm-plex-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
