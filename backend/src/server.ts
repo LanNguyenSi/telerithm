@@ -55,16 +55,25 @@ async function main() {
 
   const selfMonitor = setInterval(() => {
     const mem = process.memoryUsage();
-    logger.info({
-      heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
-      heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
-      rssMb: Math.round(mem.rss / 1024 / 1024),
-      uptimeS: Math.round(process.uptime()),
-    }, "Process health");
+    logger.info(
+      {
+        heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024),
+        heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024),
+        rssMb: Math.round(mem.rss / 1024 / 1024),
+        uptimeS: Math.round(process.uptime()),
+      },
+      "Process health",
+    );
   }, 60_000);
 
-  process.on("SIGTERM", () => { clearInterval(selfMonitor); shutdown("SIGTERM"); });
-  process.on("SIGINT", () => { clearInterval(selfMonitor); shutdown("SIGINT"); });
+  process.on("SIGTERM", () => {
+    clearInterval(selfMonitor);
+    shutdown("SIGTERM");
+  });
+  process.on("SIGINT", () => {
+    clearInterval(selfMonitor);
+    shutdown("SIGINT");
+  });
 }
 
 main().catch((err) => {

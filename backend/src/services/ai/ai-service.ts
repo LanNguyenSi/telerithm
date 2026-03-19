@@ -9,8 +9,7 @@ function toSqlCondition(filter: LogFilter): string {
     contains: "LIKE",
   };
   const operator = operatorMap[filter.operator];
-  const value =
-    filter.operator === "contains" ? `'%${String(filter.value)}%'` : `'${String(filter.value)}'`;
+  const value = filter.operator === "contains" ? `'%${String(filter.value)}%'` : `'${String(filter.value)}'`;
   if (["level", "service", "host", "message"].includes(filter.field)) {
     return `${filter.field} ${operator} ${value}`;
   }

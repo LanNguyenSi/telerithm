@@ -10,7 +10,7 @@ export class AlertService {
       name: r.name,
       description: r.description ?? undefined,
       query: r.query,
-      queryType: r.queryType === "SQL" ? "sql" as const : "natural" as const,
+      queryType: r.queryType === "SQL" ? ("sql" as const) : ("natural" as const),
       threshold: r.threshold,
       enabled: r.enabled,
       createdAt: r.createdAt.toISOString(),

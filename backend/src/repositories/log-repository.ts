@@ -52,7 +52,9 @@ export class LogRepository {
     }
 
     if (query.query && query.queryType === "sql") {
-      conditions.push(`(message ILIKE {searchTerm:String} OR service ILIKE {searchTerm:String} OR host ILIKE {searchTerm:String})`);
+      conditions.push(
+        `(message ILIKE {searchTerm:String} OR service ILIKE {searchTerm:String} OR host ILIKE {searchTerm:String})`,
+      );
       params.searchTerm = `%${query.query}%`;
     }
 
@@ -154,9 +156,7 @@ export class LogRepository {
   ): string | null {
     const paramName = `f${index}`;
     const columnFields = ["level", "service", "host", "message"];
-    const column = columnFields.includes(filter.field)
-      ? filter.field
-      : `fields['${filter.field}']`;
+    const column = columnFields.includes(filter.field) ? filter.field : `fields['${filter.field}']`;
 
     params[paramName] = filter.value;
 

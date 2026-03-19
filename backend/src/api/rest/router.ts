@@ -92,7 +92,9 @@ function sanitizeHtml(input: string): string {
     .replace(/'/g, "&#x27;");
 }
 
-function sanitizeLogFields(fields: Record<string, string | number | boolean>): Record<string, string | number | boolean> {
+function sanitizeLogFields(
+  fields: Record<string, string | number | boolean>,
+): Record<string, string | number | boolean> {
   const sanitized: Record<string, string | number | boolean> = {};
   for (const [key, value] of Object.entries(fields)) {
     sanitized[sanitizeHtml(key)] = typeof value === "string" ? sanitizeHtml(value) : value;
@@ -102,156 +104,205 @@ function sanitizeLogFields(fields: Record<string, string | number | boolean>): R
 
 // --- Routes ---
 
-apiRouter.get("/health", asyncHandler(async (_req, res) => {
-  const checks: Record<string, "ok" | "error"> = {
-    postgres: "error",
-    clickhouse: "error",
-    redis: "error",
-  };
+apiRouter.get(
+  "/health",
+  asyncHandler(async (_req, res) => {
+    const checks: Record<string, "ok" | "error"> = {
+      postgres: "error",
+      clickhouse: "error",
+      redis: "error",
+    };
 
-  try { await prisma.$queryRaw`SELECT 1`; checks.postgres = "ok"; } catch { /* keep error */ }
-  try { const ch = await clickhouse.ping(); if (ch.success) checks.clickhouse = "ok"; } catch { /* keep error */ }
-  try { await redis.ping(); checks.redis = "ok"; } catch { /* keep error */ }
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      checks.postgres = "ok";
+    } catch {
+      /* keep error */
+    }
+    try {
+      const ch = await clickhouse.ping();
+      if (ch.success) checks.clickhouse = "ok";
+    } catch {
+      /* keep error */
+    }
+    try {
+      await redis.ping();
+      checks.redis = "ok";
+    } catch {
+      /* keep error */
+    }
 
-  const healthy = Object.values(checks).every((v) => v === "ok");
-  res.status(healthy ? 200 : 503).json({ status: healthy ? "ok" : "degraded", checks });
-}));
+    const healthy = Object.values(checks).every((v) => v === "ok");
+    res.status(healthy ? 200 : 503).json({ status: healthy ? "ok" : "degraded", checks });
+  }),
+);
 
-apiRouter.post("/auth/register", authLimiter, asyncHandler(async (req, res) => {
-  const parsed = registerSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  try {
-    const result = await teamService.register(parsed.data.email, parsed.data.password, parsed.data.name);
-    res.status(201).json(result);
-  } catch (error) {
-    log.warn({ email: parsed.data.email }, "Registration failed");
-    res.status(400).json({ error: error instanceof Error ? error.message : "Register failed" });
-  }
-}));
+apiRouter.post(
+  "/auth/register",
+  authLimiter,
+  asyncHandler(async (req, res) => {
+    const parsed = registerSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const result = await teamService.register(parsed.data.email, parsed.data.password, parsed.data.name);
+      res.status(201).json(result);
+    } catch (error) {
+      log.warn({ email: parsed.data.email }, "Registration failed");
+      res.status(400).json({ error: error instanceof Error ? error.message : "Register failed" });
+    }
+  }),
+);
 
-apiRouter.post("/auth/login", authLimiter, asyncHandler(async (req, res) => {
-  const parsed = loginSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  try {
-    const result = await teamService.login(parsed.data.email, parsed.data.password);
-    res.json(result);
-  } catch (error) {
-    res.status(401).json({ error: error instanceof Error ? error.message : "Login failed" });
-  }
-}));
+apiRouter.post(
+  "/auth/login",
+  authLimiter,
+  asyncHandler(async (req, res) => {
+    const parsed = loginSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const result = await teamService.login(parsed.data.email, parsed.data.password);
+      res.json(result);
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Login failed" });
+    }
+  }),
+);
 
-apiRouter.get("/teams", asyncHandler(async (req, res) => {
-  try {
-    const teams = await teamService.listTeamsForToken(parseToken(req.header("authorization")));
-    res.json({ teams });
-  } catch (error) {
-    res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
-  }
-}));
+apiRouter.get(
+  "/teams",
+  asyncHandler(async (req, res) => {
+    try {
+      const teams = await teamService.listTeamsForToken(parseToken(req.header("authorization")));
+      res.json({ teams });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    }
+  }),
+);
 
-apiRouter.post("/teams", asyncHandler(async (req, res) => {
-  const parsed = createTeamSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  try {
-    const team = await teamService.createTeam(
-      parseToken(req.header("authorization")),
-      parsed.data.name,
-      parsed.data.slug,
-    );
-    res.status(201).json({ team });
-  } catch (error) {
-    res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
-  }
-}));
+apiRouter.post(
+  "/teams",
+  asyncHandler(async (req, res) => {
+    const parsed = createTeamSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    try {
+      const team = await teamService.createTeam(
+        parseToken(req.header("authorization")),
+        parsed.data.name,
+        parsed.data.slug,
+      );
+      res.status(201).json({ team });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    }
+  }),
+);
 
-apiRouter.get("/sources", asyncHandler(async (req, res) => {
-  const teamId = String(req.query.teamId ?? "");
-  if (!teamId) {
-    res.status(400).json({ error: "teamId is required" });
-    return;
-  }
-  const sources = await teamService.listSources(teamId);
-  res.json({ sources });
-}));
+apiRouter.get(
+  "/sources",
+  asyncHandler(async (req, res) => {
+    const teamId = String(req.query.teamId ?? "");
+    if (!teamId) {
+      res.status(400).json({ error: "teamId is required" });
+      return;
+    }
+    const sources = await teamService.listSources(teamId);
+    res.json({ sources });
+  }),
+);
 
-apiRouter.post("/sources", asyncHandler(async (req, res) => {
-  const parsed = createSourceSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  const source = await teamService.createSource(parsed.data.teamId, parsed.data.name, parsed.data.type);
-  res.status(201).json({ source });
-}));
+apiRouter.post(
+  "/sources",
+  asyncHandler(async (req, res) => {
+    const parsed = createSourceSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const source = await teamService.createSource(parsed.data.teamId, parsed.data.name, parsed.data.type);
+    res.status(201).json({ source });
+  }),
+);
 
 // 2.5 — Ingest with API-Key auth + rate limit + sanitization
-apiRouter.post("/ingest/:sourceId", ingestLimiter, authenticateApiKey, asyncHandler(async (req, res) => {
-  const parsed = ingestSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
+apiRouter.post(
+  "/ingest/:sourceId",
+  ingestLimiter,
+  authenticateApiKey,
+  asyncHandler(async (req, res) => {
+    const parsed = ingestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
 
-  // 2.4 — Sanitize log messages before storage
-  const sanitizedPayload = {
-    ...parsed.data,
-    logs: parsed.data.logs.map((item) => {
-      if (typeof item === "string") return sanitizeHtml(item);
-      return {
-        ...item,
-        message: item.message ? sanitizeHtml(item.message) : item.message,
-        host: item.host ? sanitizeHtml(item.host) : item.host,
-        service: item.service ? sanitizeHtml(item.service) : item.service,
-        fields: item.fields ? sanitizeLogFields(item.fields) : item.fields,
-      };
-    }),
-  };
+    // 2.4 — Sanitize log messages before storage
+    const sanitizedPayload = {
+      ...parsed.data,
+      logs: parsed.data.logs.map((item) => {
+        if (typeof item === "string") return sanitizeHtml(item);
+        return {
+          ...item,
+          message: item.message ? sanitizeHtml(item.message) : item.message,
+          host: item.host ? sanitizeHtml(item.host) : item.host,
+          service: item.service ? sanitizeHtml(item.service) : item.service,
+          fields: item.fields ? sanitizeLogFields(item.fields) : item.fields,
+        };
+      }),
+    };
 
-  try {
-    const response = await ingestionService.ingest(String(req.params.sourceId), sanitizedPayload);
-    res.status(202).json(response);
-  } catch (error) {
-    res.status(404).json({ error: error instanceof Error ? error.message : "Ingest failed" });
-  }
-}));
+    try {
+      const response = await ingestionService.ingest(String(req.params.sourceId), sanitizedPayload);
+      res.status(202).json(response);
+    } catch (error) {
+      res.status(404).json({ error: error instanceof Error ? error.message : "Ingest failed" });
+    }
+  }),
+);
 
-apiRouter.post("/logs/search", asyncHandler(async (req, res) => {
-  const parsed = searchSchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  const result = await queryService.search(parsed.data);
-  res.json(result);
-}));
+apiRouter.post(
+  "/logs/search",
+  asyncHandler(async (req, res) => {
+    const parsed = searchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const result = await queryService.search(parsed.data);
+    res.json(result);
+  }),
+);
 
-apiRouter.get("/logs", asyncHandler(async (req, res) => {
-  const parsed = searchSchema.safeParse({
-    teamId: req.query.teamId,
-    sourceId: req.query.sourceId,
-    startTime: req.query.startTime,
-    endTime: req.query.endTime,
-    query: req.query.query,
-    queryType: req.query.queryType ?? "sql",
-    limit: req.query.limit ? Number(req.query.limit) : 100,
-    offset: req.query.offset ? Number(req.query.offset) : 0,
-  });
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  const result = await queryService.search(parsed.data);
-  res.json(result);
-}));
+apiRouter.get(
+  "/logs",
+  asyncHandler(async (req, res) => {
+    const parsed = searchSchema.safeParse({
+      teamId: req.query.teamId,
+      sourceId: req.query.sourceId,
+      startTime: req.query.startTime,
+      endTime: req.query.endTime,
+      query: req.query.query,
+      queryType: req.query.queryType ?? "sql",
+      limit: req.query.limit ? Number(req.query.limit) : 100,
+      offset: req.query.offset ? Number(req.query.offset) : 0,
+    });
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const result = await queryService.search(parsed.data);
+    res.json(result);
+  }),
+);
 
 apiRouter.post("/query/natural", (req, res) => {
   const parsed = naturalQuerySchema.safeParse(req.body);
@@ -262,35 +313,44 @@ apiRouter.post("/query/natural", (req, res) => {
   res.json(queryService.explainNaturalQuery(parsed.data.teamId, parsed.data.query));
 });
 
-apiRouter.get("/alerts/rules", asyncHandler(async (req, res) => {
-  const teamId = String(req.query.teamId ?? "");
-  if (!teamId) {
-    res.status(400).json({ error: "teamId is required" });
-    return;
-  }
-  const rules = await alertService.listRules(teamId);
-  res.json({ rules });
-}));
+apiRouter.get(
+  "/alerts/rules",
+  asyncHandler(async (req, res) => {
+    const teamId = String(req.query.teamId ?? "");
+    if (!teamId) {
+      res.status(400).json({ error: "teamId is required" });
+      return;
+    }
+    const rules = await alertService.listRules(teamId);
+    res.json({ rules });
+  }),
+);
 
-apiRouter.get("/alerts/incidents", asyncHandler(async (req, res) => {
-  const teamId = String(req.query.teamId ?? "");
-  if (!teamId) {
-    res.status(400).json({ error: "teamId is required" });
-    return;
-  }
-  const incidents = await alertService.listIncidents(teamId);
-  res.json({ incidents });
-}));
+apiRouter.get(
+  "/alerts/incidents",
+  asyncHandler(async (req, res) => {
+    const teamId = String(req.query.teamId ?? "");
+    if (!teamId) {
+      res.status(400).json({ error: "teamId is required" });
+      return;
+    }
+    const incidents = await alertService.listIncidents(teamId);
+    res.json({ incidents });
+  }),
+);
 
-apiRouter.get("/dashboards/overview", asyncHandler(async (req, res) => {
-  const teamId = String(req.query.teamId ?? "");
-  if (!teamId) {
-    res.status(400).json({ error: "teamId is required" });
-    return;
-  }
-  const overview = await dashboardService.getOverview(teamId);
-  res.json({ overview });
-}));
+apiRouter.get(
+  "/dashboards/overview",
+  asyncHandler(async (req, res) => {
+    const teamId = String(req.query.teamId ?? "");
+    if (!teamId) {
+      res.status(400).json({ error: "teamId is required" });
+      return;
+    }
+    const overview = await dashboardService.getOverview(teamId);
+    res.json({ overview });
+  }),
+);
 
 apiRouter.get("/stream/logs", (req, res) => {
   const teamId = String(req.query.teamId ?? "");

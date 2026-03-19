@@ -12,7 +12,10 @@ export const openApiSpec = {
         summary: "Health check",
         tags: ["System"],
         responses: {
-          200: { description: "All services healthy", content: { "application/json": { schema: { $ref: "#/components/schemas/HealthResponse" } } } },
+          200: {
+            description: "All services healthy",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/HealthResponse" } } },
+          },
           503: { description: "One or more services degraded" },
         },
       },
@@ -21,9 +24,15 @@ export const openApiSpec = {
       post: {
         summary: "Register a new user",
         tags: ["Auth"],
-        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/RegisterRequest" } } } },
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/RegisterRequest" } } },
+        },
         responses: {
-          201: { description: "User registered", content: { "application/json": { schema: { $ref: "#/components/schemas/AuthResponse" } } } },
+          201: {
+            description: "User registered",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/AuthResponse" } } },
+          },
           400: { description: "Validation error or user exists" },
         },
       },
@@ -32,9 +41,15 @@ export const openApiSpec = {
       post: {
         summary: "Login with credentials",
         tags: ["Auth"],
-        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/LoginRequest" } } } },
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/LoginRequest" } } },
+        },
         responses: {
-          200: { description: "Login successful", content: { "application/json": { schema: { $ref: "#/components/schemas/AuthResponse" } } } },
+          200: {
+            description: "Login successful",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/AuthResponse" } } },
+          },
           401: { description: "Invalid credentials" },
         },
       },
@@ -50,7 +65,10 @@ export const openApiSpec = {
         summary: "Create a new team",
         tags: ["Teams"],
         security: [{ bearerAuth: [] }],
-        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateTeamRequest" } } } },
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/CreateTeamRequest" } } },
+        },
         responses: { 201: { description: "Team created" }, 401: { description: "Unauthorized" } },
       },
     },
@@ -64,7 +82,10 @@ export const openApiSpec = {
       post: {
         summary: "Create a new log source",
         tags: ["Sources"],
-        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/CreateSourceRequest" } } } },
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/CreateSourceRequest" } } },
+        },
         responses: { 201: { description: "Source created" } },
       },
     },
@@ -74,9 +95,15 @@ export const openApiSpec = {
         tags: ["Ingest"],
         security: [{ apiKeyAuth: [] }],
         parameters: [{ name: "sourceId", in: "path", required: true, schema: { type: "string" } }],
-        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/IngestRequest" } } } },
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/IngestRequest" } } },
+        },
         responses: {
-          202: { description: "Logs accepted", content: { "application/json": { schema: { $ref: "#/components/schemas/IngestResponse" } } } },
+          202: {
+            description: "Logs accepted",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/IngestResponse" } } },
+          },
           401: { description: "Missing API key" },
           403: { description: "Invalid API key" },
         },
@@ -86,8 +113,16 @@ export const openApiSpec = {
       post: {
         summary: "Search logs",
         tags: ["Logs"],
-        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/SearchRequest" } } } },
-        responses: { 200: { description: "Search results", content: { "application/json": { schema: { $ref: "#/components/schemas/SearchResponse" } } } } },
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/SearchRequest" } } },
+        },
+        responses: {
+          200: {
+            description: "Search results",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/SearchResponse" } } },
+          },
+        },
       },
     },
     "/logs": {
@@ -108,7 +143,10 @@ export const openApiSpec = {
       post: {
         summary: "Translate natural language query to SQL",
         tags: ["Logs"],
-        requestBody: { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/NaturalQueryRequest" } } } },
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/NaturalQueryRequest" } } },
+        },
         responses: { 200: { description: "Translated query" } },
       },
     },
@@ -155,22 +193,42 @@ export const openApiSpec = {
         type: "object",
         properties: {
           status: { type: "string", enum: ["ok", "degraded"] },
-          checks: { type: "object", properties: { postgres: { type: "string" }, clickhouse: { type: "string" }, redis: { type: "string" } } },
+          checks: {
+            type: "object",
+            properties: {
+              postgres: { type: "string" },
+              clickhouse: { type: "string" },
+              redis: { type: "string" },
+            },
+          },
         },
       },
       RegisterRequest: {
         type: "object",
         required: ["email", "password", "name"],
-        properties: { email: { type: "string", format: "email" }, password: { type: "string", minLength: 6 }, name: { type: "string", minLength: 2 } },
+        properties: {
+          email: { type: "string", format: "email" },
+          password: { type: "string", minLength: 6 },
+          name: { type: "string", minLength: 2 },
+        },
       },
       LoginRequest: {
         type: "object",
         required: ["email", "password"],
-        properties: { email: { type: "string", format: "email" }, password: { type: "string", minLength: 6 } },
+        properties: {
+          email: { type: "string", format: "email" },
+          password: { type: "string", minLength: 6 },
+        },
       },
       AuthResponse: {
         type: "object",
-        properties: { token: { type: "string" }, user: { type: "object", properties: { id: { type: "string" }, email: { type: "string" }, name: { type: "string" } } } },
+        properties: {
+          token: { type: "string" },
+          user: {
+            type: "object",
+            properties: { id: { type: "string" }, email: { type: "string" }, name: { type: "string" } },
+          },
+        },
       },
       CreateTeamRequest: {
         type: "object",
@@ -180,7 +238,14 @@ export const openApiSpec = {
       CreateSourceRequest: {
         type: "object",
         required: ["teamId", "name", "type"],
-        properties: { teamId: { type: "string" }, name: { type: "string" }, type: { type: "string", enum: ["HTTP", "SYSLOG_UDP", "SYSLOG_TCP", "FILEBEAT", "DOCKER", "CLOUDWATCH"] } },
+        properties: {
+          teamId: { type: "string" },
+          name: { type: "string" },
+          type: {
+            type: "string",
+            enum: ["HTTP", "SYSLOG_UDP", "SYSLOG_TCP", "FILEBEAT", "DOCKER", "CLOUDWATCH"],
+          },
+        },
       },
       IngestRequest: {
         type: "object",
@@ -193,7 +258,12 @@ export const openApiSpec = {
       },
       IngestResponse: {
         type: "object",
-        properties: { accepted: { type: "integer" }, rejected: { type: "integer" }, errors: { type: "array" }, batchId: { type: "string" } },
+        properties: {
+          accepted: { type: "integer" },
+          rejected: { type: "integer" },
+          errors: { type: "array" },
+          batchId: { type: "string" },
+        },
       },
       SearchRequest: {
         type: "object",
@@ -208,7 +278,13 @@ export const openApiSpec = {
       },
       SearchResponse: {
         type: "object",
-        properties: { logs: { type: "array" }, total: { type: "integer" }, query: { type: "string" }, executionTimeMs: { type: "number" }, cached: { type: "boolean" } },
+        properties: {
+          logs: { type: "array" },
+          total: { type: "integer" },
+          query: { type: "string" },
+          executionTimeMs: { type: "number" },
+          cached: { type: "boolean" },
+        },
       },
       NaturalQueryRequest: {
         type: "object",

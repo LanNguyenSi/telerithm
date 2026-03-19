@@ -15,7 +15,10 @@ export const loginSchema = z.object({
 
 export const createTeamSchema = z.object({
   name: z.string().min(2),
-  slug: z.string().min(2).regex(/^[a-z0-9-]+$/),
+  slug: z
+    .string()
+    .min(2)
+    .regex(/^[a-z0-9-]+$/),
 });
 
 export const createSourceSchema = z.object({
@@ -48,20 +51,21 @@ export const naturalQuerySchema = z.object({
 });
 
 export const ingestSchema = z.object({
-  logs: z.array(
-    z.union([
-      z.string(),
-      z.object({
-        timestamp: z.string().datetime().optional(),
-        level: levelSchema.optional(),
-        service: z.string().optional(),
-        host: z.string().optional(),
-        message: z.string().optional(),
-        fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
-      }),
-    ]),
-  ).min(1),
+  logs: z
+    .array(
+      z.union([
+        z.string(),
+        z.object({
+          timestamp: z.string().datetime().optional(),
+          level: levelSchema.optional(),
+          service: z.string().optional(),
+          host: z.string().optional(),
+          message: z.string().optional(),
+          fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+        }),
+      ]),
+    )
+    .min(1),
   format: z.enum(["json", "syslog_rfc3164", "syslog_rfc5424", "plain"]).optional(),
   batchId: z.string().optional(),
 });
-

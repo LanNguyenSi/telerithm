@@ -1,13 +1,7 @@
 export type QueryType = "sql" | "natural";
 export type LogFormat = "json" | "syslog_rfc3164" | "syslog_rfc5424" | "plain";
 export type LogLevel = "debug" | "info" | "warn" | "error" | "fatal";
-export type SourceType =
-  | "HTTP"
-  | "SYSLOG_UDP"
-  | "SYSLOG_TCP"
-  | "FILEBEAT"
-  | "DOCKER"
-  | "CLOUDWATCH";
+export type SourceType = "HTTP" | "SYSLOG_UDP" | "SYSLOG_TCP" | "FILEBEAT" | "DOCKER" | "CLOUDWATCH";
 export type TeamPlan = "FREE" | "STARTER" | "PRO" | "ENTERPRISE";
 
 export interface LogEntry {
@@ -143,4 +137,3 @@ export interface NLQTranslation {
   explanation: string;
   filtersApplied: LogFilter[];
 }
-

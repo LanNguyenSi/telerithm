@@ -6,7 +6,13 @@ import { createChildLogger } from "../../logger.js";
 
 const log = createChildLogger("team-service");
 
-function sanitizeUser(user: { id: string; email: string; name: string; role: string; createdAt: Date }): Omit<User, "passwordHash"> {
+function sanitizeUser(user: {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  createdAt: Date;
+}): Omit<User, "passwordHash"> {
   return {
     id: user.id,
     email: user.email,
@@ -132,7 +138,13 @@ export class TeamService {
     return session;
   }
 
-  private async createSession(user: { id: string; email: string; name: string; role: string; createdAt: Date }): Promise<AuthResult> {
+  private async createSession(user: {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    createdAt: Date;
+  }): Promise<AuthResult> {
     const token = `sess_${generateId().replace(/-/g, "").slice(0, 24)}`;
     await prisma.session.create({
       data: {

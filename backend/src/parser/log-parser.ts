@@ -1,10 +1,8 @@
 import type { LogEntry, LogFormat, LogLevel } from "../types/domain.js";
 import { generateId } from "../utils/id.js";
 
-const RFC3164_PATTERN =
-  /^<\d+>([A-Z][a-z]{2}\s+\d+\s[\d:]+)\s(\S+)\s([^:]+):\s?(.*)$/;
-const RFC5424_PATTERN =
-  /^<\d+>1\s([^\s]+)\s([^\s]+)\s([^\s]+)\s([^\s]+)\s([^\s]+)\s-?\s?(.*)$/;
+const RFC3164_PATTERN = /^<\d+>([A-Z][a-z]{2}\s+\d+\s[\d:]+)\s(\S+)\s([^:]+):\s?(.*)$/;
+const RFC5424_PATTERN = /^<\d+>1\s([^\s]+)\s([^\s]+)\s([^\s]+)\s([^\s]+)\s([^\s]+)\s-?\s?(.*)$/;
 
 function normalizeLevel(input?: string): LogLevel {
   const value = (input ?? "info").toLowerCase();
@@ -35,12 +33,7 @@ export class LogParser {
     return "plain";
   }
 
-  parseRaw(
-    raw: string,
-    format: LogFormat,
-    teamId: string,
-    sourceId: string,
-  ): LogEntry[] {
+  parseRaw(raw: string, format: LogFormat, teamId: string, sourceId: string): LogEntry[] {
     if (format === "json") {
       return this.parseJson(raw, teamId, sourceId);
     }
@@ -69,9 +62,10 @@ export class LogParser {
         service: typeof record.service === "string" ? record.service : "unknown",
         host: typeof record.host === "string" ? record.host : "unknown",
         message: typeof record.message === "string" ? record.message : JSON.stringify(record),
-        fields: typeof record.fields === "object" && record.fields !== null
-          ? (record.fields as Record<string, string | number | boolean>)
-          : {},
+        fields:
+          typeof record.fields === "object" && record.fields !== null
+            ? (record.fields as Record<string, string | number | boolean>)
+            : {},
       };
     });
   }
@@ -128,4 +122,3 @@ export class LogParser {
     };
   }
 }
-
