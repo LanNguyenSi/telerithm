@@ -1,13 +1,23 @@
+import { EventEmitter } from "node:events";
 import type { IngestRequestPayload, IngestResponse, LogEntry } from "../types/domain.js";
-import { store } from "../repositories/in-memory-store.js";
+import { LogRepository } from "../repositories/log-repository.js";
+import { TeamService } from "../services/team/team-service.js";
 import { LogParser } from "../parser/log-parser.js";
 import { generateId } from "../utils/id.js";
+import { createChildLogger } from "../logger.js";
+import { cache } from "../cache/cache-service.js";
+import { ingestBatchTotal, ingestLogsTotal } from "../metrics/index.js";
+
+const log = createChildLogger("ingestion");
 
 export class IngestionService {
+  readonly events = new EventEmitter();
   private readonly parser = new LogParser();
+  private readonly logRepo = new LogRepository();
+  private readonly teamService = new TeamService();
 
-  ingest(sourceId: string, payload: IngestRequestPayload): IngestResponse {
-    const source = store.sources.find((item) => item.id === sourceId);
+  async ingest(sourceId: string, payload: IngestRequestPayload): Promise<IngestResponse> {
+    const source = await this.teamService.findSourceById(sourceId);
     if (!source) {
       throw new Error("Source not found");
     }
@@ -44,11 +54,17 @@ export class IngestionService {
     });
 
     if (accepted.length > 0) {
-      store.logs.push(...accepted);
-      for (const log of accepted) {
-        store.events.emit("log:new", log);
+      await this.logRepo.insert(accepted);
+      await cache.invalidate(`dashboard:overview:${source.teamId}`);
+      for (const entry of accepted) {
+        this.events.emit("log:new", entry);
       }
     }
+
+    log.info({ batchId, accepted: accepted.length, rejected: errors.length }, "Batch ingested");
+
+    ingestBatchTotal.inc({ status: errors.length > 0 ? "partial" : "ok" });
+    ingestLogsTotal.inc(accepted.length);
 
     return {
       accepted: accepted.length,
@@ -58,4 +74,3 @@ export class IngestionService {
     };
   }
 }
-

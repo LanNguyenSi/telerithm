@@ -16,6 +16,18 @@ model User {
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
   teams        TeamMember[]
+  sessions     Session[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Team {
@@ -50,12 +62,13 @@ model LogSource {
   config        Json
   schema        Json?
   retentionDays Int      @default(7)
+  apiKey        String   @unique
   createdAt     DateTime @default(now())
   team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
 }
 
 model AlertRule {
-  id            String   @id @default(uuid())
+  id            String         @id @default(uuid())
   teamId        String
   name          String
   description   String?
@@ -68,6 +81,17 @@ model AlertRule {
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   team          Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  incidents     AlertIncident[]
+}
+
+model AlertIncident {
+  id        String         @id @default(uuid())
+  ruleId    String
+  status    IncidentStatus @default(OPEN)
+  severity  Severity
+  message   String
+  createdAt DateTime       @default(now())
+  rule      AlertRule      @relation(fields: [ruleId], references: [id], onDelete: Cascade)
 }
 
 model Dashboard {
@@ -120,5 +144,18 @@ enum AlertCondition {
   EQUALS
   CHANGES_BY
   ANOMALY_DETECTED
+}
+
+enum IncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
 }
 

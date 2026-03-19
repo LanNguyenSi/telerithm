@@ -1,13 +1,18 @@
+import type { EventEmitter } from "node:events";
 import type { Response } from "express";
-import { store } from "../../repositories/in-memory-store.js";
 import type { LogEntry } from "../../types/domain.js";
+import { activeConnections } from "../../metrics/index.js";
 
 export class StreamingService {
+  constructor(private readonly events: EventEmitter) {}
+
   subscribe(teamId: string, res: Response): () => void {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
+
+    activeConnections.inc();
 
     const onLog = (log: LogEntry) => {
       if (log.teamId === teamId) {
@@ -16,7 +21,7 @@ export class StreamingService {
       }
     };
 
-    store.events.on("log:new", onLog);
+    this.events.on("log:new", onLog);
 
     const heartbeat = setInterval(() => {
       res.write(`event: ping\n`);
@@ -24,10 +29,10 @@ export class StreamingService {
     }, 15000);
 
     return () => {
+      activeConnections.dec();
       clearInterval(heartbeat);
-      store.events.off("log:new", onLog);
+      this.events.off("log:new", onLog);
       res.end();
     };
   }
 }
-

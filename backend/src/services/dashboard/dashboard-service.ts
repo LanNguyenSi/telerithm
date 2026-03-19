@@ -7,4 +7,3 @@ export class DashboardService {
     return this.queryService.getDashboardSummary(teamId);
   }
 }
-
