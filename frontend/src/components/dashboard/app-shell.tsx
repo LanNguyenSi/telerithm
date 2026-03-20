@@ -4,6 +4,7 @@ import type { PropsWithChildren } from "react";
 const navigation = [
   { href: "/", label: "Overview" },
   { href: "/logs", label: "Logs" },
+  { href: "/issues", label: "Issues" },
   { href: "/alerts", label: "Alerts" },
   { href: "/dashboards", label: "Dashboards" },
   { href: "/settings", label: "Settings" },

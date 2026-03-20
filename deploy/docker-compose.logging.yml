@@ -1,0 +1,27 @@
+# Docker Compose overlay for log collection via Vector
+# Usage: docker compose -f docker-compose.yml -f deploy/docker-compose.logging.yml up
+#
+# Required env vars:
+#   LOGFORGE_SOURCE_ID - The source ID to ingest logs into
+#   LOGFORGE_API_KEY   - API key for the source (lf_xxx)
+
+services:
+  vector:
+    image: timberio/vector:0.41.1-alpine
+    volumes:
+      - ./deploy/vector/vector.toml:/etc/vector/vector.toml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - vector-data:/var/lib/vector
+    environment:
+      - LOGFORGE_URL=http://backend:4000
+      - LOGFORGE_SOURCE_ID=${LOGFORGE_SOURCE_ID}
+      - LOGFORGE_API_KEY=${LOGFORGE_API_KEY}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - default
+    restart: unless-stopped
+
+volumes:
+  vector-data:

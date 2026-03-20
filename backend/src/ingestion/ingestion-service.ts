@@ -3,6 +3,7 @@ import type { IngestRequestPayload, IngestResponse, LogEntry } from "../types/do
 import { LogRepository } from "../repositories/log-repository.js";
 import { TeamService } from "../services/team/team-service.js";
 import { LogParser } from "../parser/log-parser.js";
+import { IssueService } from "../services/issue/issue-service.js";
 import { generateId } from "../utils/id.js";
 import { createChildLogger } from "../logger.js";
 import { cache } from "../cache/cache-service.js";
@@ -15,6 +16,7 @@ export class IngestionService {
   private readonly parser = new LogParser();
   private readonly logRepo = new LogRepository();
   private readonly teamService = new TeamService();
+  private readonly issueService = new IssueService();
 
   async ingest(sourceId: string, payload: IngestRequestPayload): Promise<IngestResponse> {
     const source = await this.teamService.findSourceById(sourceId);
@@ -58,6 +60,12 @@ export class IngestionService {
       await cache.invalidate(`dashboard:overview:${source.teamId}`);
       for (const entry of accepted) {
         this.events.emit("log:new", entry);
+        // Fire-and-forget: track errors/fatals as issues
+        if (entry.level === "error" || entry.level === "fatal") {
+          this.issueService
+            .trackError(entry.teamId, entry.level, entry.service, entry.message)
+            .catch(() => {});
+        }
       }
     }
 

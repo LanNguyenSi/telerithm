@@ -1,5 +1,8 @@
 import type { AlertIncident, AlertRule } from "../../types/domain.js";
 import { prisma } from "../../repositories/prisma.js";
+import { createChildLogger } from "../../logger.js";
+
+const log = createChildLogger("alert-service");
 
 export class AlertService {
   async listRules(teamId: string): Promise<AlertRule[]> {
@@ -31,5 +34,55 @@ export class AlertService {
       message: i.message,
       createdAt: i.createdAt.toISOString(),
     }));
+  }
+
+  async acknowledgeIncident(incidentId: string, userId: string, comment?: string) {
+    const [incident] = await prisma.$transaction([
+      prisma.alertIncident.update({
+        where: { id: incidentId },
+        data: { status: "ACKNOWLEDGED" },
+      }),
+      prisma.incidentEvent.create({
+        data: { incidentId, userId, action: "ACKNOWLEDGED", comment },
+      }),
+    ]);
+    log.info({ incidentId, userId }, "Incident acknowledged");
+    return incident;
+  }
+
+  async resolveIncident(incidentId: string, userId: string, comment?: string) {
+    const [incident] = await prisma.$transaction([
+      prisma.alertIncident.update({
+        where: { id: incidentId },
+        data: { status: "RESOLVED" },
+      }),
+      prisma.incidentEvent.create({
+        data: { incidentId, userId, action: "RESOLVED", comment },
+      }),
+    ]);
+    log.info({ incidentId, userId }, "Incident resolved");
+    return incident;
+  }
+
+  async reopenIncident(incidentId: string, userId: string, comment?: string) {
+    const [incident] = await prisma.$transaction([
+      prisma.alertIncident.update({
+        where: { id: incidentId },
+        data: { status: "OPEN" },
+      }),
+      prisma.incidentEvent.create({
+        data: { incidentId, userId, action: "REOPENED", comment },
+      }),
+    ]);
+    log.info({ incidentId, userId }, "Incident reopened");
+    return incident;
+  }
+
+  async getIncidentTimeline(incidentId: string) {
+    return prisma.incidentEvent.findMany({
+      where: { incidentId },
+      include: { user: { select: { id: true, name: true, email: true } } },
+      orderBy: { createdAt: "asc" },
+    });
   }
 }

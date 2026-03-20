@@ -50,6 +50,50 @@ export const naturalQuerySchema = z.object({
   query: z.string().min(3),
 });
 
+export const incidentActionSchema = z.object({
+  comment: z.string().max(1000).optional(),
+});
+
+export const createSubscriptionSchema = z.object({
+  teamId: z.string().min(1),
+  ruleId: z.string().optional(),
+  channel: z.enum(["EMAIL", "WEBHOOK", "SLACK", "MSTEAMS"]),
+  config: z.record(z.unknown()),
+  severities: z.array(z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"])).optional(),
+});
+
+export const updateSubscriptionSchema = z.object({
+  channel: z.enum(["EMAIL", "WEBHOOK", "SLACK", "MSTEAMS"]).optional(),
+  config: z.record(z.unknown()).optional(),
+  severities: z.array(z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"])).optional(),
+  enabled: z.boolean().optional(),
+});
+
+export const issueQuerySchema = z.object({
+  teamId: z.string().min(1),
+  status: z.enum(["NEW", "ONGOING", "RESOLVED", "IGNORED"]).optional(),
+  service: z.string().optional(),
+  level: z.string().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+export const issueUpdateSchema = z.object({
+  status: z.enum(["NEW", "ONGOING", "RESOLVED", "IGNORED"]).optional(),
+  assigneeId: z.string().nullable().optional(),
+});
+
+export const muteRuleSchema = z.object({
+  durationMinutes: z.number().int().min(1).max(43200), // max 30 days
+});
+
+export const maintenanceWindowSchema = z.object({
+  teamId: z.string().min(1),
+  name: z.string().min(2),
+  startsAt: z.string().datetime(),
+  endsAt: z.string().datetime(),
+});
+
 export const ingestSchema = z.object({
   logs: z
     .array(

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AppShell } from "@/components/dashboard/app-shell";
 import { IncidentList } from "@/components/alerts/incident-list";
 import { Card } from "@/components/ui/card";
@@ -16,6 +17,15 @@ export default async function AlertsPage() {
 
   return (
     <AppShell>
+      <div className="mb-6 flex items-center justify-between">
+        <h2 className="text-2xl font-semibold text-ink">Alerts</h2>
+        <Link
+          href="/alerts/subscriptions"
+          className="rounded-full border border-line bg-white/80 px-4 py-2 text-sm text-ink transition hover:border-slate-400"
+        >
+          Manage Subscriptions
+        </Link>
+      </div>
       <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
         <IncidentList incidents={incidents} />
         <Card>

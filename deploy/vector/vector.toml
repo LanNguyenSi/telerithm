@@ -1,0 +1,77 @@
+# Vector.dev configuration for shipping container logs to LogForge
+# Usage: LOGFORGE_URL=http://localhost:4000 LOGFORGE_SOURCE_ID=xxx LOGFORGE_API_KEY=lf_xxx vector --config vector.toml
+
+# --- Source: Collect Docker container logs ---
+[sources.docker]
+type = "docker_logs"
+# Optionally filter by container labels:
+# include_labels = ["logforge.enabled=true"]
+
+# --- Transform: Parse and normalize log entries ---
+[transforms.parse]
+type = "remap"
+inputs = ["docker"]
+source = '''
+# Try to parse as JSON first
+parsed, err = parse_json(.message)
+if err == null {
+  .level = downcase(string(parsed.level) ?? "info")
+  .service = string(parsed.service) ?? .container_name
+  .host = string(parsed.host) ?? .host
+  .message = string(parsed.message) ?? .message
+  .fields = {}
+} else {
+  # Plain text: try to detect log level from message
+  if match(.message, r'(?i)\berror\b') {
+    .level = "error"
+  } else if match(.message, r'(?i)\bwarn(ing)?\b') {
+    .level = "warn"
+  } else {
+    .level = "info"
+  }
+  .service = .container_name
+  .fields = {}
+}
+
+# Ensure timestamp is ISO format
+.timestamp = to_string(.timestamp)
+'''
+
+# --- Transform: Format for LogForge ingest API ---
+[transforms.format]
+type = "remap"
+inputs = ["parse"]
+source = '''
+. = {
+  "timestamp": .timestamp,
+  "level": .level,
+  "service": .service,
+  "host": .host,
+  "message": .message,
+  "fields": .fields
+}
+'''
+
+# --- Sink: Send to LogForge HTTP ingest endpoint ---
+[sinks.logforge]
+type = "http"
+inputs = ["format"]
+uri = "${LOGFORGE_URL}/api/v1/ingest/${LOGFORGE_SOURCE_ID}"
+method = "post"
+encoding.codec = "json"
+
+# Batch settings: send every 5s or when 100 events are buffered
+[sinks.logforge.batch]
+max_events = 100
+timeout_secs = 5
+
+# Wrap events in the LogForge ingest format
+[sinks.logforge.request]
+headers.X-API-Key = "${LOGFORGE_API_KEY}"
+headers.Content-Type = "application/json"
+
+# Buffer to disk for reliability
+[sinks.logforge.buffer]
+type = "disk"
+max_size = 104857600  # 100MB
+when_full = "block"

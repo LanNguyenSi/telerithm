@@ -1,4 +1,4 @@
-import type { AlertIncident, AlertRule, DashboardOverview, LogEntry, Source, Team } from "@/types";
+import type { AlertIncident, AlertRule, AlertSubscription, DashboardOverview, Issue, LogEntry, Source, Team } from "@/types";
 
 function getApiBaseUrl() {
   if (typeof window === "undefined") {
@@ -95,6 +95,37 @@ export async function getAlertRules(teamId: string) {
 
 export async function getAlertIncidents(teamId: string) {
   return request<{ incidents: AlertIncident[] }>(`/alerts/incidents?teamId=${teamId}`);
+}
+
+export async function getSubscriptions(teamId: string, token: string) {
+  return request<{ subscriptions: AlertSubscription[] }>(`/subscriptions?teamId=${teamId}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function createSubscription(
+  token: string,
+  data: { teamId: string; ruleId?: string; channel: string; config: Record<string, unknown>; severities?: string[] },
+) {
+  return request<{ subscription: AlertSubscription }>("/subscriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteSubscription(id: string, token: string) {
+  return request<void>(`/subscriptions/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export async function getIssues(teamId: string, filters?: { status?: string; service?: string }) {
+  const params = new URLSearchParams({ teamId });
+  if (filters?.status) params.set("status", filters.status);
+  if (filters?.service) params.set("service", filters.service);
+  return request<{ issues: Issue[]; total: number }>(`/issues?${params.toString()}`);
 }
 
 export function streamLogs(teamId: string) {

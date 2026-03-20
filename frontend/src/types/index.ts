@@ -59,3 +59,30 @@ export interface AlertIncident {
   createdAt: string;
 }
 
+export interface AlertSubscription {
+  id: string;
+  userId: string;
+  teamId: string;
+  ruleId: string | null;
+  channel: "EMAIL" | "WEBHOOK" | "SLACK" | "MSTEAMS";
+  config: Record<string, unknown>;
+  severities: string[];
+  enabled: boolean;
+  createdAt: string;
+  rule?: { id: string; name: string } | null;
+}
+
+export interface Issue {
+  id: string;
+  teamId: string;
+  fingerprint: string;
+  title: string;
+  level: string;
+  service: string;
+  status: "NEW" | "ONGOING" | "RESOLVED" | "IGNORED";
+  firstSeen: string;
+  lastSeen: string;
+  eventCount: number;
+  assignee?: { id: string; name: string; email: string } | null;
+}
+

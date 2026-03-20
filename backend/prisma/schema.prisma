@@ -8,15 +8,19 @@ datasource db {
 }
 
 model User {
-  id           String       @id @default(uuid())
-  email        String       @unique
-  passwordHash String
-  name         String
-  role         UserRole     @default(USER)
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
-  teams        TeamMember[]
-  sessions     Session[]
+  id               String              @id @default(uuid())
+  email            String              @unique
+  passwordHash     String
+  name             String
+  role             UserRole            @default(USER)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  teams            TeamMember[]
+  sessions         Session[]
+  subscriptions    AlertSubscription[]
+  incidentEvents   IncidentEvent[]
+  assignedIssues   Issue[]
+  escalationSteps  EscalationStep[]
 }
 
 model Session {
@@ -36,10 +40,14 @@ model Team {
   slug       String       @unique
   plan       Plan         @default(FREE)
   createdAt  DateTime     @default(now())
-  members    TeamMember[]
-  sources    LogSource[]
-  alerts     AlertRule[]
-  dashboards Dashboard[]
+  members       TeamMember[]
+  sources       LogSource[]
+  alerts        AlertRule[]
+  dashboards    Dashboard[]
+  subscriptions      AlertSubscription[]
+  issues             Issue[]
+  escalationPolicies EscalationPolicy[]
+  maintenanceWindows MaintenanceWindow[]
 }
 
 model TeamMember {
@@ -78,20 +86,23 @@ model AlertRule {
   threshold     Int
   windowMinutes Int            @default(5)
   enabled       Boolean        @default(true)
+  muteUntil     DateTime?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
   team          Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
   incidents     AlertIncident[]
+  subscriptions AlertSubscription[]
 }
 
 model AlertIncident {
-  id        String         @id @default(uuid())
+  id        String          @id @default(uuid())
   ruleId    String
-  status    IncidentStatus @default(OPEN)
+  status    IncidentStatus  @default(OPEN)
   severity  Severity
   message   String
-  createdAt DateTime       @default(now())
-  rule      AlertRule      @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  createdAt DateTime        @default(now())
+  rule      AlertRule       @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  events    IncidentEvent[]
 }
 
 model Dashboard {
@@ -157,5 +168,125 @@ enum Severity {
   HIGH
   MEDIUM
   LOW
+}
+
+// --- Incident Events (audit trail) ---
+
+enum IncidentAction {
+  ACKNOWLEDGED
+  RESOLVED
+  REOPENED
+  COMMENTED
+}
+
+model IncidentEvent {
+  id         String         @id @default(uuid())
+  incidentId String
+  incident   AlertIncident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User           @relation(fields: [userId], references: [id])
+  action     IncidentAction
+  comment    String?
+  createdAt  DateTime       @default(now())
+
+  @@index([incidentId])
+}
+
+// --- Alert Subscriptions ---
+
+enum NotificationChannel {
+  EMAIL
+  WEBHOOK
+  SLACK
+  MSTEAMS
+}
+
+model AlertSubscription {
+  id         String              @id @default(uuid())
+  userId     String
+  user       User                @relation(fields: [userId], references: [id])
+  teamId     String
+  team       Team                @relation(fields: [teamId], references: [id])
+  ruleId     String?
+  rule       AlertRule?          @relation(fields: [ruleId], references: [id])
+  channel    NotificationChannel
+  config     Json
+  severities String[]
+  enabled    Boolean             @default(true)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+
+  @@index([teamId])
+  @@index([userId])
+}
+
+// --- Error Grouping / Issues ---
+
+enum IssueStatus {
+  NEW
+  ONGOING
+  RESOLVED
+  IGNORED
+}
+
+model Issue {
+  id          String      @id @default(uuid())
+  teamId      String
+  team        Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  fingerprint String
+  title       String
+  level       String
+  service     String      @default("unknown")
+  status      IssueStatus @default(NEW)
+  firstSeen   DateTime
+  lastSeen    DateTime
+  eventCount  Int         @default(1)
+  assigneeId  String?
+  assignee    User?       @relation(fields: [assigneeId], references: [id])
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([teamId, fingerprint])
+}
+
+// --- Escalation Policies ---
+
+model EscalationPolicy {
+  id     String           @id @default(uuid())
+  teamId String
+  team   Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name   String
+  steps  EscalationStep[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model EscalationStep {
+  id               String           @id @default(uuid())
+  policyId         String
+  policy           EscalationPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  delayMinutes     Int              // minutes after incident creation to escalate
+  notifyUserId     String?
+  notifyUser       User?            @relation(fields: [notifyUserId], references: [id])
+  notifyChannel    NotificationChannel
+  notifyConfig     Json             // channel-specific config
+  stepOrder        Int              // 0-based order
+
+  @@index([policyId])
+}
+
+// --- Maintenance Windows ---
+
+model MaintenanceWindow {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name      String
+  startsAt  DateTime
+  endsAt    DateTime
+  createdAt DateTime @default(now())
+
+  @@index([teamId])
 }
 

@@ -4,6 +4,7 @@ import { logger } from "./logger.js";
 import { connectDatabase, disconnectDatabase } from "./repositories/prisma.js";
 import { connectClickHouse, disconnectClickHouse } from "./repositories/clickhouse.js";
 import { connectRedis, disconnectRedis } from "./repositories/redis.js";
+import { AlertEvaluationWorker } from "./services/alert/alert-evaluation-worker.js";
 
 async function connectWithRetry(
   name: string,
@@ -31,9 +32,11 @@ async function main() {
   ]);
 
   const app = createApp();
+  const alertWorker = new AlertEvaluationWorker();
 
   const server = app.listen(config.port, config.host, () => {
     logger.info({ port: config.port, host: config.host, env: config.nodeEnv }, "Server started");
+    alertWorker.start();
   });
 
   server.keepAliveTimeout = 65_000;
@@ -41,6 +44,7 @@ async function main() {
 
   async function shutdown(signal: string) {
     logger.info({ signal }, "Shutting down gracefully");
+    alertWorker.stop();
     server.close(async () => {
       await Promise.all([disconnectDatabase(), disconnectClickHouse(), disconnectRedis()]);
       logger.info("Shutdown complete");

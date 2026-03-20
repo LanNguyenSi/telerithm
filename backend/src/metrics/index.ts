@@ -37,3 +37,16 @@ export const activeConnections = new Gauge({
   help: "Number of active SSE streaming connections",
   registers: [registry],
 });
+
+export const alertEvaluationsTotal = new Counter({
+  name: "logforge_alert_evaluations_total",
+  help: "Total number of alert rule evaluations",
+  labelNames: ["status"] as const,
+  registers: [registry],
+});
+
+export const alertIncidentsCreatedTotal = new Counter({
+  name: "logforge_alert_incidents_created_total",
+  help: "Total number of alert incidents created by evaluation worker",
+  registers: [registry],
+});
