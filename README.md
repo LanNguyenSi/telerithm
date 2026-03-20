@@ -10,30 +10,30 @@ Telerithm helps you understand what's happening in your systems. Instead of grep
 
 **Available now:**
 
-- **Natural Language Search** — Ask _"show me payment failures from the last hour"_ instead of writing SQL
-- **Real-time Log Streaming** — SSE-based live tail for newly ingested logs
-- **Multi-Source Ingestion** — HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
-- **Alert Rules & Incidents** — Threshold-based alerts with severity levels and incident lifecycle
-- **Notification Channels** — Email, Webhook, Slack, Microsoft Teams
-- **Error Grouping** — Automatic issue fingerprinting with assignment workflow
-- **Escalation Policies** — Timed escalation steps with configurable notification channels
-- **Maintenance Windows** — Suppress alerts during scheduled downtime
-- **Team Management** — Multi-tenant with role-based access (Owner, Admin, Member, Viewer)
-- **Invite System** — Token-based team invites with optional email restriction
-- **Admin API** — User management, team overview, system statistics
-- **Self-Hosted First** — Single-tenant default, optional multi-tenancy via config flag
+- **Natural Language Search**:Ask _"show me payment failures from the last hour"_ instead of writing SQL
+- **Real-time Log Streaming**:SSE-based live tail for newly ingested logs
+- **Multi-Source Ingestion**:HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
+- **Alert Rules & Incidents**:Threshold-based alerts with severity levels and incident lifecycle
+- **Notification Channels**:Email, Webhook, Slack, Microsoft Teams
+- **Error Grouping**:Automatic issue fingerprinting with assignment workflow
+- **Escalation Policies**:Timed escalation steps with configurable notification channels
+- **Maintenance Windows**:Suppress alerts during scheduled downtime
+- **Team Management**:Multi-tenant with role-based access (Owner, Admin, Member, Viewer)
+- **Invite System**:Token-based team invites with optional email restriction
+- **Admin API**:User management, team overview, system statistics
+- **Self-Hosted First**:Single-tenant default, optional multi-tenancy via config flag
 
 **Planned:**
 
-- **AI Root Cause Analysis** — Automatic incident summarization with fix suggestions
-- **AI Anomaly Detection** — Pattern deviation alerts without manual threshold config
-- **Log Pattern Clustering** — Group similar log lines to reduce noise
-- **Saved Queries & Dashboards** — Custom dashboard builder with persistent views
-- **RBAC for Sources** — Per-source access control within teams
-- **SSO / OIDC** — Enterprise authentication providers
-- **Retention Policies** — Per-source configurable log retention
-- **Metrics Export** — Prometheus endpoint for operational monitoring
-- **CLI Tool** — `telerithm` command for local debugging and log tailing
+- **AI Root Cause Analysis**:Automatic incident summarization with fix suggestions
+- **AI Anomaly Detection**:Pattern deviation alerts without manual threshold config
+- **Log Pattern Clustering**:Group similar log lines to reduce noise
+- **Saved Queries & Dashboards**:Custom dashboard builder with persistent views
+- **RBAC for Sources**:Per-source access control within teams
+- **SSO / OIDC**:Enterprise authentication providers
+- **Retention Policies**:Per-source configurable log retention
+- **Metrics Export**:Prometheus endpoint for operational monitoring
+- **CLI Tool**:`telerithm` command for local debugging and log tailing
 
 ---
 
@@ -91,8 +91,8 @@ Key environment variables for the backend (`.env`):
 | Variable         | Default                  | Description                                      |
 |------------------|--------------------------|--------------------------------------------------|
 | `PORT`           | `4000`                   | API server port                                  |
-| `DATABASE_URL`   | —                        | PostgreSQL connection string                     |
-| `CLICKHOUSE_URL` | —                        | ClickHouse connection string                     |
+| `DATABASE_URL`   |:                       | PostgreSQL connection string                     |
+| `CLICKHOUSE_URL` |:                       | ClickHouse connection string                     |
 | `REDIS_URL`      | `redis://localhost:6379` | Redis connection string                          |
 | `MULTI_TENANT`   | `false`                  | `true`: users create teams. `false`: single team |
 | `CORS_ORIGINS`   | `http://localhost:3000`  | Allowed CORS origins                             |
