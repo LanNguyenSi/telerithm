@@ -26,7 +26,7 @@ export async function sendWebhook(
   // HMAC-SHA256 signature if secret is configured
   if (options?.secret) {
     const signature = createHmac("sha256", options.secret).update(body).digest("hex");
-    reqHeaders["X-LogForge-Signature"] = `sha256=${signature}`;
+    reqHeaders["X-Telerithm-Signature"] = `sha256=${signature}`;
   }
 
   const res = await fetch(url, {

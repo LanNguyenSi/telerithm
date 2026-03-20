@@ -239,8 +239,8 @@ describe("API Routes", () => {
     it("returns Prometheus metrics", async () => {
       const res = await app.get("/metrics");
       expect(res.status).toBe(200);
-      expect(res.text).toContain("logforge_http_requests_total");
-      expect(res.text).toContain("logforge_http_request_duration_ms");
+      expect(res.text).toContain("telerithm_http_requests_total");
+      expect(res.text).toContain("telerithm_http_request_duration_ms");
     });
   });
 
@@ -256,7 +256,7 @@ describe("API Routes", () => {
       const res = await app.get("/openapi.json");
       expect(res.status).toBe(200);
       expect(res.body.openapi).toBe("3.0.3");
-      expect(res.body.info.title).toBe("LogForge API");
+      expect(res.body.info.title).toBe("Telerithm API");
     });
   });
 

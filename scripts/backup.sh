@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# LogForge Backup Script
+# Telerithm Backup Script
 # Usage: ./scripts/backup.sh [backup_dir]
-# Cron:  0 2 * * * /path/to/logforge/scripts/backup.sh /backups/logforge
+# Cron:  0 2 * * * /path/to/telerithm/scripts/backup.sh /backups/telerithm
 
 BACKUP_DIR="${1:-./backups}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -15,7 +15,7 @@ echo "[backup] Starting backup at ${TIMESTAMP}"
 
 # PostgreSQL backup
 echo "[backup] Dumping PostgreSQL..."
-docker compose exec -T postgres pg_dump -U logforge logforge \
+docker compose exec -T postgres pg_dump -U telerithm telerithm \
   | gzip > "${BACKUP_PATH}/postgres.sql.gz"
 echo "[backup] PostgreSQL dump complete"
 

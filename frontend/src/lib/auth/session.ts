@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 
-const TOKEN_COOKIE = "logforge_token";
-const USER_COOKIE = "logforge_user";
+const TOKEN_COOKIE = "telerithm_token";
+const USER_COOKIE = "telerithm_user";
 
 export interface SessionUser {
   id: string;

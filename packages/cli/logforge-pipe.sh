@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
-# LogForge stdin pipe — ships stdin lines to LogForge ingest API
+# Telerithm stdin pipe — ships stdin lines to Telerithm ingest API
 #
 # Usage:
-#   my-app 2>&1 | ./logforge-pipe.sh
-#   tail -f /var/log/app.log | LOGFORGE_URL=http://localhost:4000 LOGFORGE_SOURCE_ID=xxx LOGFORGE_API_KEY=lf_xxx ./logforge-pipe.sh
+#   my-app 2>&1 | ./telerithm-pipe.sh
+#   tail -f /var/log/app.log | TELERITHM_URL=http://localhost:4000 TELERITHM_SOURCE_ID=xxx TELERITHM_API_KEY=lf_xxx ./telerithm-pipe.sh
 #
 # Environment variables:
-#   LOGFORGE_URL       - LogForge backend URL (default: http://localhost:4000)
-#   LOGFORGE_SOURCE_ID - Source ID to ingest into (required)
-#   LOGFORGE_API_KEY   - API key for the source (required)
+#   TELERITHM_URL       - Telerithm backend URL (default: http://localhost:4000)
+#   TELERITHM_SOURCE_ID - Source ID to ingest into (required)
+#   TELERITHM_API_KEY   - API key for the source (required)
 #   BATCH_SIZE         - Max lines per batch (default: 50)
 #   FLUSH_INTERVAL     - Seconds between flushes (default: 5)
 
 set -euo pipefail
 
-: "${LOGFORGE_URL:=http://localhost:4000}"
-: "${LOGFORGE_SOURCE_ID:?LOGFORGE_SOURCE_ID is required}"
-: "${LOGFORGE_API_KEY:?LOGFORGE_API_KEY is required}"
+: "${TELERITHM_URL:=http://localhost:4000}"
+: "${TELERITHM_SOURCE_ID:?TELERITHM_SOURCE_ID is required}"
+: "${TELERITHM_API_KEY:?TELERITHM_API_KEY is required}"
 : "${BATCH_SIZE:=50}"
 : "${FLUSH_INTERVAL:=5}"
 
-ENDPOINT="${LOGFORGE_URL}/api/v1/ingest/${LOGFORGE_SOURCE_ID}"
+ENDPOINT="${TELERITHM_URL}/api/v1/ingest/${TELERITHM_SOURCE_ID}"
 BUFFER=()
 LAST_FLUSH=$(date +%s)
 
@@ -48,7 +48,7 @@ flush() {
 
   curl -s -X POST "$ENDPOINT" \
     -H "Content-Type: application/json" \
-    -H "X-API-Key: ${LOGFORGE_API_KEY}" \
+    -H "X-API-Key: ${TELERITHM_API_KEY}" \
     -d "$payload" > /dev/null 2>&1 || true
 
   BUFFER=()

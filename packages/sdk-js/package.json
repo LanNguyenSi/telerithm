@@ -1,7 +1,7 @@
 {
-  "name": "@logforge/sdk",
+  "name": "@telerithm/sdk",
   "version": "0.1.0",
-  "description": "LogForge client SDK for JavaScript/TypeScript",
+  "description": "Telerithm client SDK for JavaScript/TypeScript",
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",

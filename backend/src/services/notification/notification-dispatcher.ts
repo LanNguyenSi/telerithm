@@ -86,7 +86,7 @@ export class NotificationDispatcher {
           case "EMAIL": {
             await sendEmail({
               to: config.email ?? subscription.user.email,
-              subject: `[LogForge] ${incident.severity} Alert: ${incident.message.slice(0, 80)}`,
+              subject: `[Telerithm] ${incident.severity} Alert: ${incident.message.slice(0, 80)}`,
               body: [
                 `Incident: ${incident.id}`,
                 `Severity: ${incident.severity}`,

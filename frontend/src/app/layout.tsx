@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "LogForge",
+  title: "Telerithm",
   description: "AI-powered log analytics MVP",
 };
 

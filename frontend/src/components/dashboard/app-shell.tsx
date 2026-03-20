@@ -23,7 +23,7 @@ export function AppShell({ children, user }: AppShellProps) {
         <header className="rounded-[32px] border border-white/70 bg-white/65 px-6 py-5 shadow-panel backdrop-blur">
           <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <p className="font-mono text-xs uppercase tracking-[0.4em] text-muted">LogForge</p>
+              <p className="font-mono text-xs uppercase tracking-[0.4em] text-muted">Telerithm</p>
               <h1 className="mt-2 text-3xl font-semibold tracking-tight">Operational clarity for noisy systems</h1>
             </div>
             <div className="flex flex-col items-end gap-3">

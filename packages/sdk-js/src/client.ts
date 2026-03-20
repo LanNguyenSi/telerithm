@@ -4,7 +4,7 @@ import { BreadcrumbTracker, type Breadcrumb } from "./integrations/breadcrumbs.j
 
 export type LogLevel = "debug" | "info" | "warn" | "error" | "fatal";
 
-export interface LogForgeOptions {
+export interface TelerithmOptions {
   /** DSN format: https://<apiKey>@<host>/<sourceId> or just the ingest URL */
   dsn?: string;
   /** Direct config (alternative to DSN) */
@@ -51,7 +51,7 @@ function parseDsn(dsn: string): { endpoint: string; apiKey: string } {
   };
 }
 
-export class LogForgeClient {
+export class TelerithmClient {
   private transport: TransportConfig;
   private queue: QueuedLog[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -64,7 +64,7 @@ export class LogForgeClient {
   private tags: Record<string, string> = {};
   private user: Record<string, string> = {};
 
-  constructor(options: LogForgeOptions) {
+  constructor(options: TelerithmOptions) {
     if (options.dsn) {
       const parsed = parseDsn(options.dsn);
       this.transport = { ...parsed, timeout: options.timeout };
@@ -76,7 +76,7 @@ export class LogForgeClient {
         timeout: options.timeout,
       };
     } else {
-      throw new Error("LogForge: provide either `dsn` or `endpoint` + `apiKey`");
+      throw new Error("Telerithm: provide either `dsn` or `endpoint` + `apiKey`");
     }
 
     this.service = options.service ?? "unknown";

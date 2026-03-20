@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:15
     environment:
-      POSTGRES_USER: logforge
-      POSTGRES_PASSWORD: logforge
-      POSTGRES_DB: logforge
+      POSTGRES_USER: telerithm
+      POSTGRES_PASSWORD: telerithm
+      POSTGRES_DB: telerithm
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U logforge"]
+      test: ["CMD-SHELL", "pg_isready -U telerithm"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -43,7 +43,7 @@ services:
       HOST: 0.0.0.0
       PORT: 4000
       NODE_ENV: production
-      DATABASE_URL: postgresql://logforge:logforge@postgres:5432/logforge
+      DATABASE_URL: postgresql://telerithm:telerithm@postgres:5432/telerithm
       CLICKHOUSE_URL: http://clickhouse:8123
       REDIS_URL: redis://redis:6379
       CORS_ORIGINS: http://localhost:3000

@@ -11,7 +11,7 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-paper">
       <div className="w-full max-w-sm space-y-6 px-6">
         <div>
-          <p className="font-mono text-xs uppercase tracking-[0.4em] text-muted">LogForge</p>
+          <p className="font-mono text-xs uppercase tracking-[0.4em] text-muted">Telerithm</p>
           <h1 className="mt-2 text-2xl font-semibold text-ink">Sign in</h1>
         </div>
 

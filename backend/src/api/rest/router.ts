@@ -647,7 +647,7 @@ apiRouter.post(
         teamId: subscription.teamId,
         severity: "LOW",
         status: "OPEN",
-        message: "This is a test notification from LogForge",
+        message: "This is a test notification from Telerithm",
         createdAt: new Date().toISOString(),
       });
       res.json({ ok: true, message: "Test notification sent" });

@@ -1,6 +1,6 @@
-import type { LogForgeClient } from "../client.js";
+import type { TelerithmClient } from "../client.js";
 
-export function setupGlobalErrorHandlers(client: LogForgeClient): () => void {
+export function setupGlobalErrorHandlers(client: TelerithmClient): () => void {
   const isBrowser = typeof window !== "undefined";
   const isNode = typeof process !== "undefined" && typeof process.on === "function";
   const cleanups: Array<() => void> = [];

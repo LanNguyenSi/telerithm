@@ -37,7 +37,7 @@ export class InMemoryStore {
 
     this.users.push({
       id: userId,
-      email: "demo@logforge.dev",
+      email: "demo@telerithm.dev",
       passwordHash: hashValue("demo123"),
       name: "Demo User",
       role: "ADMIN",

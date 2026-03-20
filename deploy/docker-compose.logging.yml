@@ -2,8 +2,8 @@
 # Usage: docker compose -f docker-compose.yml -f deploy/docker-compose.logging.yml up
 #
 # Required env vars:
-#   LOGFORGE_SOURCE_ID - The source ID to ingest logs into
-#   LOGFORGE_API_KEY   - API key for the source (lf_xxx)
+#   TELERITHM_SOURCE_ID - The source ID to ingest logs into
+#   TELERITHM_API_KEY   - API key for the source (lf_xxx)
 
 services:
   vector:
@@ -13,9 +13,9 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - vector-data:/var/lib/vector
     environment:
-      - LOGFORGE_URL=http://backend:4000
-      - LOGFORGE_SOURCE_ID=${LOGFORGE_SOURCE_ID}
-      - LOGFORGE_API_KEY=${LOGFORGE_API_KEY}
+      - TELERITHM_URL=http://backend:4000
+      - TELERITHM_SOURCE_ID=${TELERITHM_SOURCE_ID}
+      - TELERITHM_API_KEY=${TELERITHM_API_KEY}
     depends_on:
       backend:
         condition: service_healthy

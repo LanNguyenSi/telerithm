@@ -1,21 +1,21 @@
-export { LogForgeClient, type LogForgeOptions, type LogLevel } from "./client.js";
+export { TelerithmClient, type TelerithmOptions, type LogLevel } from "./client.js";
 export type { Breadcrumb } from "./integrations/breadcrumbs.js";
 
-import { LogForgeClient, type LogForgeOptions } from "./client.js";
+import { TelerithmClient, type TelerithmOptions } from "./client.js";
 
-let defaultClient: LogForgeClient | null = null;
+let defaultClient: TelerithmClient | null = null;
 
-/** Initialize the global LogForge client */
-export function init(options: LogForgeOptions): LogForgeClient {
+/** Initialize the global Telerithm client */
+export function init(options: TelerithmOptions): TelerithmClient {
   if (defaultClient) {
     defaultClient.close();
   }
-  defaultClient = new LogForgeClient(options);
+  defaultClient = new TelerithmClient(options);
   return defaultClient;
 }
 
 /** Get the current global client */
-export function getClient(): LogForgeClient | null {
+export function getClient(): TelerithmClient | null {
   return defaultClient;
 }
 

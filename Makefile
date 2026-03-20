@@ -21,7 +21,7 @@ logs:
 init:
 	$(COMPOSE) build
 	$(COMPOSE) up -d
-	@echo "LogForge is starting at http://localhost:3000"
+	@echo "Telerithm is starting at http://localhost:3000"
 	@echo "API docs at http://localhost:4000/docs"
 
 dev:

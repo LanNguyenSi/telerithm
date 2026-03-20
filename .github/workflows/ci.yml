@@ -8,7 +8,7 @@ on:
 
 env:
   NODE_ENV: test
-  DATABASE_URL: postgresql://logforge:logforge@localhost:5432/logforge
+  DATABASE_URL: postgresql://telerithm:telerithm@localhost:5432/telerithm
   CLICKHOUSE_URL: http://localhost:8123
   REDIS_URL: redis://localhost:6379
 
@@ -21,9 +21,9 @@ jobs:
       postgres:
         image: postgres:15
         env:
-          POSTGRES_USER: logforge
-          POSTGRES_PASSWORD: logforge
-          POSTGRES_DB: logforge
+          POSTGRES_USER: telerithm
+          POSTGRES_PASSWORD: telerithm
+          POSTGRES_DB: telerithm
         ports:
           - 5432:5432
         options: >-

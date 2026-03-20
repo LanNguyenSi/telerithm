@@ -1,11 +1,11 @@
-# Vector.dev configuration for shipping container logs to LogForge
-# Usage: LOGFORGE_URL=http://localhost:4000 LOGFORGE_SOURCE_ID=xxx LOGFORGE_API_KEY=lf_xxx vector --config vector.toml
+# Vector.dev configuration for shipping container logs to Telerithm
+# Usage: TELERITHM_URL=http://localhost:4000 TELERITHM_SOURCE_ID=xxx TELERITHM_API_KEY=lf_xxx vector --config vector.toml
 
 # --- Source: Collect Docker container logs ---
 [sources.docker]
 type = "docker_logs"
 # Optionally filter by container labels:
-# include_labels = ["logforge.enabled=true"]
+# include_labels = ["telerithm.enabled=true"]
 
 # --- Transform: Parse and normalize log entries ---
 [transforms.parse]
@@ -37,7 +37,7 @@ if err == null {
 .timestamp = to_string(.timestamp)
 '''
 
-# --- Transform: Format for LogForge ingest API ---
+# --- Transform: Format for Telerithm ingest API ---
 [transforms.format]
 type = "remap"
 inputs = ["parse"]
@@ -52,26 +52,26 @@ source = '''
 }
 '''
 
-# --- Sink: Send to LogForge HTTP ingest endpoint ---
-[sinks.logforge]
+# --- Sink: Send to Telerithm HTTP ingest endpoint ---
+[sinks.telerithm]
 type = "http"
 inputs = ["format"]
-uri = "${LOGFORGE_URL}/api/v1/ingest/${LOGFORGE_SOURCE_ID}"
+uri = "${TELERITHM_URL}/api/v1/ingest/${TELERITHM_SOURCE_ID}"
 method = "post"
 encoding.codec = "json"
 
 # Batch settings: send every 5s or when 100 events are buffered
-[sinks.logforge.batch]
+[sinks.telerithm.batch]
 max_events = 100
 timeout_secs = 5
 
-# Wrap events in the LogForge ingest format
-[sinks.logforge.request]
-headers.X-API-Key = "${LOGFORGE_API_KEY}"
+# Wrap events in the Telerithm ingest format
+[sinks.telerithm.request]
+headers.X-API-Key = "${TELERITHM_API_KEY}"
 headers.Content-Type = "application/json"
 
 # Buffer to disk for reliability
-[sinks.logforge.buffer]
+[sinks.telerithm.buffer]
 type = "disk"
 max_size = 104857600  # 100MB
 when_full = "block"

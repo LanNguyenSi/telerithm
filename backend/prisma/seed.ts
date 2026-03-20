@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 const prisma = new PrismaClient();
 
 async function main() {
-  const existingUser = await prisma.user.findUnique({ where: { email: "demo@logforge.dev" } });
+  const existingUser = await prisma.user.findUnique({ where: { email: "demo@telerithm.dev" } });
   if (existingUser) {
     console.log("Seed data already exists, skipping.");
     return;
@@ -13,7 +13,7 @@ async function main() {
 
   const user = await prisma.user.create({
     data: {
-      email: "demo@logforge.dev",
+      email: "demo@telerithm.dev",
       passwordHash: hashSync("demo123", 12),
       name: "Demo User",
       role: "ADMIN",

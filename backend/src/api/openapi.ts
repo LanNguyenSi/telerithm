@@ -1,7 +1,7 @@
 export const openApiSpec = {
   openapi: "3.0.3",
   info: {
-    title: "LogForge API",
+    title: "Telerithm API",
     version: "1.0.0",
     description: "AI-powered log analytics platform",
   },
