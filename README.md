@@ -10,30 +10,30 @@ Telerithm helps you understand what's happening in your systems. Instead of grep
 
 **Available now:**
 
-- **Natural Language Search**:Ask _"show me payment failures from the last hour"_ instead of writing SQL
-- **Real-time Log Streaming**:SSE-based live tail for newly ingested logs
-- **Multi-Source Ingestion**:HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
-- **Alert Rules & Incidents**:Threshold-based alerts with severity levels and incident lifecycle
-- **Notification Channels**:Email, Webhook, Slack, Microsoft Teams
-- **Error Grouping**:Automatic issue fingerprinting with assignment workflow
-- **Escalation Policies**:Timed escalation steps with configurable notification channels
-- **Maintenance Windows**:Suppress alerts during scheduled downtime
-- **Team Management**:Multi-tenant with role-based access (Owner, Admin, Member, Viewer)
-- **Invite System**:Token-based team invites with optional email restriction
-- **Admin API**:User management, team overview, system statistics
-- **Self-Hosted First**:Single-tenant default, optional multi-tenancy via config flag
+- **Natural Language Search** - ask _"show me payment failures from the last hour"_ instead of writing SQL
+- **Real-time Log Streaming** - SSE-based live tail for newly ingested logs
+- **Multi-Source Ingestion** - HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
+- **Alert Rules & Incidents** - threshold-based alerts with severity levels and incident lifecycle
+- **Notification Channels** - Email, Webhook, Slack, Microsoft Teams
+- **Error Grouping** - automatic issue fingerprinting with assignment workflow
+- **Escalation Policies** - timed escalation steps with configurable notification channels
+- **Maintenance Windows** - suppress alerts during scheduled downtime
+- **Team Management** - multi-tenant with role-based access (Owner, Admin, Member, Viewer)
+- **Invite System** - token-based team invites with optional email restriction
+- **Admin API** - user management, team overview, system statistics
+- **Self-Hosted First** - single-tenant default, optional multi-tenancy via config flag
 
 **Planned:**
 
-- **AI Root Cause Analysis**:Automatic incident summarization with fix suggestions
-- **AI Anomaly Detection**:Pattern deviation alerts without manual threshold config
-- **Log Pattern Clustering**:Group similar log lines to reduce noise
-- **Saved Queries & Dashboards**:Custom dashboard builder with persistent views
-- **RBAC for Sources**:Per-source access control within teams
-- **SSO / OIDC**:Enterprise authentication providers
-- **Retention Policies**:Per-source configurable log retention
-- **Metrics Export**:Prometheus endpoint for operational monitoring
-- **CLI Tool**:`telerithm` command for local debugging and log tailing
+- **AI Root Cause Analysis** - automatic incident summarization with fix suggestions
+- **AI Anomaly Detection** - pattern deviation alerts without manual threshold config
+- **Log Pattern Clustering** - group similar log lines to reduce noise
+- **Saved Queries & Dashboards** - custom dashboard builder with persistent views
+- **RBAC for Sources** - per-source access control within teams
+- **SSO / OIDC** - enterprise authentication providers
+- **Retention Policies** - per-source configurable log retention
+- **Metrics Export** - Prometheus endpoint for operational monitoring
+- **CLI Tool** - `telerithm` command for local debugging and log tailing
 
 ---
 
@@ -47,13 +47,13 @@ make init
 
 This starts the full stack:
 
-| Service    | URL                        |
-|------------|----------------------------|
-| Frontend   | http://localhost:3000       |
-| Backend    | http://localhost:4000       |
-| PostgreSQL | localhost:5432              |
-| ClickHouse | localhost:8123              |
-| Redis      | localhost:6379              |
+| Service    | URL                  |
+|------------|----------------------|
+| Frontend   | http://localhost:3000 |
+| Backend    | http://localhost:4000 |
+| PostgreSQL | localhost:5432        |
+| ClickHouse | localhost:8123        |
+| Redis      | localhost:6379        |
 
 ```bash
 make logs    # follow container logs
@@ -91,12 +91,12 @@ Key environment variables for the backend (`.env`):
 | Variable         | Default                  | Description                                      |
 |------------------|--------------------------|--------------------------------------------------|
 | `PORT`           | `4000`                   | API server port                                  |
-| `DATABASE_URL`   |:                       | PostgreSQL connection string                     |
-| `CLICKHOUSE_URL` |:                       | ClickHouse connection string                     |
+| `DATABASE_URL`   | *required*               | PostgreSQL connection string                     |
+| `CLICKHOUSE_URL` | *required*               | ClickHouse connection string                     |
 | `REDIS_URL`      | `redis://localhost:6379` | Redis connection string                          |
 | `MULTI_TENANT`   | `false`                  | `true`: users create teams. `false`: single team |
 | `CORS_ORIGINS`   | `http://localhost:3000`  | Allowed CORS origins                             |
-| `LOG_LEVEL`      | `info`                   | `fatal\|error\|warn\|info\|debug\|trace`         |
+| `LOG_LEVEL`      | `info`                   | fatal, error, warn, info, debug, trace           |
 
 ---
 
@@ -157,24 +157,24 @@ log.error("Payment authorization failed", {
 
 All endpoints are under `/api/v1`. Auth endpoints use Bearer tokens.
 
-| Method   | Path                              | Description              |
-|----------|-----------------------------------|--------------------------|
-| `POST`   | `/auth/register`                  | Create account           |
-| `POST`   | `/auth/login`                     | Sign in                  |
-| `GET`    | `/teams`                          | List user's teams        |
-| `POST`   | `/teams`                          | Create team              |
-| `POST`   | `/teams/:id/invites`              | Create team invite       |
-| `POST`   | `/invites/:token/accept`          | Accept invite            |
-| `POST`   | `/ingest/:sourceId`               | Ingest logs (API key)    |
-| `POST`   | `/logs/search`                    | Search logs              |
-| `POST`   | `/query/natural`                  | Natural language query   |
-| `GET`    | `/stream/logs`                    | SSE live tail            |
-| `GET`    | `/alerts/rules`                   | List alert rules         |
-| `GET`    | `/alerts/incidents`               | List incidents           |
-| `GET`    | `/issues`                         | List grouped errors      |
-| `GET`    | `/admin/users`                    | Admin: list users        |
-| `GET`    | `/admin/stats`                    | Admin: system stats      |
-| `GET`    | `/health`                         | Health check             |
+| Method   | Path                         | Description            |
+|----------|------------------------------|------------------------|
+| `POST`   | `/auth/register`             | Create account         |
+| `POST`   | `/auth/login`                | Sign in                |
+| `GET`    | `/teams`                     | List user's teams      |
+| `POST`   | `/teams`                     | Create team            |
+| `POST`   | `/teams/:id/invites`         | Create team invite     |
+| `POST`   | `/invites/:token/accept`     | Accept invite          |
+| `POST`   | `/ingest/:sourceId`          | Ingest logs (API key)  |
+| `POST`   | `/logs/search`               | Search logs            |
+| `POST`   | `/query/natural`             | Natural language query  |
+| `GET`    | `/stream/logs`               | SSE live tail          |
+| `GET`    | `/alerts/rules`              | List alert rules       |
+| `GET`    | `/alerts/incidents`          | List incidents         |
+| `GET`    | `/issues`                    | List grouped errors    |
+| `GET`    | `/admin/users`               | Admin: list users      |
+| `GET`    | `/admin/stats`               | Admin: system stats    |
+| `GET`    | `/health`                    | Health check           |
 
 Full OpenAPI spec available at `GET /api/v1/openapi.json`.
 
@@ -182,7 +182,7 @@ Full OpenAPI spec available at `GET /api/v1/openapi.json`.
 
 ## Contributing
 
-Contributions are welcome. Please open an issue first to discuss what you'd like to change.
+Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup instructions and guidelines.
 
 ```bash
 # Run backend tests
@@ -197,4 +197,4 @@ cd frontend && npx tsc --noEmit
 
 ## License
 
-MIT
+[MIT](./LICENSE)
