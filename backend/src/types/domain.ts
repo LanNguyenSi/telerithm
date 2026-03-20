@@ -2,8 +2,6 @@ export type QueryType = "sql" | "natural";
 export type LogFormat = "json" | "syslog_rfc3164" | "syslog_rfc5424" | "plain";
 export type LogLevel = "debug" | "info" | "warn" | "error" | "fatal";
 export type SourceType = "HTTP" | "SYSLOG_UDP" | "SYSLOG_TCP" | "FILEBEAT" | "DOCKER" | "CLOUDWATCH";
-export type TeamPlan = "FREE" | "STARTER" | "PRO" | "ENTERPRISE";
-
 export interface LogEntry {
   id: string;
   teamId: string;
@@ -70,7 +68,18 @@ export interface Team {
   id: string;
   name: string;
   slug: string;
-  plan: TeamPlan;
+  createdAt: string;
+}
+
+export interface TeamInvite {
+  id: string;
+  teamId: string;
+  email?: string | null;
+  token: string;
+  role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
+  createdBy: string;
+  expiresAt: string;
+  usedAt?: string | null;
   createdAt: string;
 }
 

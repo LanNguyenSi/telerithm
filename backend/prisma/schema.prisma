@@ -38,7 +38,6 @@ model Team {
   id         String       @id @default(uuid())
   name       String
   slug       String       @unique
-  plan       Plan         @default(FREE)
   createdAt  DateTime     @default(now())
   members       TeamMember[]
   sources       LogSource[]
@@ -48,6 +47,7 @@ model Team {
   issues             Issue[]
   escalationPolicies EscalationPolicy[]
   maintenanceWindows MaintenanceWindow[]
+  invites            TeamInvite[]
 }
 
 model TeamMember {
@@ -126,13 +126,6 @@ enum TeamRole {
   ADMIN
   MEMBER
   VIEWER
-}
-
-enum Plan {
-  FREE
-  STARTER
-  PRO
-  ENTERPRISE
 }
 
 enum SourceType {
@@ -274,6 +267,23 @@ model EscalationStep {
   stepOrder        Int              // 0-based order
 
   @@index([policyId])
+}
+
+// --- Team Invites ---
+
+model TeamInvite {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  email     String?
+  token     String   @unique
+  role      TeamRole @default(MEMBER)
+  createdBy String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([teamId])
 }
 
 // --- Maintenance Windows ---

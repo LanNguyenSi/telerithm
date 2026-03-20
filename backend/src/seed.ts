@@ -24,7 +24,6 @@ async function main() {
     data: {
       name: "Demo Team",
       slug: "demo-team",
-      plan: "PRO",
       members: {
         create: { userId: user.id, role: "OWNER" },
       },

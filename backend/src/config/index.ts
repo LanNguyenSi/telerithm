@@ -9,6 +9,10 @@ const configSchema = z.object({
   logLevel: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   corsOrigins: z.string().default("http://localhost:3000"),
   redisUrl: z.string().url().default("redis://localhost:6379"),
+  multiTenant: z
+    .enum(["true", "false", "1", "0"])
+    .default("false")
+    .transform((v) => v === "true" || v === "1"),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -23,6 +27,7 @@ function loadConfig(): Config {
     logLevel: process.env.LOG_LEVEL,
     corsOrigins: process.env.CORS_ORIGINS,
     redisUrl: process.env.REDIS_URL,
+    multiTenant: process.env.MULTI_TENANT,
   });
 
   if (!result.success) {

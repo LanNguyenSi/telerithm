@@ -1,7 +1,8 @@
-import { AppShell } from "@/components/dashboard/app-shell";
+import { AuthedShell } from "@/components/dashboard/authed-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { getAlertRules, getSubscriptions, getTeams, login } from "@/lib/api/client";
+import { getAlertRules, getSubscriptions } from "@/lib/api/client";
+import { requireAuth } from "@/lib/auth/guard";
 import { formatDate } from "@/lib/utils/format";
 
 export const dynamic = "force-dynamic";
@@ -14,16 +15,14 @@ function channelTone(channel: string) {
 }
 
 export default async function SubscriptionsPage() {
-  const auth = await login();
-  const { teams } = await getTeams(auth.token);
-  const team = teams[0];
+  const { token, team } = await requireAuth();
   const [{ subscriptions }, { rules }] = await Promise.all([
-    getSubscriptions(team.id, auth.token),
+    getSubscriptions(team.id, token),
     getAlertRules(team.id),
   ]);
 
   return (
-    <AppShell>
+    <AuthedShell>
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <Card>
           <h2 className="text-xl font-semibold text-ink">My Subscriptions</h2>
@@ -86,6 +85,6 @@ export default async function SubscriptionsPage() {
           </div>
         </Card>
       </div>
-    </AppShell>
+    </AuthedShell>
   );
 }

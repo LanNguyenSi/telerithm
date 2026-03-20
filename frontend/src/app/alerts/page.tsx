@@ -1,22 +1,21 @@
 import Link from "next/link";
-import { AppShell } from "@/components/dashboard/app-shell";
+import { AuthedShell } from "@/components/dashboard/authed-shell";
 import { IncidentList } from "@/components/alerts/incident-list";
 import { Card } from "@/components/ui/card";
-import { getAlertIncidents, getAlertRules, getTeams, login } from "@/lib/api/client";
+import { getAlertIncidents, getAlertRules } from "@/lib/api/client";
+import { requireAuth } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 
 export default async function AlertsPage() {
-  const auth = await login();
-  const { teams } = await getTeams(auth.token);
-  const team = teams[0];
+  const { team } = await requireAuth();
   const [{ incidents }, { rules }] = await Promise.all([
     getAlertIncidents(team.id),
     getAlertRules(team.id),
   ]);
 
   return (
-    <AppShell>
+    <AuthedShell>
       <div className="mb-6 flex items-center justify-between">
         <h2 className="text-2xl font-semibold text-ink">Alerts</h2>
         <Link
@@ -41,6 +40,6 @@ export default async function AlertsPage() {
           </div>
         </Card>
       </section>
-    </AppShell>
+    </AuthedShell>
   );
 }

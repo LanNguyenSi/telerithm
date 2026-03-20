@@ -1,19 +1,18 @@
-import { AppShell } from "@/components/dashboard/app-shell";
+import { AuthedShell } from "@/components/dashboard/authed-shell";
 import { IncidentList } from "@/components/alerts/incident-list";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { ServiceList } from "@/components/dashboard/service-list";
-import { login, getOverview, getTeams } from "@/lib/api/client";
+import { getOverview } from "@/lib/api/client";
+import { requireAuth } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
-  const auth = await login();
-  const { teams } = await getTeams(auth.token);
-  const team = teams[0];
+  const { team } = await requireAuth();
   const { overview } = await getOverview(team.id);
 
   return (
-    <AppShell>
+    <AuthedShell>
       <section className="grid gap-6 lg:grid-cols-3">
         <MetricCard
           label="Total Logs"
@@ -26,15 +25,15 @@ export default async function HomePage() {
           hint="Ratio of error and fatal events in the sampled window."
         />
         <MetricCard
-          label="Plan"
-          value={team.plan}
-          hint="Current workspace tier from the demo tenancy layer."
+          label="Workspace"
+          value={team.name}
+          hint={`Slug: ${team.slug}`}
         />
       </section>
       <section className="mt-6 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <ServiceList services={overview.services} />
         <IncidentList incidents={overview.recentIncidents} />
       </section>
-    </AppShell>
+    </AuthedShell>
   );
 }

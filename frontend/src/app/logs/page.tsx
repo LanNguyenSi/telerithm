@@ -1,11 +1,15 @@
-import { AppShell } from "@/components/dashboard/app-shell";
+import { AuthedShell } from "@/components/dashboard/authed-shell";
+import { requireAuth } from "@/lib/auth/guard";
 import { LogExplorer } from "./screen";
 
-export default function LogsPage() {
+export const dynamic = "force-dynamic";
+
+export default async function LogsPage() {
+  const { team } = await requireAuth();
+
   return (
-    <AppShell>
-      <LogExplorer />
-    </AppShell>
+    <AuthedShell>
+      <LogExplorer team={team} />
+    </AuthedShell>
   );
 }
-

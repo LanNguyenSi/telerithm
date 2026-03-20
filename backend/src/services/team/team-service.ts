@@ -1,4 +1,5 @@
-import type { AuthResult, LogSource, Team, User } from "../../types/domain.js";
+import type { AuthResult, LogSource, Team, TeamInvite, User } from "../../types/domain.js";
+import { config } from "../../config/index.js";
 import { prisma } from "../../repositories/prisma.js";
 import { generateId } from "../../utils/id.js";
 import { hashPassword, verifyPassword } from "../../utils/password.js";
@@ -38,6 +39,15 @@ export class TeamService {
       },
     });
 
+    // In single-tenant mode, auto-assign new users to the default team
+    if (!config.multiTenant) {
+      const defaultTeam = await this.ensureDefaultTeam();
+      await prisma.teamMember.create({
+        data: { teamId: defaultTeam.id, userId: user.id, role: "MEMBER" },
+      });
+      log.info({ userId: user.id, teamId: defaultTeam.id }, "User auto-assigned to default team");
+    }
+
     log.info({ userId: user.id, email }, "User registered");
     return this.createSession(user);
   }
@@ -67,18 +77,19 @@ export class TeamService {
       id: m.team.id,
       name: m.team.name,
       slug: m.team.slug,
-      plan: m.team.plan as Team["plan"],
       createdAt: m.team.createdAt.toISOString(),
     }));
   }
 
   async createTeam(token: string, name: string, slug: string): Promise<Team> {
+    if (!config.multiTenant) {
+      throw new Error("Team creation is disabled in single-tenant mode");
+    }
     const session = await this.validateToken(token);
     const team = await prisma.team.create({
       data: {
         name,
         slug,
-        plan: "FREE",
         members: {
           create: { userId: session.userId, role: "OWNER" },
         },
@@ -89,7 +100,6 @@ export class TeamService {
       id: team.id,
       name: team.name,
       slug: team.slug,
-      plan: team.plan as Team["plan"],
       createdAt: team.createdAt.toISOString(),
     };
   }
@@ -128,6 +138,121 @@ export class TeamService {
 
   async findSourceById(sourceId: string) {
     return prisma.logSource.findUnique({ where: { id: sourceId } });
+  }
+
+  // --- Single-Tenant Support ---
+
+  async ensureDefaultTeam(): Promise<{ id: string; name: string; slug: string }> {
+    const existing = await prisma.team.findUnique({ where: { slug: "default" } });
+    if (existing) return existing;
+    const team = await prisma.team.create({
+      data: { name: "Default", slug: "default" },
+    });
+    log.info({ teamId: team.id }, "Default team created (single-tenant mode)");
+    return team;
+  }
+
+  async getMemberCount(teamId: string): Promise<number> {
+    return prisma.teamMember.count({ where: { teamId } });
+  }
+
+  // --- Invite System (Multi-Tenant) ---
+
+  async createInvite(
+    teamId: string,
+    createdByUserId: string,
+    role: "ADMIN" | "MEMBER" | "VIEWER" = "MEMBER",
+    email?: string,
+  ): Promise<TeamInvite> {
+    if (!config.multiTenant) {
+      throw new Error("Invites are disabled in single-tenant mode");
+    }
+    const token = `inv_${generateId().replace(/-/g, "").slice(0, 24)}`;
+    const invite = await prisma.teamInvite.create({
+      data: {
+        teamId,
+        email: email ?? null,
+        token,
+        role,
+        createdBy: createdByUserId,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+      },
+    });
+    log.info({ teamId, inviteId: invite.id }, "Invite created");
+    return this.mapInvite(invite);
+  }
+
+  async acceptInvite(inviteToken: string, userId: string): Promise<Team> {
+    const invite = await prisma.teamInvite.findUnique({ where: { token: inviteToken } });
+    if (!invite) throw new Error("Invalid invite token");
+    if (invite.usedAt) throw new Error("Invite already used");
+    if (invite.expiresAt < new Date()) throw new Error("Invite expired");
+    if (invite.email) {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (user?.email !== invite.email) throw new Error("Invite is for a different email");
+    }
+
+    // Check if user is already a member
+    const existing = await prisma.teamMember.findUnique({
+      where: { teamId_userId: { teamId: invite.teamId, userId } },
+    });
+    if (existing) throw new Error("Already a member of this team");
+
+    await prisma.$transaction([
+      prisma.teamMember.create({
+        data: { teamId: invite.teamId, userId, role: invite.role },
+      }),
+      prisma.teamInvite.update({
+        where: { id: invite.id },
+        data: { usedAt: new Date() },
+      }),
+    ]);
+
+    const team = await prisma.team.findUniqueOrThrow({ where: { id: invite.teamId } });
+    log.info({ teamId: invite.teamId, userId }, "Invite accepted");
+    return {
+      id: team.id,
+      name: team.name,
+      slug: team.slug,
+      createdAt: team.createdAt.toISOString(),
+    };
+  }
+
+  async listInvites(teamId: string): Promise<TeamInvite[]> {
+    const invites = await prisma.teamInvite.findMany({
+      where: { teamId, usedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "desc" },
+    });
+    return invites.map((i) => this.mapInvite(i));
+  }
+
+  async revokeInvite(inviteId: string): Promise<void> {
+    await prisma.teamInvite.delete({ where: { id: inviteId } });
+    log.info({ inviteId }, "Invite revoked");
+  }
+
+  private mapInvite(invite: {
+    id: string;
+    teamId: string;
+    email: string | null;
+    token: string;
+    role: string;
+    createdBy: string;
+    expiresAt: Date;
+    usedAt: Date | null;
+    createdAt: Date;
+  }): TeamInvite {
+    return {
+      id: invite.id,
+      teamId: invite.teamId,
+      email: invite.email,
+      token: invite.token,
+      role: invite.role as TeamInvite["role"],
+      createdBy: invite.createdBy,
+      expiresAt: invite.expiresAt.toISOString(),
+      usedAt: invite.usedAt?.toISOString() ?? null,
+      createdAt: invite.createdAt.toISOString(),
+    };
   }
 
   private async validateToken(token: string) {

@@ -94,6 +94,16 @@ export const maintenanceWindowSchema = z.object({
   endsAt: z.string().datetime(),
 });
 
+export const createInviteSchema = z.object({
+  role: z.enum(["ADMIN", "MEMBER", "VIEWER"]).default("MEMBER"),
+  email: z.string().email().optional(),
+});
+
+export const updateUserRoleSchema = z.object({
+  role: z.enum(["USER", "ADMIN"]).optional(),
+  disabled: z.boolean().optional(),
+});
+
 export const ingestSchema = z.object({
   logs: z
     .array(

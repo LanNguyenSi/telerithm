@@ -48,7 +48,6 @@ export class InMemoryStore {
       id: teamId,
       name: "Demo Team",
       slug: "demo-team",
-      plan: "PRO",
       createdAt,
     });
 

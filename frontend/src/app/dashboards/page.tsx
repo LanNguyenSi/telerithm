@@ -1,17 +1,16 @@
-import { AppShell } from "@/components/dashboard/app-shell";
+import { AuthedShell } from "@/components/dashboard/authed-shell";
 import { Card } from "@/components/ui/card";
-import { getOverview, getTeams, login } from "@/lib/api/client";
+import { getOverview } from "@/lib/api/client";
+import { requireAuth } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardsPage() {
-  const auth = await login();
-  const { teams } = await getTeams(auth.token);
-  const team = teams[0];
+  const { team } = await requireAuth();
   const { overview } = await getOverview(team.id);
 
   return (
-    <AppShell>
+    <AuthedShell>
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <h2 className="text-xl font-semibold text-ink">Prebuilt Dashboard</h2>
@@ -41,6 +40,6 @@ export default async function DashboardsPage() {
           </div>
         </Card>
       </div>
-    </AppShell>
+    </AuthedShell>
   );
 }

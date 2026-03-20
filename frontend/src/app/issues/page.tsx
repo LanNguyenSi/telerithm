@@ -1,7 +1,8 @@
-import { AppShell } from "@/components/dashboard/app-shell";
+import { AuthedShell } from "@/components/dashboard/authed-shell";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { getIssues, getTeams, login } from "@/lib/api/client";
+import { getIssues } from "@/lib/api/client";
+import { requireAuth } from "@/lib/auth/guard";
 import { formatDate } from "@/lib/utils/format";
 import type { Issue } from "@/types";
 
@@ -21,13 +22,11 @@ function levelTone(level: string) {
 }
 
 export default async function IssuesPage() {
-  const auth = await login();
-  const { teams } = await getTeams(auth.token);
-  const team = teams[0];
+  const { team } = await requireAuth();
   const { issues, total } = await getIssues(team.id);
 
   return (
-    <AppShell>
+    <AuthedShell>
       <Card>
         <div className="flex items-center justify-between">
           <h2 className="text-xl font-semibold text-ink">Issues</h2>
@@ -82,6 +81,6 @@ export default async function IssuesPage() {
           </table>
         </div>
       </Card>
-    </AppShell>
+    </AuthedShell>
   );
 }

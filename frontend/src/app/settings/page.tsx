@@ -1,24 +1,22 @@
-import { AppShell } from "@/components/dashboard/app-shell";
+import { AuthedShell } from "@/components/dashboard/authed-shell";
 import { Card } from "@/components/ui/card";
-import { getSources, getTeams, login } from "@/lib/api/client";
+import { getSources } from "@/lib/api/client";
+import { requireAuth } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
 
 export default async function SettingsPage() {
-  const auth = await login();
-  const { teams } = await getTeams(auth.token);
-  const team = teams[0];
+  const { team } = await requireAuth();
   const { sources } = await getSources(team.id);
 
   return (
-    <AppShell>
+    <AuthedShell>
       <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
         <Card>
           <h2 className="text-xl font-semibold text-ink">Workspace</h2>
           <div className="mt-6 space-y-3 text-sm text-muted">
             <p>Name: <span className="font-medium text-ink">{team.name}</span></p>
             <p>Slug: <span className="font-mono text-ink">{team.slug}</span></p>
-            <p>Plan: <span className="font-medium text-ink">{team.plan}</span></p>
           </div>
         </Card>
         <Card>
@@ -40,6 +38,6 @@ export default async function SettingsPage() {
           </div>
         </Card>
       </div>
-    </AppShell>
+    </AuthedShell>
   );
 }

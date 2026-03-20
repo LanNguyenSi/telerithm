@@ -1,6 +1,6 @@
 import type { AlertIncident, AlertRule, AlertSubscription, DashboardOverview, Issue, LogEntry, Source, Team } from "@/types";
 
-function getApiBaseUrl() {
+export function getApiBaseUrl() {
   if (typeof window === "undefined") {
     return (
       process.env.INTERNAL_API_BASE_URL ??
@@ -11,11 +11,6 @@ function getApiBaseUrl() {
 
   return process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api/v1";
 }
-
-export const demoCredentials = {
-  email: "demo@logforge.dev",
-  password: "demo123",
-};
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
@@ -34,22 +29,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function login() {
-  return request<{ token: string; user: { id: string; email: string; name: string } }>(
-    "/auth/login",
-    {
-      method: "POST",
-      body: JSON.stringify(demoCredentials),
+function authedRequest<T>(path: string, token: string, init?: RequestInit): Promise<T> {
+  return request<T>(path, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      ...(init?.headers ?? {}),
     },
-  );
+  });
 }
 
 export async function getTeams(token: string) {
-  return request<{ teams: Team[] }>("/teams", {
-    headers: {
-      Authorization: `Bearer ${token}`,
-    },
-  });
+  return authedRequest<{ teams: Team[] }>("/teams", token);
 }
 
 export async function getOverview(teamId: string) {
@@ -98,27 +89,21 @@ export async function getAlertIncidents(teamId: string) {
 }
 
 export async function getSubscriptions(teamId: string, token: string) {
-  return request<{ subscriptions: AlertSubscription[] }>(`/subscriptions?teamId=${teamId}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  return authedRequest<{ subscriptions: AlertSubscription[] }>(`/subscriptions?teamId=${teamId}`, token);
 }
 
 export async function createSubscription(
   token: string,
   data: { teamId: string; ruleId?: string; channel: string; config: Record<string, unknown>; severities?: string[] },
 ) {
-  return request<{ subscription: AlertSubscription }>("/subscriptions", {
+  return authedRequest<{ subscription: AlertSubscription }>("/subscriptions", token, {
     method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(data),
   });
 }
 
 export async function deleteSubscription(id: string, token: string) {
-  return request<void>(`/subscriptions/${id}`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  return authedRequest<void>(`/subscriptions/${id}`, token, { method: "DELETE" });
 }
 
 export async function getIssues(teamId: string, filters?: { status?: string; service?: string }) {

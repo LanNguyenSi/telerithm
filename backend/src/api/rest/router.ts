@@ -9,6 +9,7 @@ import { IssueService } from "../../services/issue/issue-service.js";
 import { SubscriptionService } from "../../services/subscription/subscription-service.js";
 import { TeamService } from "../../services/team/team-service.js";
 import {
+  createInviteSchema,
   createSourceSchema,
   createSubscriptionSchema,
   createTeamSchema,
@@ -23,6 +24,7 @@ import {
   registerSchema,
   searchSchema,
   updateSubscriptionSchema,
+  updateUserRoleSchema,
 } from "../../validation/schemas.js";
 import { prisma } from "../../repositories/prisma.js";
 import { clickhouse } from "../../repositories/clickhouse.js";
@@ -704,6 +706,192 @@ apiRouter.put(
     } catch (error) {
       res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
+  }),
+);
+
+// --- Team Invites ---
+
+apiRouter.post(
+  "/teams/:id/invites",
+  asyncHandler(async (req, res) => {
+    try {
+      const userId = await resolveUserId(req);
+      const parsed = createInviteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const invite = await teamService.createInvite(
+        String(req.params.id),
+        userId,
+        parsed.data.role,
+        parsed.data.email,
+      );
+      res.status(201).json({ invite });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
+    }
+  }),
+);
+
+apiRouter.get(
+  "/teams/:id/invites",
+  asyncHandler(async (req, res) => {
+    try {
+      await resolveUserId(req);
+      const invites = await teamService.listInvites(String(req.params.id));
+      res.json({ invites });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    }
+  }),
+);
+
+apiRouter.post(
+  "/invites/:token/accept",
+  asyncHandler(async (req, res) => {
+    try {
+      const userId = await resolveUserId(req);
+      const team = await teamService.acceptInvite(String(req.params.token), userId);
+      res.json({ team });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
+    }
+  }),
+);
+
+apiRouter.delete(
+  "/invites/:id",
+  asyncHandler(async (req, res) => {
+    try {
+      await resolveUserId(req);
+      await teamService.revokeInvite(String(req.params.id));
+      res.status(204).end();
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
+    }
+  }),
+);
+
+// --- Admin API ---
+
+async function requireAdmin(req: Request, res: Response): Promise<string | null> {
+  try {
+    const userId = await resolveUserId(req);
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.role !== "ADMIN") {
+      res.status(403).json({ error: "Admin access required" });
+      return null;
+    }
+    return userId;
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+}
+
+apiRouter.get(
+  "/admin/users",
+  asyncHandler(async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const users = await prisma.user.findMany({
+      select: { id: true, email: true, name: true, role: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json({ users });
+  }),
+);
+
+apiRouter.put(
+  "/admin/users/:id",
+  asyncHandler(async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const parsed = updateUserRoleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const data: Record<string, unknown> = {};
+    if (parsed.data.role) data.role = parsed.data.role;
+    if (parsed.data.disabled !== undefined) data.disabled = parsed.data.disabled;
+    const user = await prisma.user.update({
+      where: { id: String(req.params.id) },
+      select: { id: true, email: true, name: true, role: true, createdAt: true },
+      data,
+    });
+    res.json({ user });
+  }),
+);
+
+apiRouter.get(
+  "/admin/teams",
+  asyncHandler(async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const teams = await prisma.team.findMany({
+      include: { _count: { select: { members: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+    res.json({
+      teams: teams.map((t) => ({
+        id: t.id,
+        name: t.name,
+        slug: t.slug,
+        memberCount: t._count.members,
+        createdAt: t.createdAt.toISOString(),
+      })),
+    });
+  }),
+);
+
+apiRouter.get(
+  "/admin/teams/:id/members",
+  asyncHandler(async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const members = await prisma.teamMember.findMany({
+      where: { teamId: String(req.params.id) },
+      include: { user: { select: { id: true, email: true, name: true } } },
+    });
+    res.json({
+      members: members.map((m) => ({
+        id: m.id,
+        role: m.role,
+        joinedAt: m.joinedAt.toISOString(),
+        user: m.user,
+      })),
+    });
+  }),
+);
+
+apiRouter.delete(
+  "/admin/teams/:id/members/:userId",
+  asyncHandler(async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    try {
+      await prisma.teamMember.delete({
+        where: {
+          teamId_userId: {
+            teamId: String(req.params.id),
+            userId: String(req.params.userId),
+          },
+        },
+      });
+      res.status(204).end();
+    } catch {
+      res.status(404).json({ error: "Member not found" });
+    }
+  }),
+);
+
+apiRouter.get(
+  "/admin/stats",
+  asyncHandler(async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const [userCount, teamCount, sourceCount] = await Promise.all([
+      prisma.user.count(),
+      prisma.team.count(),
+      prisma.logSource.count(),
+    ]);
+    res.json({ userCount, teamCount, sourceCount });
   }),
 );
 
