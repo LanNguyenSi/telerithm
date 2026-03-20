@@ -142,12 +142,7 @@ export class AlertEvaluationWorker {
     }
   }
 
-  private async queryLogCount(
-    teamId: string,
-    query: string,
-    from: Date,
-    to: Date,
-  ): Promise<number> {
+  private async queryLogCount(teamId: string, query: string, from: Date, to: Date): Promise<number> {
     // The rule.query is treated as a WHERE fragment matching against message content
     const result = await clickhouse.query({
       query: `SELECT count() as cnt FROM logs WHERE team_id = {teamId:String} AND timestamp >= {from:DateTime64(3)} AND timestamp <= {to:DateTime64(3)} AND message ILIKE {pattern:String}`,

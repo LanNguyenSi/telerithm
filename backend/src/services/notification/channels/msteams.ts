@@ -18,10 +18,7 @@ const SEVERITY_COLOR: Record<string, string> = {
   LOW: "good",
 };
 
-export async function sendMsTeamsMessage(
-  webhookUrl: string,
-  incident: IncidentPayload,
-): Promise<void> {
+export async function sendMsTeamsMessage(webhookUrl: string, incident: IncidentPayload): Promise<void> {
   const payload = {
     type: "message",
     attachments: [

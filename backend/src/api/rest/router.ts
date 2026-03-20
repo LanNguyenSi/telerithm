@@ -636,7 +636,8 @@ apiRouter.post(
         res.status(404).json({ error: "Subscription not found" });
         return;
       }
-      const { NotificationDispatcher } = await import("../../services/notification/notification-dispatcher.js");
+      const { NotificationDispatcher } =
+        await import("../../services/notification/notification-dispatcher.js");
       const dispatcher = new NotificationDispatcher();
       await dispatcher.dispatch({
         id: "test-incident-000",

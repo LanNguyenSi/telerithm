@@ -32,18 +32,21 @@ export class NotificationDispatcher {
       return;
     }
 
-    log.info(
-      { incidentId: incident.id, subscriberCount: subscribers.length },
-      "Dispatching notifications",
-    );
+    log.info({ incidentId: incident.id, subscriberCount: subscribers.length }, "Dispatching notifications");
 
-    const tasks = subscribers.map((sub: { id: string; channel: string; config: unknown; user: { id: string; email: string; name: string } }) =>
-      this.sendWithRetry(sub, incident).catch((err) => {
-        log.error(
-          { err, subscriptionId: sub.id, channel: sub.channel },
-          "Notification failed after retries",
-        );
-      }),
+    const tasks = subscribers.map(
+      (sub: {
+        id: string;
+        channel: string;
+        config: unknown;
+        user: { id: string; email: string; name: string };
+      }) =>
+        this.sendWithRetry(sub, incident).catch((err) => {
+          log.error(
+            { err, subscriptionId: sub.id, channel: sub.channel },
+            "Notification failed after retries",
+          );
+        }),
     );
 
     await Promise.allSettled(tasks);

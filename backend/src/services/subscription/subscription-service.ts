@@ -71,10 +71,7 @@ export class SubscriptionService {
         OR: [{ ruleId }, { ruleId: null }],
         AND: [
           {
-            OR: [
-              { severities: { isEmpty: true } },
-              { severities: { has: severity } },
-            ],
+            OR: [{ severities: { isEmpty: true } }, { severities: { has: severity } }],
           },
         ],
       },
