@@ -13,6 +13,7 @@ const configSchema = z.object({
     .enum(["true", "false", "1", "0"])
     .default("false")
     .transform((v) => v === "true" || v === "1"),
+  openaiApiKey: z.string().optional(), // Optional: AI query engine falls back to heuristic if not provided
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -28,6 +29,7 @@ function loadConfig(): Config {
     corsOrigins: process.env.CORS_ORIGINS,
     redisUrl: process.env.REDIS_URL,
     multiTenant: process.env.MULTI_TENANT,
+    openaiApiKey: process.env.OPENAI_API_KEY,
   });
 
   if (!result.success) {
