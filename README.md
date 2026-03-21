@@ -180,6 +180,20 @@ Full OpenAPI spec available at `GET /api/v1/openapi.json`.
 
 ---
 
+## Production Deployment
+
+For production deployment with Traefik and SSL, see [DEPLOYMENT.md](./DEPLOYMENT.md).
+
+Quick deploy to VPS with Traefik:
+```bash
+cp .env.production.example .env.production
+# Edit .env.production with your secrets
+docker compose -f docker-compose.traefik.yml --env-file .env.production up -d --build
+docker compose -f docker-compose.traefik.yml exec backend npx prisma migrate deploy
+```
+
+---
+
 ## Contributing
 
 Contributions are welcome. See [CONTRIBUTING.md](./CONTRIBUTING.md) for setup instructions and guidelines.
