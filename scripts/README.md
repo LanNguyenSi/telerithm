@@ -23,6 +23,7 @@ export TELERITHM_TEAM_ID='team_abc123'  # Get from UI or API
 ```
 
 This creates log sources for:
+
 - triologue-api
 - triologue-frontend
 - event-booking-app
@@ -114,31 +115,33 @@ journalctl -u telerithm-collector -f
 
 ### collect-docker-logs.sh
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TELERITHM_API` | `http://localhost:4000/api/v1` | Telerithm API base URL |
-| `TELERITHM_SOURCE_ID` | (required) | Log source ID from Telerithm |
-| `TELERITHM_API_KEY` | (required) | API key for the source |
-| `TELERITHM_CONTAINERS` | (required) | Space-separated list of containers |
-| `TELERITHM_TAIL_LINES` | `100` | Number of log lines to fetch (one-time mode) |
-| `TELERITHM_FOLLOW` | `false` | Follow logs continuously |
+| Variable               | Default                        | Description                                  |
+| ---------------------- | ------------------------------ | -------------------------------------------- |
+| `TELERITHM_API`        | `http://localhost:4000/api/v1` | Telerithm API base URL                       |
+| `TELERITHM_SOURCE_ID`  | (required)                     | Log source ID from Telerithm                 |
+| `TELERITHM_API_KEY`    | (required)                     | API key for the source                       |
+| `TELERITHM_CONTAINERS` | (required)                     | Space-separated list of containers           |
+| `TELERITHM_TAIL_LINES` | `100`                          | Number of log lines to fetch (one-time mode) |
+| `TELERITHM_FOLLOW`     | `false`                        | Follow logs continuously                     |
 
 ### setup-sources.sh
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TELERITHM_API` | `http://localhost:4000/api/v1` | Telerithm API base URL |
-| `TELERITHM_AUTH_TOKEN` | (required) | Bearer token from login |
-| `TELERITHM_TEAM_ID` | (required) | Team ID to create sources for |
+| Variable               | Default                        | Description                   |
+| ---------------------- | ------------------------------ | ----------------------------- |
+| `TELERITHM_API`        | `http://localhost:4000/api/v1` | Telerithm API base URL        |
+| `TELERITHM_AUTH_TOKEN` | (required)                     | Bearer token from login       |
+| `TELERITHM_TEAM_ID`    | (required)                     | Team ID to create sources for |
 
 ## Dependencies
 
 Both scripts require:
+
 - `docker` - Docker CLI
 - `jq` - JSON processor
 - `curl` - HTTP client
 
 Install on Ubuntu/Debian:
+
 ```bash
 apt-get install -y docker.io jq curl
 ```
@@ -161,6 +164,7 @@ Logs are sent to Telerithm in this format:
 ```
 
 **Level Detection:**
+
 - `fatal` - Contains "fatal" or "critical"
 - `error` - Contains "error"
 - `warn` - Contains "warn" or "warning"
@@ -172,6 +176,7 @@ Logs are sent to Telerithm in this format:
 ### "Container not found or not running"
 
 Check running containers:
+
 ```bash
 docker ps --format '{{.Names}}'
 ```
@@ -181,6 +186,7 @@ Update `TELERITHM_CONTAINERS` to match actual container names.
 ### "Failed to send logs (HTTP 401)"
 
 Invalid API key. Verify:
+
 ```bash
 curl -X POST http://localhost:4000/api/v1/ingest/$SOURCE_ID \
   -H "X-API-Key: $API_KEY" \
@@ -191,6 +197,7 @@ curl -X POST http://localhost:4000/api/v1/ingest/$SOURCE_ID \
 ### "jq: command not found"
 
 Install jq:
+
 ```bash
 apt-get install -y jq
 ```
@@ -233,6 +240,7 @@ Or create multiple systemd services (one per container/source).
 ## Future Enhancements
 
 Planned improvements:
+
 - [ ] Structured log parsing (JSON logs from Node.js apps)
 - [ ] Log filtering (skip debug in production)
 - [ ] Rate limiting (prevent API overload)
