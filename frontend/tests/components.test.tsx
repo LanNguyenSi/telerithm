@@ -88,10 +88,12 @@ describe("LogTable", () => {
 
   it("renders log entries", () => {
     render(<LogTable logs={logs} />);
-    expect(screen.getByText("Payment failed")).toBeInTheDocument();
-    expect(screen.getByText("User logged in")).toBeInTheDocument();
-    expect(screen.getByText("payment")).toBeInTheDocument();
-    expect(screen.getByText("auth")).toBeInTheDocument();
+    // Responsive design renders content twice (mobile cards + desktop table)
+    // Use getAllByText to handle multiple instances
+    expect(screen.getAllByText("Payment failed").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("User logged in").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("payment").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("auth").length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders empty table without errors", () => {
