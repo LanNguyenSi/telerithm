@@ -2,8 +2,18 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Telerithm",
-  description: "AI-powered log analytics MVP",
+  title: {
+    default: "Telerithm — AI-powered log analytics",
+    template: "%s · Telerithm",
+  },
+  description:
+    "Operational clarity for noisy systems. Search logs with natural language, track issues, and get alerted before users notice.",
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+    ],
+  },
 };
 
 export default function RootLayout({
@@ -12,7 +22,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="de">
+    <html lang="en" suppressHydrationWarning>
       <body className="font-sans">{children}</body>
     </html>
   );
