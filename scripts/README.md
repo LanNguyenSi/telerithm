@@ -237,6 +237,82 @@ export TELERITHM_API_KEY="lf_api_key_2"
 
 Or create multiple systemd services (one per container/source).
 
+## Demo Data
+
+### Seed Demo Logs
+
+Generate realistic demo log data for testing and screenshots:
+
+```bash
+# Using defaults (7 days, 1000 logs/day)
+TEAM_ID="demo-team" SOURCE_ID="demo-source" tsx scripts/seed-demo-logs.ts
+
+# Custom configuration
+TEAM_ID="team_abc123" \
+SOURCE_ID="src_demo" \
+DAYS=14 \
+LOGS_PER_DAY=2000 \
+CLICKHOUSE_URL="http://localhost:8123" \
+tsx scripts/seed-demo-logs.ts
+```
+
+**What it generates:**
+
+- **Realistic logs** from 5 services (triologue-api, event-booking, traefik, health-dashboard, gateway)
+- **Time distribution**: Higher volume during business hours (9-18 UTC)
+- **Level distribution**: 80% info, 15% warn, 5% error
+- **Incident clusters**: 3 simulated incidents (error bursts)
+- **Interpolated data**: Random IDs, names, values for variety
+
+**Configuration:**
+
+| Variable         | Default                 | Description                |
+| ---------------- | ----------------------- | -------------------------- |
+| `TEAM_ID`        | `demo-team`             | Team ID for logs           |
+| `SOURCE_ID`      | `demo-source`           | Source ID for logs         |
+| `DAYS`           | `7`                     | Number of days to generate |
+| `LOGS_PER_DAY`   | `1000`                  | Logs per day               |
+| `CLICKHOUSE_URL` | `http://localhost:8123` | ClickHouse connection      |
+
+**Example output:**
+
+```
+🌱 Seeding demo logs...
+  Team ID: demo-team
+  Source ID: demo-source
+  Days: 7
+  Logs per day: 1000
+
+  Generating day 1/7...
+  Generating day 2/7...
+  ...
+  Adding incidents...
+  Total logs: 7060
+
+📤 Inserting into ClickHouse...
+  Inserted 1000/7060
+  ...
+
+✅ Seeding complete!
+
+📊 Summary:
+  Total logs: 7060
+  Services: triologue-api, event-booking, traefik, health-dashboard, gateway
+  Levels: 5648 info, 1059 warn, 353 error
+  Time range: 2026-03-14 09:12:34 to 2026-03-21 17:45:22
+
+🔍 Try these queries:
+  "show me errors from the last 24 hours"
+  "traefik errors"
+  "booking confirmations"
+```
+
+**Use cases:**
+
+- **Demo/screenshots**: Populate empty instance for presentations
+- **Testing**: Validate query engine, dashboards, alerts
+- **Load testing**: Generate large datasets for performance tests
+
 ## Future Enhancements
 
 Planned improvements:
@@ -252,4 +328,5 @@ Planned improvements:
 ## See Also
 
 - [DEPLOYMENT.md](../DEPLOYMENT.md) - Production deployment guide
-- [Task 003](../tasks/003-docker-log-collection.md) - Original task specification
+- [Task 003](../tasks/003-docker-log-collection.md) - Log collection task
+- [Task 004](../tasks/004-demo-seed-data.md) - Demo data task
