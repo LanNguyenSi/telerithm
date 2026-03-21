@@ -339,14 +339,15 @@ apiRouter.get(
   }),
 );
 
-apiRouter.post("/query/natural", (req, res) => {
+apiRouter.post("/query/natural", asyncHandler(async (req, res) => {
   const parsed = naturalQuerySchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  res.json(queryService.explainNaturalQuery(parsed.data.teamId, parsed.data.query));
-});
+  const result = await queryService.explainNaturalQuery(parsed.data.teamId, parsed.data.query);
+  res.json(result);
+}));
 
 apiRouter.get(
   "/alerts/rules",

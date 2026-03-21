@@ -13,7 +13,7 @@ export class QueryService {
 
   async search(query: LogQuery): Promise<LogSearchResult> {
     if (query.queryType === "natural" && query.query) {
-      const translation = this.aiService.translateQuery(query.query, query.teamId);
+      const translation = await this.aiService.translateQuery(query.query, query.teamId);
       query = {
         ...query,
         filters: [...(query.filters ?? []), ...translation.filtersApplied],
@@ -25,8 +25,8 @@ export class QueryService {
     return this.logRepo.search(query);
   }
 
-  explainNaturalQuery(teamId: string, naturalQuery: string) {
-    return this.aiService.translateQuery(naturalQuery, teamId);
+  async explainNaturalQuery(teamId: string, naturalQuery: string) {
+    return await this.aiService.translateQuery(naturalQuery, teamId);
   }
 
   async getDashboardSummary(teamId: string): Promise<DashboardSummary> {
