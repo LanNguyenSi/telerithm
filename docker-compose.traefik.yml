@@ -1,0 +1,159 @@
+version: '3.8'
+
+# Production deployment with Traefik integration
+# Assumes Traefik is already running on the VPS with:
+# - Docker network: traefik_proxy
+# - Certificate resolver: letsencrypt
+
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: telerithm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: telerithm
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - telerithm-internal
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telerithm"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24
+    restart: unless-stopped
+    volumes:
+      - chdata:/var/lib/clickhouse
+      - ./backend/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - telerithm-internal
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redisdata:/data
+    networks:
+      - telerithm-internal
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 4000
+      NODE_ENV: production
+      DATABASE_URL: postgresql://telerithm:${POSTGRES_PASSWORD}@postgres:5432/telerithm?connection_limit=20&pool_timeout=10
+      CLICKHOUSE_URL: http://clickhouse:8123
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGINS: https://logs.opentriologue.ai
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - traefik_proxy
+      - telerithm-internal
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/v1/health').then(r => process.exit(r.ok ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_proxy"
+      # API routes
+      - "traefik.http.routers.telerithm-backend.rule=Host(`logs.opentriologue.ai`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.telerithm-backend.entrypoints=websecure"
+      - "traefik.http.routers.telerithm-backend.tls=true"
+      - "traefik.http.routers.telerithm-backend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.telerithm-backend.loadbalancer.server.port=4000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: https://logs.opentriologue.ai/api/v1
+    restart: unless-stopped
+    environment:
+      INTERNAL_API_BASE_URL: http://backend:4000/api/v1
+      NEXT_PUBLIC_API_BASE_URL: https://logs.opentriologue.ai/api/v1
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - traefik_proxy
+      - telerithm-internal
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik_proxy"
+      # Frontend routes (everything except /api)
+      - "traefik.http.routers.telerithm-frontend.rule=Host(`logs.opentriologue.ai`)"
+      - "traefik.http.routers.telerithm-frontend.entrypoints=websecure"
+      - "traefik.http.routers.telerithm-frontend.tls=true"
+      - "traefik.http.routers.telerithm-frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.telerithm-frontend.priority=1"
+      - "traefik.http.services.telerithm-frontend.loadbalancer.server.port=3000"
+
+networks:
+  traefik_proxy:
+    external: true
+  telerithm-internal:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
+  chdata:
+    driver: local
+  redisdata:
+    driver: local
