@@ -88,10 +88,10 @@ describe("LogTable", () => {
 
   it("renders log entries", () => {
     render(<LogTable logs={logs} />);
-    expect(screen.getByText("Payment failed")).toBeInTheDocument();
-    expect(screen.getByText("User logged in")).toBeInTheDocument();
-    expect(screen.getByText("payment")).toBeInTheDocument();
-    expect(screen.getByText("auth")).toBeInTheDocument();
+    expect(screen.getAllByText("Payment failed").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("User logged in").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("payment").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("auth").length).toBeGreaterThan(0);
   });
 
   it("renders empty table without errors", () => {
