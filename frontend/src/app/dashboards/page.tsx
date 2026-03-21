@@ -1,9 +1,12 @@
+import type { Metadata } from "next";
 import { AuthedShell } from "@/components/dashboard/authed-shell";
 import { Card } from "@/components/ui/card";
 import { getOverview } from "@/lib/api/client";
 import { requireAuth } from "@/lib/auth/guard";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = { title: "Dashboards" };
 
 export default async function DashboardsPage() {
   const { team } = await requireAuth();
@@ -19,7 +22,10 @@ export default async function DashboardsPage() {
           </p>
           <div className="mt-6 space-y-4">
             {overview.services.map((item) => (
-              <div key={item.service} className="flex items-center justify-between rounded-2xl bg-white/70 px-4 py-3">
+              <div
+                key={item.service}
+                className="flex items-center justify-between rounded-2xl bg-white/70 px-4 py-3"
+              >
                 <span className="font-medium text-ink">{item.service}</span>
                 <span className="font-mono text-sm text-muted">{item.count}</span>
               </div>
