@@ -2,7 +2,7 @@ version: '3.8'
 
 # Production deployment with Traefik integration
 # Assumes Traefik is already running on the VPS with:
-# - Docker network: traefik_proxy
+# - Docker network: traefik
 # - Certificate resolver: letsencrypt
 
 services:
@@ -89,7 +89,7 @@ services:
       redis:
         condition: service_healthy
     networks:
-      - traefik_proxy
+      - traefik
       - telerithm-internal
     deploy:
       resources:
@@ -104,7 +104,7 @@ services:
       start_period: 30s
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=traefik_proxy"
+      - "traefik.docker.network=traefik"
       # API routes
       - "traefik.http.routers.telerithm-backend.rule=Host(`logs.opentriologue.ai`) && PathPrefix(`/api`)"
       - "traefik.http.routers.telerithm-backend.entrypoints=websecure"
@@ -126,7 +126,7 @@ services:
       backend:
         condition: service_healthy
     networks:
-      - traefik_proxy
+      - traefik
       - telerithm-internal
     deploy:
       resources:
@@ -135,7 +135,7 @@ services:
           cpus: "0.5"
     labels:
       - "traefik.enable=true"
-      - "traefik.docker.network=traefik_proxy"
+      - "traefik.docker.network=traefik"
       # Frontend routes (everything except /api)
       - "traefik.http.routers.telerithm-frontend.rule=Host(`logs.opentriologue.ai`)"
       - "traefik.http.routers.telerithm-frontend.entrypoints=websecure"
@@ -145,7 +145,7 @@ services:
       - "traefik.http.services.telerithm-frontend.loadbalancer.server.port=3000"
 
 networks:
-  traefik_proxy:
+  traefik:
     external: true
   telerithm-internal:
     driver: bridge
