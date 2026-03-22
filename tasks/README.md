@@ -1,21 +1,12 @@
-# Tasks — Telerithm
+# Tasks
 
-Work packages for production deployment + OpenTriologue integration.
+## Open
 
-## Goal
-Deploy Telerithm on VPS, connect to OpenTriologue + Event Booking logs,
-demonstrate Natural Language Search with real data for LinkedIn post.
+- [004-demo-seed-data.md](./004-demo-seed-data.md) — Demo team + seed logs + join flow
+- [005-frontend-polish.md](./005-frontend-polish.md) — Responsive design + visual polish
 
-## Priority
-- **P0** — Must have for live demo
-- **P1** — Makes the demo better
+## Done
 
-| # | Task | Estimate | Priority | Status |
-|---|------|----------|----------|--------|
-| 001 | [Real AI Query Engine](001-ai-query-engine.md) | 5h | P0 | [ ] |
-| 002 | [Traefik Deployment](002-traefik-deployment.md) | 2h | P0 | [ ] |
-| 003 | [Docker Log Collection](003-docker-log-collection.md) | 3h | P0 | [ ] |
-| 004 | [Demo Seed Data](004-demo-seed-data.md) | 2h | P1 | [ ] |
-| 005 | [Frontend Polish](005-frontend-polish.md) | 3h | P1 | [ ] |
-
-**Total: ~15h**
+- 001 AI Query Engine — implemented with local LLM (llama.cpp + Qwen3.5-4B), see LOCAL_LLM.md
+- 002 Traefik Deployment — live at telerithm.cloud
+- 003 Docker Log Collection — Vector.toml + collect-docker-logs.sh in deploy/
