@@ -166,7 +166,7 @@ Return ONLY valid JSON with this structure:
     // Service detection
     const serviceMatch = lower.match(/(?:service|from)\s+([a-z0-9-]+)/);
     if (serviceMatch) {
-      filters.push({ field: "service", operator: "eq", value: serviceMatch[1] });
+      filters.push({ field: "service", operator: "contains", value: serviceMatch[1] });
     }
 
     // Fallback: Try to find service name from tokens
@@ -181,7 +181,7 @@ Return ONLY valid JSON with this structure:
           token !== "warning",
       );
       if (candidate) {
-        filters.push({ field: "service", operator: "eq", value: candidate });
+        filters.push({ field: "service", operator: "contains", value: candidate });
       }
     }
 
