@@ -17,10 +17,10 @@ export default async function AlertsPage() {
   return (
     <AuthedShell>
       <div className="mb-4 flex items-center justify-between lg:mb-6">
-        <h2 className="text-xl font-semibold text-ink sm:text-2xl">Alerts</h2>
+        <h2 className="text-lg font-semibold text-ink sm:text-xl">Alerts</h2>
         <Link
           href="/alerts/subscriptions"
-          className="rounded-full border border-line bg-white/80 px-4 py-2 text-sm text-ink transition hover:border-slate-400 dark:bg-white/5"
+          className="rounded-lg border border-line bg-white/80 px-3 py-1.5 text-sm text-ink transition hover:border-slate-400 dark:bg-white/5"
         >
           Subscriptions
         </Link>
@@ -28,7 +28,7 @@ export default async function AlertsPage() {
       <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr] lg:gap-6">
         <IncidentList incidents={incidents} />
         <Card>
-          <h2 className="text-xl font-semibold text-ink">Alert Rules</h2>
+          <h2 className="text-lg font-semibold text-ink">Alert Rules</h2>
           {rules.length === 0 ? (
             <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-dashed border-line bg-white/50 p-8 text-center dark:bg-white/5">
               <svg
@@ -52,15 +52,15 @@ export default async function AlertsPage() {
               </p>
             </div>
           ) : (
-            <div className="mt-6 space-y-4">
+            <div className="mt-4 space-y-3">
               {rules.map((rule) => (
                 <article
                   key={rule.id}
-                  className="rounded-2xl border border-line bg-white/70 p-4 dark:bg-white/5"
+                  className="rounded-xl border border-line bg-white/70 p-3 dark:bg-white/5"
                 >
-                  <p className="font-medium text-ink">{rule.name}</p>
-                  <p className="mt-2 text-sm text-muted">{rule.description ?? "No description"}</p>
-                  <p className="mt-3 text-sm text-muted">Threshold: {rule.threshold}</p>
+                  <p className="text-sm font-medium text-ink">{rule.name}</p>
+                  <p className="mt-1 text-xs text-muted">{rule.description ?? "No description"}</p>
+                  <p className="mt-1.5 font-mono text-xs text-muted">Threshold: {rule.threshold}</p>
                 </article>
               ))}
             </div>

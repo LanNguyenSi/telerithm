@@ -162,8 +162,8 @@ export function IssueExplorer({ team }: { team: Team }) {
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-sm uppercase tracking-[0.24em] text-muted">Issues</p>
-              <h2 className="mt-2 text-2xl font-semibold text-ink">Grouped errors and regressions</h2>
+              <p className="text-xs uppercase tracking-[0.2em] text-muted">Issues</p>
+              <h2 className="mt-1 text-lg font-semibold text-ink">Grouped errors and regressions</h2>
             </div>
             <p className="text-sm text-muted">{total} total</p>
           </div>
@@ -193,12 +193,12 @@ export function IssueExplorer({ team }: { team: Team }) {
               name="query"
               defaultValue={currentFilters.query}
               placeholder="Search title"
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             />
             <select
               name="status"
               defaultValue={currentFilters.status}
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             >
               <option value="">All statuses</option>
               <option value="NEW">NEW</option>
@@ -210,12 +210,12 @@ export function IssueExplorer({ team }: { team: Team }) {
               name="service"
               defaultValue={currentFilters.service}
               placeholder="Service"
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             />
             <select
               name="level"
               defaultValue={currentFilters.level}
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             >
               <option value="">All levels</option>
               <option value="fatal">fatal</option>
@@ -226,7 +226,7 @@ export function IssueExplorer({ team }: { team: Team }) {
             <select
               name="sort"
               defaultValue={`${currentSort.sortBy}:${currentSort.sortDirection}`}
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             >
               <option value="lastSeen:desc">Newest activity</option>
               <option value="firstSeen:asc">Oldest first seen</option>
@@ -294,53 +294,57 @@ export function IssueExplorer({ team }: { team: Team }) {
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-line text-xs uppercase tracking-wider text-muted">
-                  <th className="pb-3 pr-4">Status</th>
-                  <th className="pb-3 pr-4">Level</th>
-                  <th className="pb-3 pr-4">Title</th>
-                  <th className="pb-3 pr-4">Service</th>
-                  <th className="pb-3 pr-4 text-right">Events</th>
-                  <th className="pb-3 pr-4">First Seen</th>
-                  <th className="pb-3">Last Seen</th>
+                <tr className="border-b border-line text-[11px] uppercase tracking-[0.14em] text-muted">
+                  <th className="pb-2 pr-3">Status</th>
+                  <th className="pb-2 pr-3">Level</th>
+                  <th className="pb-2 pr-3">Title</th>
+                  <th className="pb-2 pr-3">Service</th>
+                  <th className="pb-2 pr-3 text-right">Events</th>
+                  <th className="pb-2 pr-3">First Seen</th>
+                  <th className="pb-2">Last Seen</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="text-sm">
                 {issues.map((issue) => (
                   <tr key={issue.id} className="border-b border-line/50 last:border-0">
-                    <td className="py-3 pr-4">
+                    <td className="py-2 pr-3">
                       <Badge tone={statusTone(issue.status)}>{issue.status}</Badge>
                     </td>
-                    <td className="py-3 pr-4">
+                    <td className="py-2 pr-3">
                       <Badge tone={levelTone(issue.level)}>{issue.level}</Badge>
                     </td>
-                    <td className="max-w-md truncate py-3 pr-4 font-medium text-ink">{issue.title}</td>
-                    <td className="py-3 pr-4 text-muted">{issue.service}</td>
-                    <td className="py-3 pr-4 text-right font-mono tabular-nums">
+                    <td className="max-w-md truncate py-2 pr-3 font-medium text-ink">{issue.title}</td>
+                    <td className="py-2 pr-3 font-mono text-xs text-muted">{issue.service}</td>
+                    <td className="py-2 pr-3 text-right font-mono text-xs tabular-nums">
                       {issue.eventCount.toLocaleString()}
                     </td>
-                    <td className="whitespace-nowrap py-3 pr-4 text-muted">{formatDate(issue.firstSeen)}</td>
-                    <td className="whitespace-nowrap py-3 text-muted">{formatDate(issue.lastSeen)}</td>
+                    <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-muted">
+                      {formatDate(issue.firstSeen)}
+                    </td>
+                    <td className="whitespace-nowrap py-2 font-mono text-xs text-muted">
+                      {formatDate(issue.lastSeen)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
 
-          <div className="space-y-3 md:hidden">
+          <div className="space-y-2 md:hidden">
             {issues.map((issue) => (
               <article
                 key={issue.id}
-                className="rounded-2xl border border-line bg-white/70 p-4 dark:bg-white/5"
+                className="rounded-xl border border-line bg-white/70 p-3 dark:bg-white/5"
               >
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <Badge tone={statusTone(issue.status)}>{issue.status}</Badge>
                   <Badge tone={levelTone(issue.level)}>{issue.level}</Badge>
-                  <span className="ml-auto font-mono text-xs text-muted">
+                  <span className="ml-auto font-mono text-[11px] text-muted">
                     {issue.eventCount.toLocaleString()} events
                   </span>
                 </div>
-                <p className="mt-2 font-medium text-ink">{issue.title}</p>
-                <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted">
+                <p className="mt-1.5 text-sm font-medium text-ink">{issue.title}</p>
+                <div className="mt-1.5 flex flex-wrap gap-3 font-mono text-[11px] text-muted">
                   <span>{issue.service}</span>
                   <span>First: {formatDate(issue.firstSeen)}</span>
                   <span>Last: {formatDate(issue.lastSeen)}</span>

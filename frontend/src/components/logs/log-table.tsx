@@ -25,26 +25,33 @@ export function LogTable({
       <div className="hidden md:block">
         <Card className="overflow-hidden p-0">
           <div className="overflow-x-auto">
-            <table className="min-w-full text-left">
-              <thead className="border-b border-line bg-slate-950 text-xs uppercase tracking-[0.18em] text-white">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-line bg-slate-950 text-[11px] uppercase tracking-[0.14em] text-white">
                 <tr>
-                  <th className="px-4 py-4">Time</th>
-                  <th className="px-4 py-4">Level</th>
-                  <th className="px-4 py-4">Service</th>
-                  <th className="px-4 py-4">Host</th>
-                  <th className="px-4 py-4">Message</th>
+                  <th className="px-3 py-2.5">Time</th>
+                  <th className="px-3 py-2.5">Level</th>
+                  <th className="px-3 py-2.5">Service</th>
+                  <th className="px-3 py-2.5">Host</th>
+                  <th className="px-3 py-2.5">Message</th>
                 </tr>
               </thead>
               <tbody>
                 {logs.map((log) => (
                   <tr key={log.id} className="border-b border-line/80 bg-white/70 align-top dark:bg-white/5">
-                    <td className="px-4 py-4 text-sm text-muted">{formatDate(log.timestamp)}</td>
-                    <td className={clsx("px-4 py-4 text-sm font-semibold uppercase", levelTone(log.level))}>
+                    <td className="whitespace-nowrap px-3 py-1.5 font-mono text-xs text-muted">
+                      {formatDate(log.timestamp)}
+                    </td>
+                    <td
+                      className={clsx(
+                        "px-3 py-1.5 font-mono text-xs font-semibold uppercase",
+                        levelTone(log.level),
+                      )}
+                    >
                       {log.level}
                     </td>
-                    <td className="px-4 py-4 font-medium text-ink">{log.service}</td>
-                    <td className="px-4 py-4 font-mono text-sm text-muted">{log.host}</td>
-                    <td className="px-4 py-4 text-sm text-ink">{log.message}</td>
+                    <td className="px-3 py-1.5 font-mono text-xs text-ink">{log.service}</td>
+                    <td className="px-3 py-1.5 font-mono text-xs text-muted">{log.host}</td>
+                    <td className="px-3 py-1.5 text-xs text-ink">{log.message}</td>
                   </tr>
                 ))}
               </tbody>
@@ -54,21 +61,23 @@ export function LogTable({
       </div>
 
       {/* Mobile cards */}
-      <div className="space-y-3 md:hidden">
+      <div className="space-y-2 md:hidden">
         {logs.map((log) => (
           <article
             key={log.id}
-            className="rounded-[24px] border border-line bg-panel/85 p-4 shadow-panel backdrop-blur"
+            className="rounded-xl border border-line bg-panel/85 p-3 shadow-panel backdrop-blur dark:shadow-panel-dark"
           >
             <div className="flex items-start justify-between gap-3">
-              <span className={clsx("text-xs font-semibold uppercase", levelTone(log.level))}>
+              <span className={clsx("font-mono text-[11px] font-semibold uppercase", levelTone(log.level))}>
                 {log.level}
               </span>
-              <span className="text-xs text-muted">{formatDate(log.timestamp)}</span>
+              <span className="font-mono text-[11px] text-muted">{formatDate(log.timestamp)}</span>
             </div>
-            <p className="mt-2 text-sm font-medium text-ink">{log.message}</p>
-            <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted">
-              <span className="rounded-full bg-slate-900/5 px-2 py-0.5 dark:bg-white/5">{log.service}</span>
+            <p className="mt-1.5 text-sm text-ink">{log.message}</p>
+            <div className="mt-1.5 flex flex-wrap gap-2 text-[11px] text-muted">
+              <span className="rounded bg-slate-900/5 px-1.5 py-0.5 font-mono dark:bg-white/5">
+                {log.service}
+              </span>
               <span className="font-mono">{log.host}</span>
             </div>
           </article>

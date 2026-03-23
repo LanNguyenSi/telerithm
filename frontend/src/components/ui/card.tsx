@@ -5,7 +5,7 @@ export function Card({ children, className }: PropsWithChildren<{ className?: st
   return (
     <section
       className={clsx(
-        "rounded-[28px] border border-line bg-panel/85 p-6 shadow-panel backdrop-blur",
+        "rounded-2xl border border-line bg-panel/85 p-5 shadow-panel backdrop-blur dark:shadow-panel-dark",
         className,
       )}
     >

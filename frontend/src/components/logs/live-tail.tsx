@@ -29,14 +29,14 @@ export function LiveTail({ teamId }: { teamId: string }) {
     <Card>
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-ink">Live Tail</h2>
-          <p className="text-sm text-muted">Server-sent events stream for newly ingested logs.</p>
+          <h2 className="text-lg font-semibold text-ink">Live Tail</h2>
+          <p className="text-xs text-muted">SSE stream for newly ingested logs.</p>
         </div>
         <span className={connected ? "text-sm text-emerald-600 dark:text-emerald-400" : "text-sm text-muted"}>
           {connected ? "Connected" : "Waiting"}
         </span>
       </div>
-      <div className="mt-6 space-y-3">
+      <div className="mt-4 space-y-2">
         {items.length === 0 ? (
           <div className="flex flex-col items-center gap-3 py-10 text-center">
             <svg
@@ -60,13 +60,13 @@ export function LiveTail({ teamId }: { teamId: string }) {
           </div>
         ) : (
           items.map((log) => (
-            <article key={log.id} className="rounded-2xl border border-line bg-white/70 p-4 dark:bg-white/5">
-              <div className="flex flex-wrap items-center gap-3 text-sm text-muted">
+            <article key={log.id} className="rounded-xl border border-line bg-white/70 p-3 dark:bg-white/5">
+              <div className="flex flex-wrap items-center gap-3 font-mono text-xs text-muted">
                 <span>{formatDate(log.timestamp)}</span>
-                <span className="font-mono">{log.service}</span>
+                <span>{log.service}</span>
                 <span>{log.level}</span>
               </div>
-              <p className="mt-2 text-sm text-ink">{log.message}</p>
+              <p className="mt-1.5 text-sm text-ink">{log.message}</p>
             </article>
           ))
         )}

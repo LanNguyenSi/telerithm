@@ -84,9 +84,9 @@ export function SearchPanel({
 
   return (
     <Card>
-      <p className="text-sm uppercase tracking-[0.24em] text-muted">Natural Language Search</p>
+      <p className="text-xs uppercase tracking-[0.2em] text-muted">Natural Language Search</p>
 
-      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:gap-4">
+      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:gap-3">
         <div className="relative flex-1">
           <textarea
             value={query}
@@ -98,7 +98,7 @@ export function SearchPanel({
               }
             }}
             rows={2}
-            className="w-full rounded-2xl border border-line bg-white/90 px-4 py-3 text-base text-ink outline-none ring-0 resize-none dark:bg-white/10"
+            className="w-full rounded-xl border border-line bg-white/90 px-3 py-2.5 text-sm text-ink outline-none ring-0 resize-none dark:bg-white/10"
             placeholder="Show me payment failures from the last hour"
           />
           {isPending && (
@@ -116,19 +116,19 @@ export function SearchPanel({
           type="button"
           onClick={() => void runQuery(query)}
           disabled={isPending}
-          className="shrink-0 rounded-2xl bg-slate-950 px-6 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50 sm:self-start sm:py-4"
+          className="shrink-0 rounded-xl bg-slate-950 px-5 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50 sm:self-start"
         >
           {isPending ? "Running..." : "Run query"}
         </button>
       </div>
 
-      <div className="mt-4 grid gap-3 md:grid-cols-4">
-        <label className="text-sm text-muted">
-          <span className="mb-1 block">Level</span>
+      <div className="mt-3 grid gap-2 md:grid-cols-4">
+        <label className="text-xs text-muted">
+          <span className="mb-0.5 block">Level</span>
           <select
             value={level}
             onChange={(event) => setLevel(event.target.value)}
-            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
           >
             <option value="">All levels</option>
             <option value="fatal">fatal</option>
@@ -139,32 +139,32 @@ export function SearchPanel({
           </select>
         </label>
 
-        <label className="text-sm text-muted">
-          <span className="mb-1 block">Service</span>
+        <label className="text-xs text-muted">
+          <span className="mb-0.5 block">Service</span>
           <input
             value={service}
             onChange={(event) => setService(event.target.value)}
             placeholder="payment"
-            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
           />
         </label>
 
-        <label className="text-sm text-muted">
-          <span className="mb-1 block">Host</span>
+        <label className="text-xs text-muted">
+          <span className="mb-0.5 block">Host</span>
           <input
             value={host}
             onChange={(event) => setHost(event.target.value)}
             placeholder="api-1"
-            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
           />
         </label>
 
-        <label className="text-sm text-muted">
-          <span className="mb-1 block">Sort</span>
+        <label className="text-xs text-muted">
+          <span className="mb-0.5 block">Sort</span>
           <select
             value={sortValue}
             onChange={(event) => setSortValue(event.target.value)}
-            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
           >
             {SORT_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -175,7 +175,7 @@ export function SearchPanel({
         </label>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-2 flex flex-wrap gap-2">
         <button
           type="button"
           onClick={() => {
@@ -196,7 +196,7 @@ export function SearchPanel({
         </button>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-2 flex flex-wrap gap-1.5">
         <span className="text-xs text-muted self-center">Try:</span>
         {PRESETS.map((preset) => (
           <button
@@ -212,7 +212,7 @@ export function SearchPanel({
       </div>
 
       {history.length > 0 && (
-        <div className="mt-3 flex flex-wrap items-center gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <span className="text-xs text-muted">Recent:</span>
           {history.map((h) => (
             <button
@@ -229,7 +229,7 @@ export function SearchPanel({
       )}
 
       {sqlPreview && (
-        <div className="mt-4">
+        <div className="mt-3">
           <button
             type="button"
             onClick={() => setSqlOpen((v) => !v)}
@@ -255,7 +255,7 @@ export function SearchPanel({
             </span>
           </button>
           {sqlOpen && (
-            <div className="mt-2 overflow-x-auto rounded-2xl bg-slate-950 p-4 font-mono text-sm text-cyan-200">
+            <div className="mt-2 overflow-x-auto rounded-xl bg-slate-950 p-3 font-mono text-xs text-cyan-200">
               {sqlPreview}
             </div>
           )}

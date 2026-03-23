@@ -17,4 +17,3 @@ export function levelTone(level: string): string {
   }
   return "text-muted";
 }
-
