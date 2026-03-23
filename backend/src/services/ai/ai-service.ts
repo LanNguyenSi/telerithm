@@ -42,12 +42,12 @@ export class AIService {
         return await this.translateQueryWithLLM(naturalQuery, teamId);
       } catch (error) {
         logger.error({ error }, "LLM translation failed, falling back to heuristic");
-        return this.translateQueryHeuristic(naturalQuery, teamId);
+        return this.translateQueryHeuristicPublic(naturalQuery, teamId);
       }
     }
 
     // Fallback to heuristic if no LLM available
-    return this.translateQueryHeuristic(naturalQuery, teamId);
+    return this.translateQueryHeuristicPublic(naturalQuery, teamId);
   }
 
   private async translateQueryWithLLM(naturalQuery: string, teamId: string): Promise<NLQTranslation> {
@@ -135,7 +135,7 @@ Return ONLY valid JSON with this structure:
     }
   }
 
-  private translateQueryHeuristic(naturalQuery: string, teamId: string): NLQTranslation {
+  public translateQueryHeuristicPublic(naturalQuery: string, teamId: string): NLQTranslation {
     const lower = naturalQuery.toLowerCase();
     const filters: LogFilter[] = [];
     const stopWords = new Set([

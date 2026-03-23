@@ -32,12 +32,16 @@ export class QueryService {
         return llmResult;
       }
 
-      // Fallback: text search across message/service/host
-      return this.logRepo.search({
+      // Fallback: apply heuristic filters from the AI service directly
+      const heuristic = this.aiService.translateQueryHeuristicPublic(originalQuery, query.teamId);
+      const fallbackQuery: LogQuery = {
         ...query,
+        filters: [...(query.filters ?? []), ...heuristic.filtersApplied],
         queryType: "sql",
-        query: originalQuery,
-      });
+        query: undefined,
+      };
+
+      return this.logRepo.search(fallbackQuery);
     }
 
     return this.logRepo.search(query);
