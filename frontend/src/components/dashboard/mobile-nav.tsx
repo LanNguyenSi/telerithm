@@ -58,7 +58,7 @@ export function MobileNav() {
       </button>
 
       {open && (
-        <div className="absolute inset-x-4 top-[88px] z-50 rounded-[24px] border border-line bg-white/95 p-4 shadow-panel backdrop-blur">
+        <div className="absolute inset-x-4 top-[88px] z-[200] rounded-[24px] border border-line bg-white/95 p-4 shadow-panel backdrop-blur">
           <nav className="grid grid-cols-2 gap-2">
             {navigation.map((item) => (
               <Link
