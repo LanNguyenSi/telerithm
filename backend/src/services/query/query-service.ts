@@ -16,10 +16,9 @@ export class QueryService {
       const originalQuery = query.query;
       const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
 
-      // Try LLM-generated SQL first; if it returns no results, fall back to heuristic
       // Normalize LIKE → ILIKE so LLM-generated SQL is case-insensitive
       const normalizedSql = translation.sql
-        ? translation.sql.replace(/\bLIKE\b/gi, 'ILIKE')
+        ? translation.sql.replace(/\bLIKE\b/gi, "ILIKE")
         : undefined;
 
       const llmQuery: LogQuery = {
@@ -36,12 +35,11 @@ export class QueryService {
         return llmResult;
       }
 
-      // Fallback: re-run with heuristic (queryType="natural" → heuristic in AI service)
-      // Use the original natural query as a text search
+      // Fallback: text search if LLM SQL returned nothing
       return this.logRepo.search({
         ...query,
         queryType: "sql",
-        query: originalQuery,  // falls back to ILIKE text search in log-repository
+        query: originalQuery,
       });
     }
 
