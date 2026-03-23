@@ -5,7 +5,6 @@ Implementation tasks for Telerithm.
 | Task | Title | Status |
 |------|-------|--------|
 | 005 | Frontend Polish (responsive design) | 🔄 Open |
-| 010 | Integration Tests | 🔄 Open |
 
 ## Completed (merged)
 
@@ -14,4 +13,4 @@ Implementation tasks for Telerithm.
 | 007 | #10 | Registration Modes |
 | 008 | #10 | Admin User Management |
 | 009 | #10/#11 | Logs Pagination + Filters |
-| 010 tests | #13 | Integration Test Coverage |
+| 010 | #13 | Integration Test Coverage |
