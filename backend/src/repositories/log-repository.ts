@@ -8,12 +8,17 @@ export class LogRepository {
   async insert(entries: LogEntry[]): Promise<void> {
     if (entries.length === 0) return;
 
+    // ClickHouse DateTime64(3) does not accept ISO 'Z' suffix — convert to CH format
+    const toChTimestamp = (ts: string): string => {
+      return new Date(ts).toISOString().replace("T", " ").replace("Z", "");
+    };
+
     await clickhouse.insert({
       table: "logs",
       values: entries.map((e) => ({
         team_id: e.teamId,
         source_id: e.sourceId,
-        timestamp: e.timestamp,
+        timestamp: toChTimestamp(e.timestamp),
         level: e.level,
         service: e.service,
         host: e.host,
