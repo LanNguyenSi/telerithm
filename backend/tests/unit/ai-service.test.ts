@@ -46,7 +46,7 @@ describe("AIService", () => {
     const result = await service.translateQuery("errors from payment", "team-1");
     expect(result.filtersApplied).toContainEqual({
       field: "service",
-      operator: "eq",
+      operator: "contains",
       value: "payment",
     });
   });
