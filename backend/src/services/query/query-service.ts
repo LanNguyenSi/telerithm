@@ -17,19 +17,17 @@ export class QueryService {
       const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
 
       // Normalize LIKE to ILIKE + lowercase level values for case-insensitive matching
-      let normalizedSql = translation.sql ? translation.sql.replace(/\bLIKE\b/gi, "ILIKE") : undefined;
-      if (normalizedSql) {
-        normalizedSql = normalizedSql.replace(
-          /level\s*=\s*'([A-Z]+)'/g,
-          (_, lvl) => `level = '${lvl.toLowerCase()}'`,
-        );
-      }
+      const normalizedSql = translation.sql
+        ? translation.sql
+            .replace(/\bLIKE\b/gi, "ILIKE")
+            .replace(/level\s*=\s*'([A-Z]+)'/g, (_, lvl) => `level = '${lvl.toLowerCase()}'`)
+        : undefined;
 
       const llmQuery: LogQuery = {
         ...query,
         filters: [...(query.filters ?? []), ...translation.filtersApplied],
         queryType: "sql",
-        query: undefined,
+        query: normalizedSql,
       };
 
       const llmResult = await this.logRepo.search(llmQuery);
