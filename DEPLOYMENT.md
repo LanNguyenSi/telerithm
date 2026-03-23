@@ -32,10 +32,19 @@ nano .env.production
 ```
 
 **Required variables:**
+
 - `POSTGRES_PASSWORD`: Strong password for PostgreSQL
 
 **Optional:**
+
 - `OPENAI_API_KEY`: Only needed if using OpenAI cloud. For local LLM setup, see [LOCAL_LLM.md](LOCAL_LLM.md)
+- `ADMIN_EMAIL`: Email address that should become the initial admin on first signup
+
+**Registration defaults:**
+
+- `REGISTRATION_MODE=approval` is the recommended production default
+- Use `invite-only` to disable public signup entirely
+- Use `open` only for demos or trusted internal environments
 
 ### 3. Configure Domain
 
@@ -52,6 +61,7 @@ docker compose -f docker-compose.traefik.yml --env-file .env.production up -d --
 ```
 
 This will:
+
 - Create PostgreSQL, ClickHouse, Redis containers (internal network)
 - Build backend & frontend with production configs
 - Connect to Traefik for SSL/routing
@@ -94,6 +104,7 @@ Internal Network (telerithm-internal)
 ```
 
 **Security:**
+
 - PostgreSQL, ClickHouse, Redis are NOT exposed to the internet
 - Only backend/frontend are connected to the Traefik network
 - All services communicate via internal Docker network
@@ -102,13 +113,13 @@ Internal Network (telerithm-internal)
 
 Expected memory usage (8GB VPS):
 
-| Service    | Memory  |
-|------------|---------|
-| PostgreSQL | ~100MB  |
-| ClickHouse | ~500MB-1GB |
-| Redis      | ~50MB   |
-| Backend    | ~100MB  |
-| Frontend   | ~50MB   |
+| Service    | Memory           |
+| ---------- | ---------------- |
+| PostgreSQL | ~100MB           |
+| ClickHouse | ~500MB-1GB       |
+| Redis      | ~50MB            |
+| Backend    | ~100MB           |
+| Frontend   | ~50MB            |
 | **Total**  | **~800MB-1.3GB** |
 
 ## Updating
@@ -174,10 +185,10 @@ docker compose -f docker-compose.traefik.yml exec postgres \
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| Services won't start | `docker compose logs` to check errors |
-| SSL certificate issues | Check DNS propagation with `nslookup yourdomain` |
+| Problem                    | Solution                                                                 |
+| -------------------------- | ------------------------------------------------------------------------ |
+| Services won't start       | `docker compose logs` to check errors                                    |
+| SSL certificate issues     | Check DNS propagation with `nslookup yourdomain`                         |
 | Database connection errors | Test with `docker compose exec postgres psql -U telerithm -c "SELECT 1"` |
-| Memory issues (OOM) | Check `docker stats`, adjust limits in compose file |
-| AI queries not working | See [LOCAL_LLM.md](LOCAL_LLM.md) for setup |
+| Memory issues (OOM)        | Check `docker stats`, adjust limits in compose file                      |
+| AI queries not working     | See [LOCAL_LLM.md](LOCAL_LLM.md) for setup                               |

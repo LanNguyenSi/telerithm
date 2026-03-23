@@ -1,24 +1,34 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { LiveTail } from "@/components/logs/live-tail";
 import { LogTable } from "@/components/logs/log-table";
 import { SearchPanel } from "@/components/logs/search-panel";
 import { Card } from "@/components/ui/card";
-// import { Skeleton, SkeletonTable } from "@/components/ui/skeleton";
+import { SkeletonTable } from "@/components/ui/skeleton";
 import { getLogs, getNaturalExplanation, streamLogs } from "@/lib/api/client";
 import type { LogEntry, Team } from "@/types";
 
+const DEFAULT_PAGE_SIZE = 50;
+const ALLOWED_PAGE_SIZES = [25, 50, 100];
+
 export function LogExplorer({ team }: { team: Team }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [sqlPreview, setSqlPreview] = useState("");
   const [execution, setExecution] = useState("");
   const [loading, setLoading] = useState(true);
-  const [hasSearched, setHasSearched] = useState(false);
+  const [total, setTotal] = useState(0);
 
-  useEffect(() => {
-    setLoading(false);
-  }, [team.id]);
+  const currentQuery = searchParams.get("q")?.trim() ?? "";
+  const currentPage = Math.max(1, Number.parseInt(searchParams.get("page") ?? "1", 10) || 1);
+  const rawPageSize =
+    Number.parseInt(searchParams.get("pageSize") ?? `${DEFAULT_PAGE_SIZE}`, 10) || DEFAULT_PAGE_SIZE;
+  const pageSize = ALLOWED_PAGE_SIZES.includes(rawPageSize) ? rawPageSize : DEFAULT_PAGE_SIZE;
+  const hasSearched = currentQuery.length > 0;
 
   // Real-time: prepend new logs to the table via SSE
   useEffect(() => {
@@ -30,25 +40,82 @@ export function LogExplorer({ team }: { team: Team }) {
     return () => source.close();
   }, [team.id]);
 
-  async function handleSearch(query: string) {
-    setSqlPreview("");
-    setLogs([]);
-    setHasSearched(true);
+  useEffect(() => {
+    let active = true;
 
-    // Run both in parallel — Groq LLM is fast enough
-    const [explanation, result] = await Promise.all([
-      getNaturalExplanation(team.id, query).catch(() => null),
-      getLogs(team.id, query),
-    ]);
+    async function loadResults() {
+      if (!hasSearched) {
+        setLogs([]);
+        setSqlPreview("");
+        setExecution("");
+        setTotal(0);
+        setLoading(false);
+        return;
+      }
 
-    setLogs(result.logs);
-    setExecution(`${result.total} logs in ${result.executionTimeMs}ms`);
-    if (explanation?.sql) setSqlPreview(explanation.sql);
+      setLoading(true);
+      setSqlPreview("");
+      setExecution("");
+
+      try {
+        const offset = (currentPage - 1) * pageSize;
+        const [explanation, result] = await Promise.all([
+          getNaturalExplanation(team.id, currentQuery).catch(() => null),
+          getLogs(team.id, { query: currentQuery, limit: pageSize, offset }),
+        ]);
+
+        if (!active) return;
+
+        setLogs(result.logs);
+        setTotal(result.total);
+        setExecution(`${result.total} logs in ${result.executionTimeMs}ms`);
+        if (explanation?.sql) setSqlPreview(explanation.sql);
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    }
+
+    void loadResults();
+
+    return () => {
+      active = false;
+    };
+  }, [currentPage, currentQuery, hasSearched, pageSize, team.id]);
+
+  function updateSearch(next: { query?: string; page?: number; pageSize?: number }) {
+    const params = new URLSearchParams(searchParams.toString());
+    const query = next.query ?? currentQuery;
+    const page = next.page ?? currentPage;
+    const nextPageSize = next.pageSize ?? pageSize;
+
+    if (query) {
+      params.set("q", query);
+      params.set("page", String(page));
+      params.set("pageSize", String(nextPageSize));
+    } else {
+      params.delete("q");
+      params.delete("page");
+      params.delete("pageSize");
+    }
+
+    const queryString = params.toString();
+    router.push(queryString ? `${pathname}?${queryString}` : pathname, { scroll: false });
+  }
+
+  async function handleSearch(query: string, nextPageSize: number) {
+    updateSearch({ query: query.trim(), page: 1, pageSize: nextPageSize });
   }
 
   return (
     <div className="space-y-4 lg:space-y-6">
-      <SearchPanel onSearch={handleSearch} sqlPreview={sqlPreview} />
+      <SearchPanel
+        onSearch={handleSearch}
+        sqlPreview={sqlPreview}
+        currentQuery={currentQuery}
+        pageSize={pageSize}
+      />
 
       {hasSearched && (
         <Card className="flex flex-wrap items-center justify-between gap-3">
@@ -61,6 +128,8 @@ export function LogExplorer({ team }: { team: Team }) {
           </p>
         </Card>
       )}
+
+      {loading && hasSearched && <SkeletonTable rows={Math.min(pageSize, 8)} />}
 
       {hasSearched && logs.length === 0 ? (
         <Card>
@@ -89,9 +158,25 @@ export function LogExplorer({ team }: { team: Team }) {
             </p>
           </div>
         </Card>
-      ) : (
-        <LogTable logs={logs} />
-      )}
+      ) : !loading && hasSearched ? (
+        <LogTable
+          logs={logs}
+          page={currentPage}
+          pageSize={pageSize}
+          total={total}
+          onPageChange={(page) => updateSearch({ page })}
+          onPageSizeChange={(nextPageSize) => updateSearch({ page: 1, pageSize: nextPageSize })}
+        />
+      ) : !hasSearched ? (
+        <Card>
+          <div className="py-10 text-center">
+            <p className="text-base font-medium text-ink">Search your logs in plain language</p>
+            <p className="mt-2 text-sm text-muted">
+              Ask for errors, services, or time ranges and page through the results once they load.
+            </p>
+          </div>
+        </Card>
+      ) : null}
 
       <LiveTail teamId={team.id} />
     </div>

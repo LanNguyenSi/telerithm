@@ -41,6 +41,7 @@ export class InMemoryStore {
       passwordHash: hashValue("demo123"),
       name: "Demo User",
       role: "ADMIN",
+      status: "ACTIVE",
       createdAt,
     });
 

@@ -101,7 +101,13 @@ export const createInviteSchema = z.object({
 
 export const updateUserRoleSchema = z.object({
   role: z.enum(["USER", "ADMIN"]).optional(),
+  status: z.enum(["ACTIVE", "PENDING", "DISABLED"]).optional(),
   disabled: z.boolean().optional(),
+});
+
+export const addUserToTeamSchema = z.object({
+  teamId: z.string().min(1),
+  role: z.enum(["OWNER", "ADMIN", "MEMBER", "VIEWER"]).default("MEMBER"),
 });
 
 export const ingestSchema = z.object({

@@ -48,6 +48,8 @@ services:
       REDIS_URL: redis://redis:6379
       CORS_ORIGINS: http://localhost:3000
       LOG_LEVEL: info
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-open}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@telerithm.local}
     depends_on:
       postgres:
         condition: service_healthy

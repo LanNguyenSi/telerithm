@@ -13,6 +13,8 @@ const configSchema = z.object({
     .enum(["true", "false", "1", "0"])
     .default("false")
     .transform((v) => v === "true" || v === "1"),
+  registrationMode: z.enum(["open", "invite-only", "approval"]).default("approval"),
+  adminEmail: z.string().email().optional(),
   openaiApiKey: z.string().optional(), // Optional: AI query engine falls back to heuristic if not provided
 });
 
@@ -29,6 +31,8 @@ function loadConfig(): Config {
     corsOrigins: process.env.CORS_ORIGINS,
     redisUrl: process.env.REDIS_URL,
     multiTenant: process.env.MULTI_TENANT,
+    registrationMode: process.env.REGISTRATION_MODE,
+    adminEmail: process.env.ADMIN_EMAIL,
     openaiApiKey: process.env.OPENAI_API_KEY,
   });
 

@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 # Production deployment with Traefik integration
 # Assumes Traefik is already running on the VPS with:
@@ -80,6 +80,8 @@ services:
       REDIS_URL: redis://redis:6379
       CORS_ORIGINS: https://logs.opentriologue.ai
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-approval}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
     depends_on:
       postgres:
@@ -97,7 +99,13 @@ services:
           memory: 512M
           cpus: "1.0"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/v1/health').then(r => process.exit(r.ok ? 0 : 1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:4000/api/v1/health').then(r => process.exit(r.ok ? 0 : 1))",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3

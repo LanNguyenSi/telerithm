@@ -46,6 +46,7 @@ export interface User {
   passwordHash: string;
   name: string;
   role: "USER" | "ADMIN";
+  status: "ACTIVE" | "PENDING" | "DISABLED";
   createdAt: string;
 }
 
@@ -127,6 +128,14 @@ export interface AuthResult {
   token: string;
   user: Omit<User, "passwordHash">;
 }
+
+export interface PendingApprovalResult {
+  status: "pending_approval";
+  message: string;
+  user: Omit<User, "passwordHash">;
+}
+
+export type RegistrationResult = AuthResult | PendingApprovalResult;
 
 export interface IngestRequestPayload {
   logs: Array<Partial<LogEntry> | string>;

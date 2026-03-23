@@ -9,10 +9,7 @@ export const metadata: Metadata = {
   description:
     "Operational clarity for noisy systems. Search logs with natural language, track issues, and get alerted before users notice.",
   icons: {
-    icon: [
-      { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
-    ],
+    icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
   },
 };
 

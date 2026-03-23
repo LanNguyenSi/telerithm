@@ -1,4 +1,11 @@
-import type { AuthResult, LogSource, Team, TeamInvite, User } from "../../types/domain.js";
+import type {
+  AuthResult,
+  LogSource,
+  RegistrationResult,
+  Team,
+  TeamInvite,
+  User,
+} from "../../types/domain.js";
 import { config } from "../../config/index.js";
 import { prisma } from "../../repositories/prisma.js";
 import { generateId } from "../../utils/id.js";
@@ -12,6 +19,7 @@ function sanitizeUser(user: {
   email: string;
   name: string;
   role: string;
+  status: string;
   createdAt: Date;
 }): Omit<User, "passwordHash"> {
   return {
@@ -19,43 +27,69 @@ function sanitizeUser(user: {
     email: user.email,
     name: user.name,
     role: user.role as User["role"],
+    status: user.status as User["status"],
     createdAt: user.createdAt.toISOString(),
   };
 }
 
 export class TeamService {
-  async register(email: string, password: string, name: string): Promise<AuthResult> {
-    const existing = await prisma.user.findUnique({ where: { email } });
+  async register(email: string, password: string, name: string): Promise<RegistrationResult> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const existing = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (existing) {
       throw new Error("User already exists");
     }
 
+    const isBootstrapAdmin =
+      config.adminEmail !== undefined && normalizedEmail === config.adminEmail.trim().toLowerCase();
+
+    if (config.registrationMode === "invite-only" && !isBootstrapAdmin) {
+      throw new Error("Registration is currently invite-only");
+    }
+
+    const status: User["status"] =
+      config.registrationMode === "approval" && !isBootstrapAdmin ? "PENDING" : "ACTIVE";
+    const role: User["role"] = isBootstrapAdmin ? "ADMIN" : "USER";
+
     const user = await prisma.user.create({
       data: {
-        email,
+        email: normalizedEmail,
         passwordHash: await hashPassword(password),
         name,
-        role: "USER",
+        role,
+        status,
       },
     });
 
-    // In single-tenant mode, auto-assign new users to the default team
-    if (!config.multiTenant) {
-      const defaultTeam = await this.ensureDefaultTeam();
-      await prisma.teamMember.create({
-        data: { teamId: defaultTeam.id, userId: user.id, role: "MEMBER" },
-      });
-      log.info({ userId: user.id, teamId: defaultTeam.id }, "User auto-assigned to default team");
+    if (!config.multiTenant && status === "ACTIVE") {
+      await this.addUserToDefaultTeam(user.id, role === "ADMIN" ? "OWNER" : "MEMBER");
     }
 
-    log.info({ userId: user.id, email }, "User registered");
+    log.info({ userId: user.id, email: normalizedEmail, status, role }, "User registered");
+
+    if (status === "PENDING") {
+      return {
+        status: "pending_approval",
+        message: "Your account has been created and is waiting for admin approval.",
+        user: sanitizeUser(user),
+      };
+    }
+
     return this.createSession(user);
   }
 
   async login(email: string, password: string): Promise<AuthResult> {
-    const user = await prisma.user.findUnique({ where: { email } });
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (!user) {
       throw new Error("Invalid credentials");
+    }
+
+    if (user.status === "PENDING") {
+      throw new Error("Your account is pending admin approval");
+    }
+    if (user.status === "DISABLED") {
+      throw new Error("Your account has been disabled");
     }
 
     const valid = await verifyPassword(password, user.passwordHash);
@@ -154,6 +188,47 @@ export class TeamService {
 
   async getMemberCount(teamId: string): Promise<number> {
     return prisma.teamMember.count({ where: { teamId } });
+  }
+
+  async approveUser(userId: string) {
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: { status: "ACTIVE" },
+      select: { id: true, email: true, name: true, role: true, status: true, createdAt: true },
+    });
+
+    if (!config.multiTenant) {
+      const membership = await prisma.teamMember.findFirst({ where: { userId } });
+      if (!membership) {
+        await this.addUserToDefaultTeam(userId, user.role === "ADMIN" ? "OWNER" : "MEMBER");
+      }
+    }
+
+    log.info({ userId }, "User approved");
+    return sanitizeUser(user);
+  }
+
+  async addUserToTeam(userId: string, teamId: string, role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER") {
+    const membership = await prisma.teamMember.findUnique({
+      where: { teamId_userId: { teamId, userId } },
+    });
+
+    if (membership) {
+      return prisma.teamMember.update({
+        where: { teamId_userId: { teamId, userId } },
+        data: { role },
+      });
+    }
+
+    return prisma.teamMember.create({
+      data: { userId, teamId, role },
+    });
+  }
+
+  async removeUserFromTeam(userId: string, teamId: string): Promise<void> {
+    await prisma.teamMember.delete({
+      where: { teamId_userId: { teamId, userId } },
+    });
   }
 
   // --- Invite System (Multi-Tenant) ---
@@ -268,6 +343,7 @@ export class TeamService {
     email: string;
     name: string;
     role: string;
+    status: string;
     createdAt: Date;
   }): Promise<AuthResult> {
     const token = `sess_${generateId().replace(/-/g, "").slice(0, 24)}`;
@@ -279,5 +355,15 @@ export class TeamService {
       },
     });
     return { token, user: sanitizeUser(user) };
+  }
+
+  private async addUserToDefaultTeam(userId: string, role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER") {
+    const defaultTeam = await this.ensureDefaultTeam();
+    await prisma.teamMember.upsert({
+      where: { teamId_userId: { teamId: defaultTeam.id, userId } },
+      create: { teamId: defaultTeam.id, userId, role },
+      update: { role },
+    });
+    log.info({ userId, teamId: defaultTeam.id }, "User assigned to default team");
   }
 }

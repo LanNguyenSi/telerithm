@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 
 const HISTORY_LIMIT = 5;
@@ -9,21 +9,34 @@ const PRESETS = ["show payment errors", "fatal logs last hour", "warn logs from 
 export function SearchPanel({
   onSearch,
   sqlPreview,
+  currentQuery,
+  pageSize,
 }: {
-  onSearch: (query: string) => Promise<void>;
+  onSearch: (query: string, pageSize: number) => Promise<void>;
   sqlPreview?: string;
+  currentQuery?: string;
+  pageSize: number;
 }) {
   const [query, setQuery] = useState("");
   const [isPending, setIsPending] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [sqlOpen, setSqlOpen] = useState(false);
 
+  useEffect(() => {
+    setQuery(currentQuery ?? "");
+  }, [currentQuery]);
+
   async function runQuery(q: string) {
-    setQuery(q);
+    const trimmed = q.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    setQuery(trimmed);
     setIsPending(true);
     try {
-      await onSearch(q);
-      setHistory((prev) => [q, ...prev.filter((h) => h !== q)].slice(0, HISTORY_LIMIT));
+      await onSearch(trimmed, pageSize);
+      setHistory((prev) => [trimmed, ...prev.filter((h) => h !== trimmed)].slice(0, HISTORY_LIMIT));
       setSqlOpen(true);
     } finally {
       setIsPending(false);
@@ -56,7 +69,7 @@ export function SearchPanel({
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-signal [animation-delay:150ms]" />
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-signal [animation-delay:300ms]" />
               </span>
-              <span className="text-xs text-signal">Searching…</span>
+              <span className="text-xs text-signal">AI generating SQL...</span>
             </div>
           )}
         </div>
@@ -66,7 +79,7 @@ export function SearchPanel({
           disabled={isPending}
           className="shrink-0 rounded-2xl bg-slate-950 px-6 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50 sm:self-start sm:py-4"
         >
-          {isPending ? "Searching…" : "Run query"}
+          {isPending ? "Running..." : "Run query"}
         </button>
       </div>
 

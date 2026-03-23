@@ -33,6 +33,30 @@ export interface Team {
   createdAt: string;
 }
 
+export interface SessionUser {
+  id: string;
+  email: string;
+  name: string;
+  role: "USER" | "ADMIN";
+  status: "ACTIVE" | "PENDING" | "DISABLED";
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  name: string;
+  role: "USER" | "ADMIN";
+  status: "ACTIVE" | "PENDING" | "DISABLED";
+  createdAt: string;
+  teams: Array<{
+    id: string;
+    name: string;
+    slug: string;
+    role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
+    joinedAt: string;
+  }>;
+}
+
 export interface Source {
   id: string;
   teamId: string;
@@ -84,4 +108,3 @@ export interface Issue {
   eventCount: number;
   assignee?: { id: string; name: string; email: string } | null;
 }
-

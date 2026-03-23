@@ -1,13 +1,8 @@
 import { cookies } from "next/headers";
+import type { SessionUser } from "@/types";
 
 const TOKEN_COOKIE = "telerithm_token";
 const USER_COOKIE = "telerithm_user";
-
-export interface SessionUser {
-  id: string;
-  email: string;
-  name: string;
-}
 
 export async function getSession(): Promise<{ token: string; user: SessionUser } | null> {
   const cookieStore = await cookies();

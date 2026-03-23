@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-const navigation = [
+const baseNavigation = [
   { href: "/", label: "Overview" },
   { href: "/logs", label: "Logs" },
   { href: "/issues", label: "Issues" },
@@ -12,8 +12,9 @@ const navigation = [
   { href: "/settings", label: "Settings" },
 ] as const;
 
-export function MobileNav() {
+export function MobileNav({ isAdmin = false }: { isAdmin?: boolean }) {
   const [open, setOpen] = useState(false);
+  const navigation = isAdmin ? [...baseNavigation, { href: "/admin", label: "Admin" }] : baseNavigation;
 
   return (
     <div className="lg:hidden">
