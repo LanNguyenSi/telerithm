@@ -16,7 +16,7 @@ export class QueryService {
       const originalQuery = query.query;
       const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
 
-      // Normalize LIKE → ILIKE so LLM-generated SQL is case-insensitive
+      // Normalize LIKE → ILIKE for case-insensitive matching
       const normalizedSql = translation.sql
         ? translation.sql.replace(/\bLIKE\b/gi, "ILIKE")
         : undefined;
@@ -35,7 +35,7 @@ export class QueryService {
         return llmResult;
       }
 
-      // Fallback: text search if LLM SQL returned nothing
+      // Fallback: text search across message/service/host
       return this.logRepo.search({
         ...query,
         queryType: "sql",
