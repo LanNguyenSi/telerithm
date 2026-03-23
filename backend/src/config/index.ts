@@ -14,7 +14,7 @@ const configSchema = z.object({
     .default("false")
     .transform((v) => v === "true" || v === "1"),
   registrationMode: z.enum(["open", "invite-only", "approval"]).default("approval"),
-  adminEmail: z.string().email().optional(),
+  adminEmail: z.string().email().optional().or(z.literal("")).transform(v => v === "" ? undefined : v),
   openaiApiKey: z.string().optional(), // Optional: AI query engine falls back to heuristic if not provided
 });
 
