@@ -16,14 +16,7 @@ export function LogExplorer({ team }: { team: Team }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function bootstrap() {
-      const result = await getLogs(team.id);
-      setLogs(result.logs);
-      setExecution(`${result.total} logs in ${result.executionTimeMs}ms`);
-      setLoading(false);
-    }
-
-    void bootstrap();
+    setLoading(false);
   }, [team.id]);
 
   // Real-time: prepend new logs to the table via SSE
