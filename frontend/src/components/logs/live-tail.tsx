@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
-import { formatDate } from "@/lib/utils/format";
+import { decodeHtml, formatDate } from "@/lib/utils/format";
 import { streamLogs } from "@/lib/api/client";
 import type { LogEntry } from "@/types";
 
@@ -63,10 +63,10 @@ export function LiveTail({ teamId }: { teamId: string }) {
             <article key={log.id} className="rounded-xl border border-line bg-white/70 p-3 dark:bg-white/5">
               <div className="flex flex-wrap items-center gap-3 font-mono text-xs text-muted">
                 <span>{formatDate(log.timestamp)}</span>
-                <span>{log.service}</span>
+                <span>{decodeHtml(log.service)}</span>
                 <span>{log.level}</span>
               </div>
-              <p className="mt-1.5 text-sm text-ink">{log.message}</p>
+              <p className="mt-1.5 break-all text-sm text-ink">{decodeHtml(log.message)}</p>
             </article>
           ))
         )}
