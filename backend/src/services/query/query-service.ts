@@ -14,34 +14,38 @@ export class QueryService {
   async search(query: LogQuery): Promise<LogSearchResult> {
     if (query.queryType === "natural" && query.query) {
       const originalQuery = query.query;
-      const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
 
-      // Normalize LIKE to ILIKE for case-insensitive matching
-      const normalizedSql = translation.sql ? translation.sql.replace(/\bLIKE\b/gi, "ILIKE") : undefined;
-
-      const llmQuery: LogQuery = {
-        ...query,
-        filters: [...(query.filters ?? []), ...translation.filtersApplied],
-        queryType: "sql",
-        query: normalizedSql,
-      };
-
-      const llmResult = await this.logRepo.search(llmQuery);
-
-      if (llmResult.logs.length > 0) {
-        return llmResult;
-      }
-
-      // Fallback: apply heuristic filters from the AI service directly
+      // Use heuristic translation first (fast, correct for common queries)
       const heuristic = this.aiService.translateQueryHeuristicPublic(originalQuery, query.teamId);
-      const fallbackQuery: LogQuery = {
+
+      const heuristicQuery: LogQuery = {
         ...query,
         filters: [...(query.filters ?? []), ...heuristic.filtersApplied],
         queryType: "sql",
         query: undefined,
       };
 
-      return this.logRepo.search(fallbackQuery);
+      const heuristicResult = await this.logRepo.search(heuristicQuery);
+
+      if (heuristicResult.logs.length > 0) {
+        return heuristicResult;
+      }
+
+      // Fallback to LLM if heuristic returns no results
+      try {
+        const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
+        const normalizedSql = translation.sql ? translation.sql.replace(/\bLIKE\b/gi, "ILIKE") : undefined;
+        const llmQuery: LogQuery = {
+          ...query,
+          filters: [...(query.filters ?? []), ...translation.filtersApplied],
+          queryType: "sql",
+          query: normalizedSql,
+        };
+        return this.logRepo.search(llmQuery);
+      } catch {
+        // If LLM fails, return empty heuristic result
+        return heuristicResult;
+      }
     }
 
     return this.logRepo.search(query);
