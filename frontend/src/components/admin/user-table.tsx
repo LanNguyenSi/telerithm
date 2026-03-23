@@ -96,7 +96,11 @@ export function UserTable({
   return (
     <>
       <Card>
-        {error && <p className="mb-4 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>}
+        {error && (
+          <p className="mb-4 rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
+            {error}
+          </p>
+        )}
 
         {users.length === 0 ? (
           <div className="py-10 text-center">
@@ -108,7 +112,10 @@ export function UserTable({
         ) : (
           <div className="space-y-4">
             {users.map((user) => (
-              <article key={user.id} className="rounded-[24px] border border-line bg-white/75 p-4">
+              <article
+                key={user.id}
+                className="rounded-[24px] border border-line bg-white/75 p-4 dark:bg-white/5"
+              >
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="space-y-2">
                     <div className="flex flex-wrap items-center gap-2">
@@ -151,7 +158,7 @@ export function UserTable({
                       {user.teams.map((team) => (
                         <div
                           key={`${user.id}:${team.id}`}
-                          className="flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1.5 text-sm text-ink"
+                          className="flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1.5 text-sm text-ink dark:bg-white/10"
                         >
                           <span>{team.name}</span>
                           <span className="text-xs text-muted">{team.role}</span>

@@ -193,12 +193,12 @@ export function IssueExplorer({ team }: { team: Team }) {
               name="query"
               defaultValue={currentFilters.query}
               placeholder="Search title"
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             />
             <select
               name="status"
               defaultValue={currentFilters.status}
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             >
               <option value="">All statuses</option>
               <option value="NEW">NEW</option>
@@ -210,12 +210,12 @@ export function IssueExplorer({ team }: { team: Team }) {
               name="service"
               defaultValue={currentFilters.service}
               placeholder="Service"
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             />
             <select
               name="level"
               defaultValue={currentFilters.level}
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             >
               <option value="">All levels</option>
               <option value="fatal">fatal</option>
@@ -226,7 +226,7 @@ export function IssueExplorer({ team }: { team: Team }) {
             <select
               name="sort"
               defaultValue={`${currentSort.sortBy}:${currentSort.sortDirection}`}
-              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+              className="rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             >
               <option value="lastSeen:desc">Newest activity</option>
               <option value="firstSeen:asc">Oldest first seen</option>
@@ -328,7 +328,10 @@ export function IssueExplorer({ team }: { team: Team }) {
 
           <div className="space-y-3 md:hidden">
             {issues.map((issue) => (
-              <article key={issue.id} className="rounded-2xl border border-line bg-white/70 p-4">
+              <article
+                key={issue.id}
+                className="rounded-2xl border border-line bg-white/70 p-4 dark:bg-white/5"
+              >
                 <div className="flex flex-wrap items-center gap-2">
                   <Badge tone={statusTone(issue.status)}>{issue.status}</Badge>
                   <Badge tone={levelTone(issue.level)}>{issue.level}</Badge>

@@ -1,7 +1,9 @@
 import clsx from "clsx";
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={clsx("animate-pulse rounded-2xl bg-slate-900/[0.07]", className)} />;
+  return (
+    <div className={clsx("animate-pulse rounded-2xl bg-slate-900/[0.07] dark:bg-white/[0.07]", className)} />
+  );
 }
 
 export function SkeletonCard({ className }: { className?: string }) {
@@ -37,7 +39,7 @@ export function SkeletonTable({ rows = 8 }: { rows?: number }) {
       <div className="border-b border-line bg-slate-950 px-4 py-4">
         <div className="flex gap-4">
           {["w-28", "w-16", "w-24", "w-20", "flex-1"].map((w, i) => (
-            <div key={i} className={clsx("h-3 rounded bg-white/10", w)} />
+            <div key={i} className={clsx("h-3 rounded bg-white/10 dark:bg-white/10", w)} />
           ))}
         </div>
       </div>

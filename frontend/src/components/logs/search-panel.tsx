@@ -98,7 +98,7 @@ export function SearchPanel({
               }
             }}
             rows={2}
-            className="w-full rounded-2xl border border-line bg-white/90 px-4 py-3 text-base text-ink outline-none ring-0 resize-none"
+            className="w-full rounded-2xl border border-line bg-white/90 px-4 py-3 text-base text-ink outline-none ring-0 resize-none dark:bg-white/10"
             placeholder="Show me payment failures from the last hour"
           />
           {isPending && (
@@ -128,7 +128,7 @@ export function SearchPanel({
           <select
             value={level}
             onChange={(event) => setLevel(event.target.value)}
-            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
           >
             <option value="">All levels</option>
             <option value="fatal">fatal</option>
@@ -145,7 +145,7 @@ export function SearchPanel({
             value={service}
             onChange={(event) => setService(event.target.value)}
             placeholder="payment"
-            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
           />
         </label>
 
@@ -155,7 +155,7 @@ export function SearchPanel({
             value={host}
             onChange={(event) => setHost(event.target.value)}
             placeholder="api-1"
-            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
           />
         </label>
 
@@ -164,7 +164,7 @@ export function SearchPanel({
           <select
             value={sortValue}
             onChange={(event) => setSortValue(event.target.value)}
-            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
           >
             {SORT_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
@@ -190,7 +190,7 @@ export function SearchPanel({
               pageSize,
             );
           }}
-          className="rounded-full border border-line bg-white/60 px-3 py-1 text-xs text-muted transition hover:text-ink"
+          className="rounded-full border border-line bg-white/60 px-3 py-1 text-xs text-muted transition hover:text-ink dark:bg-white/5"
         >
           Reset filters
         </button>
@@ -204,7 +204,7 @@ export function SearchPanel({
             type="button"
             onClick={() => void runQuery(preset)}
             disabled={isPending}
-            className="rounded-full border border-line bg-white/70 px-3 py-1 text-xs text-ink transition hover:border-slate-400 disabled:opacity-50"
+            className="rounded-full border border-line bg-white/70 px-3 py-1 text-xs text-ink transition hover:border-slate-400 disabled:opacity-50 dark:bg-white/5"
           >
             {preset}
           </button>
@@ -220,7 +220,7 @@ export function SearchPanel({
               type="button"
               onClick={() => void runQuery(h)}
               disabled={isPending}
-              className="rounded-full border border-line bg-white/50 px-3 py-1 font-mono text-xs text-muted transition hover:text-ink disabled:opacity-50"
+              className="rounded-full border border-line bg-white/50 px-3 py-1 font-mono text-xs text-muted transition hover:text-ink disabled:opacity-50 dark:bg-white/5"
             >
               {h}
             </button>
@@ -250,7 +250,9 @@ export function SearchPanel({
               <polyline points="9 18 15 12 9 6" />
             </svg>
             <span>Generated SQL</span>
-            <span className="rounded bg-cyan-100 px-1.5 py-0.5 font-mono text-[10px] text-cyan-700">AI</span>
+            <span className="rounded bg-cyan-100 px-1.5 py-0.5 font-mono text-[10px] text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+              AI
+            </span>
           </button>
           {sqlOpen && (
             <div className="mt-2 overflow-x-auto rounded-2xl bg-slate-950 p-4 font-mono text-sm text-cyan-200">

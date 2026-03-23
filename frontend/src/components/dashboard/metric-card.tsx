@@ -1,14 +1,6 @@
 import { Card } from "@/components/ui/card";
 
-export function MetricCard({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string;
-  hint: string;
-}) {
+export function MetricCard({ label, value, hint }: { label: string; value: string; hint: string }) {
   return (
     <Card>
       <p className="text-sm uppercase tracking-[0.24em] text-muted">{label}</p>
@@ -17,4 +9,3 @@ export function MetricCard({
     </Card>
   );
 }
-
