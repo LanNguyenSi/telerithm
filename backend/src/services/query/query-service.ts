@@ -14,38 +14,37 @@ export class QueryService {
   async search(query: LogQuery): Promise<LogSearchResult> {
     if (query.queryType === "natural" && query.query) {
       const originalQuery = query.query;
+      const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
 
-      // Use heuristic translation first (fast, correct for common queries)
+      // Normalize LIKE to ILIKE + lowercase level values for case-insensitive matching
+      let normalizedSql = translation.sql ? translation.sql.replace(/\bLIKE\b/gi, "ILIKE") : undefined;
+      if (normalizedSql) {
+        normalizedSql = normalizedSql.replace(/level\s*=\s*'([A-Z]+)'/g, (_, lvl) => `level = '${lvl.toLowerCase()}'`);
+      }
+
+      const llmQuery: LogQuery = {
+        ...query,
+        filters: [...(query.filters ?? []), ...translation.filtersApplied],
+        queryType: "sql",
+        query: normalizedSql,
+      };
+
+      const llmResult = await this.logRepo.search(llmQuery);
+
+      if (llmResult.logs.length > 0) {
+        return llmResult;
+      }
+
+      // Fallback: heuristic filters
       const heuristic = this.aiService.translateQueryHeuristicPublic(originalQuery, query.teamId);
-
-      const heuristicQuery: LogQuery = {
+      const fallbackQuery: LogQuery = {
         ...query,
         filters: [...(query.filters ?? []), ...heuristic.filtersApplied],
         queryType: "sql",
         query: undefined,
       };
 
-      const heuristicResult = await this.logRepo.search(heuristicQuery);
-
-      if (heuristicResult.logs.length > 0) {
-        return heuristicResult;
-      }
-
-      // Fallback to LLM if heuristic returns no results
-      try {
-        const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
-        const normalizedSql = translation.sql ? translation.sql.replace(/\bLIKE\b/gi, "ILIKE") : undefined;
-        const llmQuery: LogQuery = {
-          ...query,
-          filters: [...(query.filters ?? []), ...translation.filtersApplied],
-          queryType: "sql",
-          query: normalizedSql,
-        };
-        return this.logRepo.search(llmQuery);
-      } catch {
-        // If LLM fails, return empty heuristic result
-        return heuristicResult;
-      }
+      return this.logRepo.search(fallbackQuery);
     }
 
     return this.logRepo.search(query);
