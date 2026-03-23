@@ -25,7 +25,7 @@ export function RegisterForm({
         </div>
 
         {state?.pendingApproval ? (
-          <div className="rounded-[28px] border border-line bg-white/80 p-6 shadow-panel">
+          <div className="rounded-[28px] border border-line bg-white/80 p-6 shadow-panel dark:bg-white/5">
             <h2 className="text-lg font-semibold text-ink">Request submitted</h2>
             <p className="mt-2 text-sm text-muted">
               {state.success ?? "Your account is waiting for admin approval."}
@@ -41,7 +41,9 @@ export function RegisterForm({
         ) : (
           <form action={action} className="space-y-4">
             {state?.error && (
-              <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{state.error}</p>
+              <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
+                {state.error}
+              </p>
             )}
             <div>
               <label htmlFor="name" className="block text-sm text-muted">
@@ -53,7 +55,7 @@ export function RegisterForm({
                 type="text"
                 required
                 autoComplete="name"
-                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400"
+                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400 dark:bg-white/10"
               />
             </div>
             <div>
@@ -66,7 +68,7 @@ export function RegisterForm({
                 type="email"
                 required
                 autoComplete="email"
-                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400"
+                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400 dark:bg-white/10"
               />
             </div>
             <div>
@@ -80,7 +82,7 @@ export function RegisterForm({
                 required
                 minLength={6}
                 autoComplete="new-password"
-                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400"
+                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400 dark:bg-white/10"
               />
             </div>
             <button

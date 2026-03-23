@@ -2,7 +2,7 @@
 
 **Priority:** P1
 **Estimate:** 3h
-**Status:** Open
+**Status:** Done
 
 ## Problem
 
@@ -11,31 +11,31 @@ Frontend needs responsive design and polish for LinkedIn screenshots and mobile 
 ## Checklist
 
 ### Responsive Design
-- [ ] Logs page: Search panel stacks on mobile
-- [ ] Dashboard: Metric cards 1-col on mobile, 2-3 col desktop
-- [ ] Alerts: Table → card layout on mobile
-- [ ] Issues: Table → card layout on mobile
-- [ ] Settings: Form fields full-width on mobile
-- [ ] Navigation: Hamburger menu or collapsible sidebar
+- [x] Logs page: Search panel stacks on mobile
+- [x] Dashboard: Metric cards 1-col on mobile, 2-3 col desktop
+- [x] Alerts: Table → card layout on mobile
+- [x] Issues: Table → card layout on mobile
+- [x] Settings: Form fields full-width on mobile
+- [x] Navigation: Hamburger menu or collapsible sidebar
 
 ### Visual Polish
-- [ ] Loading skeletons (not just "Loading...")
-- [ ] Empty states with helpful messages
-- [ ] Error boundaries with retry buttons
-- [ ] Consistent color palette (match OpenTriologue branding?)
-- [ ] Favicon + page titles
+- [x] Loading skeletons (not just "Loading...")
+- [x] Empty states with helpful messages
+- [x] Error boundaries with retry buttons
+- [x] Consistent color palette (match OpenTriologue branding?)
+- [x] Favicon + page titles
 
 ### Natural Language Search UX
-- [ ] Prominent search bar on logs page
-- [ ] AI query indicator (show "AI generating SQL..." loading)
-- [ ] Show generated SQL in collapsible section
-- [ ] Query history / saved queries
+- [x] Prominent search bar on logs page
+- [x] AI query indicator (show "AI generating SQL..." loading)
+- [x] Show generated SQL in collapsible section
+- [x] Query history / saved queries
 
 ### Screenshots Prep
-- [ ] Dark mode (if not already)
-- [ ] Clean data visible in all views
-- [ ] At least one open incident
-- [ ] Natural language query result visible
+- [x] Dark mode (if not already)
+- [x] Clean data visible in all views
+- [x] At least one open incident
+- [x] Natural language query result visible
 
 ## Files to Modify
 

@@ -34,7 +34,7 @@ export function AddToTeamModal({
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 px-4">
-      <div className="w-full max-w-md rounded-[28px] border border-line bg-white p-6 shadow-panel">
+      <div className="w-full max-w-md rounded-[28px] border border-line bg-white p-6 shadow-panel dark:bg-slate-900">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-semibold text-ink">Add user to team</h3>
@@ -58,7 +58,7 @@ export function AddToTeamModal({
               id="teamId"
               value={teamId}
               onChange={(event) => setTeamId(event.target.value)}
-              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             >
               {teams.map((team) => (
                 <option key={team.id} value={team.id}>
@@ -76,7 +76,7 @@ export function AddToTeamModal({
               id="role"
               value={role}
               onChange={(event) => setRole(event.target.value as (typeof TEAM_ROLES)[number])}
-              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             >
               {TEAM_ROLES.map((teamRole) => (
                 <option key={teamRole} value={teamRole}>

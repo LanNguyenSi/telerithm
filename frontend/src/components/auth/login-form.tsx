@@ -17,7 +17,9 @@ export function LoginForm({ registrationMode }: { registrationMode: "open" | "in
 
         <form action={action} className="space-y-4">
           {state?.error && (
-            <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700">{state.error}</p>
+            <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
+              {state.error}
+            </p>
           )}
           <div>
             <label htmlFor="email" className="block text-sm text-muted">
@@ -29,7 +31,7 @@ export function LoginForm({ registrationMode }: { registrationMode: "open" | "in
               type="email"
               required
               autoComplete="email"
-              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400"
+              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             />
           </div>
           <div>
@@ -42,7 +44,7 @@ export function LoginForm({ registrationMode }: { registrationMode: "open" | "in
               type="password"
               required
               autoComplete="current-password"
-              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400"
+              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             />
           </div>
           <button

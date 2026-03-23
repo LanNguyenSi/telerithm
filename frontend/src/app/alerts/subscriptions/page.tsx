@@ -63,19 +63,15 @@ export default async function SubscriptionsPage() {
 
         <Card>
           <h2 className="text-xl font-semibold text-ink">Available Rules</h2>
-          <p className="mt-2 text-sm text-muted">
-            Subscribe to specific rules or to all rules in your team.
-          </p>
+          <p className="mt-2 text-sm text-muted">Subscribe to specific rules or to all rules in your team.</p>
           <div className="mt-6 space-y-3">
             {rules.map((rule) => (
               <article
                 key={rule.id}
-                className="rounded-2xl border border-line bg-white/70 p-4"
+                className="rounded-2xl border border-line bg-white/70 p-4 dark:bg-white/5"
               >
                 <p className="font-medium text-ink">{rule.name}</p>
-                <p className="mt-1 text-sm text-muted">
-                  {rule.description ?? "No description"}
-                </p>
+                <p className="mt-1 text-sm text-muted">{rule.description ?? "No description"}</p>
                 <p className="mt-2 text-xs text-muted">Threshold: {rule.threshold}</p>
               </article>
             ))}

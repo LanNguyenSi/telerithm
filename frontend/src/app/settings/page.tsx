@@ -31,19 +31,41 @@ export default async function SettingsPage() {
         <Card>
           <h2 className="text-xl font-semibold text-ink">Log Sources</h2>
           {sources.length === 0 ? (
-            <p className="mt-4 text-sm text-muted">
-              No log sources configured. Add a source to start ingesting logs.
-            </p>
+            <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-dashed border-line bg-white/50 p-8 text-center dark:bg-white/5">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="36"
+                height="36"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className="text-muted"
+              >
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                <line x1="12" y1="22.08" x2="12" y2="12" />
+              </svg>
+              <p className="text-sm font-medium text-ink">No log sources configured</p>
+              <p className="max-w-xs text-sm text-muted">
+                Add a source to start ingesting logs from your services.
+              </p>
+            </div>
           ) : (
             <div className="mt-6 space-y-4">
               {sources.map((source) => (
-                <article key={source.id} className="rounded-2xl border border-line bg-white/70 p-4">
+                <article
+                  key={source.id}
+                  className="rounded-2xl border border-line bg-white/70 p-4 dark:bg-white/5"
+                >
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="font-medium text-ink">{source.name}</p>
                       <p className="mt-1 text-sm text-muted">{source.type}</p>
                     </div>
-                    <span className="self-start rounded-full bg-cyan-100 px-3 py-1 font-mono text-xs text-cyan-800 sm:self-auto">
+                    <span className="self-start rounded-full bg-cyan-100 px-3 py-1 font-mono text-xs text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300 sm:self-auto">
                       {source.apiKey}
                     </span>
                   </div>

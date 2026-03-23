@@ -22,7 +22,7 @@ export function MobileNav({ isAdmin = false }: { isAdmin?: boolean }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label="Toggle navigation"
-        className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-white/80 transition hover:border-slate-400"
+        className="flex h-10 w-10 items-center justify-center rounded-full border border-line bg-white/80 transition hover:border-slate-400 dark:bg-white/5"
       >
         {open ? (
           <svg
@@ -59,14 +59,14 @@ export function MobileNav({ isAdmin = false }: { isAdmin?: boolean }) {
       </button>
 
       {open && (
-        <div className="absolute inset-x-4 top-[88px] z-[200] rounded-[24px] border border-line bg-white/95 p-4 shadow-panel backdrop-blur">
+        <div className="absolute inset-x-4 top-[88px] z-[200] rounded-[24px] border border-line bg-white/95 p-4 shadow-panel backdrop-blur dark:bg-slate-900/95">
           <nav className="grid grid-cols-2 gap-2">
             {navigation.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
                 onClick={() => setOpen(false)}
-                className="rounded-full border border-line bg-white/80 px-4 py-2.5 text-center text-sm text-ink transition hover:border-slate-400"
+                className="rounded-full border border-line bg-white/80 px-4 py-2.5 text-center text-sm text-ink transition hover:border-slate-400 dark:bg-white/5"
               >
                 {item.label}
               </Link>

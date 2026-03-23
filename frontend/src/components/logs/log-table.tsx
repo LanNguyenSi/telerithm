@@ -37,7 +37,7 @@ export function LogTable({
               </thead>
               <tbody>
                 {logs.map((log) => (
-                  <tr key={log.id} className="border-b border-line/80 bg-white/70 align-top">
+                  <tr key={log.id} className="border-b border-line/80 bg-white/70 align-top dark:bg-white/5">
                     <td className="px-4 py-4 text-sm text-muted">{formatDate(log.timestamp)}</td>
                     <td className={clsx("px-4 py-4 text-sm font-semibold uppercase", levelTone(log.level))}>
                       {log.level}
@@ -68,7 +68,7 @@ export function LogTable({
             </div>
             <p className="mt-2 text-sm font-medium text-ink">{log.message}</p>
             <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted">
-              <span className="rounded-full bg-slate-900/5 px-2 py-0.5">{log.service}</span>
+              <span className="rounded-full bg-slate-900/5 px-2 py-0.5 dark:bg-white/5">{log.service}</span>
               <span className="font-mono">{log.host}</span>
             </div>
           </article>
