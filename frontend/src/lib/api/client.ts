@@ -70,6 +70,13 @@ export async function getLogs(
   teamId: string,
   options?: {
     query?: string;
+    filters?: Array<{
+      field: string;
+      operator: "eq" | "neq" | "gt" | "lt" | "contains";
+      value: string | number;
+    }>;
+    sortBy?: "timestamp" | "level" | "service" | "host";
+    sortDirection?: "asc" | "desc";
     limit?: number;
     offset?: number;
   },
@@ -86,6 +93,9 @@ export async function getLogs(
       teamId,
       query: options?.query || undefined,
       queryType: options?.query ? "natural" : "sql",
+      filters: options?.filters,
+      sortBy: options?.sortBy ?? "timestamp",
+      sortDirection: options?.sortDirection ?? "desc",
       limit: options?.limit ?? 50,
       offset: options?.offset ?? 0,
     }),
@@ -135,10 +145,28 @@ export async function deleteSubscription(id: string, token: string) {
   return authedRequest<void>(`/subscriptions/${id}`, token, { method: "DELETE" });
 }
 
-export async function getIssues(teamId: string, filters?: { status?: string; service?: string }) {
+export async function getIssues(
+  teamId: string,
+  options?: {
+    query?: string;
+    status?: string;
+    service?: string;
+    level?: string;
+    sortBy?: "lastSeen" | "firstSeen" | "eventCount" | "service" | "level" | "status";
+    sortDirection?: "asc" | "desc";
+    limit?: number;
+    offset?: number;
+  },
+) {
   const params = new URLSearchParams({ teamId });
-  if (filters?.status) params.set("status", filters.status);
-  if (filters?.service) params.set("service", filters.service);
+  if (options?.query) params.set("query", options.query);
+  if (options?.status) params.set("status", options.status);
+  if (options?.service) params.set("service", options.service);
+  if (options?.level) params.set("level", options.level);
+  if (options?.sortBy) params.set("sortBy", options.sortBy);
+  if (options?.sortDirection) params.set("sortDirection", options.sortDirection);
+  if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.offset) params.set("offset", String(options.offset));
   return request<{ issues: Issue[]; total: number }>(`/issues?${params.toString()}`);
 }
 

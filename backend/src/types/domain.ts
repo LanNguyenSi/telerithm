@@ -28,6 +28,8 @@ export interface LogQuery {
   query?: string;
   queryType: QueryType;
   filters?: LogFilter[];
+  sortBy?: "timestamp" | "level" | "service" | "host";
+  sortDirection?: "asc" | "desc";
   limit?: number;
   offset?: number;
 }
