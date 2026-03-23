@@ -5,19 +5,40 @@ import { Card } from "@/components/ui/card";
 
 const HISTORY_LIMIT = 5;
 const PRESETS = ["show payment errors", "fatal logs last hour", "warn logs from auth-service"];
+const SORT_OPTIONS = [
+  { value: "timestamp:desc", label: "Newest first" },
+  { value: "timestamp:asc", label: "Oldest first" },
+  { value: "service:asc", label: "Service A-Z" },
+  { value: "service:desc", label: "Service Z-A" },
+  { value: "level:asc", label: "Level A-Z" },
+  { value: "host:asc", label: "Host A-Z" },
+] as const;
 
 export function SearchPanel({
   onSearch,
   sqlPreview,
   currentQuery,
+  currentFilters,
+  currentSort,
   pageSize,
 }: {
-  onSearch: (query: string, pageSize: number) => Promise<void>;
+  onSearch: (
+    query: string,
+    filters: { level: string; service: string; host: string },
+    sort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" },
+    pageSize: number,
+  ) => Promise<void>;
   sqlPreview?: string;
   currentQuery?: string;
+  currentFilters: { level: string; service: string; host: string };
+  currentSort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" };
   pageSize: number;
 }) {
   const [query, setQuery] = useState("");
+  const [level, setLevel] = useState("");
+  const [service, setService] = useState("");
+  const [host, setHost] = useState("");
+  const [sortValue, setSortValue] = useState(`${currentSort.sortBy}:${currentSort.sortDirection}`);
   const [isPending, setIsPending] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [sqlOpen, setSqlOpen] = useState(false);
@@ -26,18 +47,36 @@ export function SearchPanel({
     setQuery(currentQuery ?? "");
   }, [currentQuery]);
 
+  useEffect(() => {
+    setLevel(currentFilters.level);
+    setService(currentFilters.service);
+    setHost(currentFilters.host);
+  }, [currentFilters.host, currentFilters.level, currentFilters.service]);
+
+  useEffect(() => {
+    setSortValue(`${currentSort.sortBy}:${currentSort.sortDirection}`);
+  }, [currentSort.sortBy, currentSort.sortDirection]);
+
   async function runQuery(q: string) {
     const trimmed = q.trim();
-    if (!trimmed) {
-      return;
-    }
+    const [sortBy, sortDirection] = sortValue.split(":") as [
+      "timestamp" | "level" | "service" | "host",
+      "asc" | "desc",
+    ];
 
     setQuery(trimmed);
     setIsPending(true);
     try {
-      await onSearch(trimmed, pageSize);
-      setHistory((prev) => [trimmed, ...prev.filter((h) => h !== trimmed)].slice(0, HISTORY_LIMIT));
-      setSqlOpen(true);
+      await onSearch(
+        trimmed,
+        { level, service: service.trim(), host: host.trim() },
+        { sortBy, sortDirection },
+        pageSize,
+      );
+      if (trimmed) {
+        setHistory((prev) => [trimmed, ...prev.filter((h) => h !== trimmed)].slice(0, HISTORY_LIMIT));
+        setSqlOpen(true);
+      }
     } finally {
       setIsPending(false);
     }
@@ -80,6 +119,80 @@ export function SearchPanel({
           className="shrink-0 rounded-2xl bg-slate-950 px-6 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50 sm:self-start sm:py-4"
         >
           {isPending ? "Running..." : "Run query"}
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-4">
+        <label className="text-sm text-muted">
+          <span className="mb-1 block">Level</span>
+          <select
+            value={level}
+            onChange={(event) => setLevel(event.target.value)}
+            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+          >
+            <option value="">All levels</option>
+            <option value="fatal">fatal</option>
+            <option value="error">error</option>
+            <option value="warn">warn</option>
+            <option value="info">info</option>
+            <option value="debug">debug</option>
+          </select>
+        </label>
+
+        <label className="text-sm text-muted">
+          <span className="mb-1 block">Service</span>
+          <input
+            value={service}
+            onChange={(event) => setService(event.target.value)}
+            placeholder="payment"
+            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+          />
+        </label>
+
+        <label className="text-sm text-muted">
+          <span className="mb-1 block">Host</span>
+          <input
+            value={host}
+            onChange={(event) => setHost(event.target.value)}
+            placeholder="api-1"
+            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+          />
+        </label>
+
+        <label className="text-sm text-muted">
+          <span className="mb-1 block">Sort</span>
+          <select
+            value={sortValue}
+            onChange={(event) => setSortValue(event.target.value)}
+            className="w-full rounded-xl border border-line bg-white px-3 py-2.5 text-sm text-ink outline-none focus:border-slate-400"
+          >
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            setLevel("");
+            setService("");
+            setHost("");
+            setSortValue("timestamp:desc");
+            void onSearch(
+              "",
+              { level: "", service: "", host: "" },
+              { sortBy: "timestamp", sortDirection: "desc" },
+              pageSize,
+            );
+          }}
+          className="rounded-full border border-line bg-white/60 px-3 py-1 text-xs text-muted transition hover:text-ink"
+        >
+          Reset filters
         </button>
       </div>
 

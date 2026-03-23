@@ -38,19 +38,30 @@ export class IssueService {
 
   async list(
     teamId: string,
-    filters?: { status?: IssueStatus; service?: string; level?: string },
+    filters?: { query?: string; status?: IssueStatus; service?: string; level?: string },
+    sort?: {
+      sortBy?: "lastSeen" | "firstSeen" | "eventCount" | "service" | "level" | "status";
+      sortDirection?: "asc" | "desc";
+    },
     limit = 50,
     offset = 0,
   ) {
     const where: Record<string, unknown> = { teamId };
+    if (filters?.query) {
+      where.title = { contains: filters.query, mode: "insensitive" };
+    }
     if (filters?.status) where.status = filters.status;
-    if (filters?.service) where.service = filters.service;
+    if (filters?.service) {
+      where.service = { contains: filters.service, mode: "insensitive" };
+    }
     if (filters?.level) where.level = filters.level;
+    const sortBy = sort?.sortBy ?? "lastSeen";
+    const sortDirection = sort?.sortDirection ?? "desc";
 
     const [issues, total] = await Promise.all([
       prisma.issue.findMany({
         where,
-        orderBy: { lastSeen: "desc" },
+        orderBy: { [sortBy]: sortDirection },
         take: limit,
         skip: offset,
         include: { assignee: { select: { id: true, name: true, email: true } } },

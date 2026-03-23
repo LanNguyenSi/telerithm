@@ -680,8 +680,14 @@ apiRouter.get(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
-    const { teamId, status, service, level, limit, offset } = parsed.data;
-    const result = await issueService.list(teamId, { status, service, level }, limit, offset);
+    const { teamId, query, status, service, level, sortBy, sortDirection, limit, offset } = parsed.data;
+    const result = await issueService.list(
+      teamId,
+      { query, status, service, level },
+      { sortBy, sortDirection },
+      limit,
+      offset,
+    );
     res.json(result);
   }),
 );

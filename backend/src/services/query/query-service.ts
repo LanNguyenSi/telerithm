@@ -29,7 +29,7 @@ export class QueryService {
         ...query,
         filters: [...(query.filters ?? []), ...translation.filtersApplied],
         queryType: "sql",
-        query: normalizedSql,
+        query: undefined,
       };
 
       const llmResult = await this.logRepo.search(llmQuery);

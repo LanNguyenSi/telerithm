@@ -41,6 +41,8 @@ export const searchSchema = z.object({
   query: z.string().optional(),
   queryType: z.enum(["sql", "natural"]).default("sql"),
   filters: z.array(logFilterSchema).optional(),
+  sortBy: z.enum(["timestamp", "level", "service", "host"]).default("timestamp"),
+  sortDirection: z.enum(["asc", "desc"]).default("desc"),
   limit: z.number().int().min(1).max(500).default(100),
   offset: z.number().int().min(0).default(0),
 });
@@ -71,9 +73,12 @@ export const updateSubscriptionSchema = z.object({
 
 export const issueQuerySchema = z.object({
   teamId: z.string().min(1),
+  query: z.string().optional(),
   status: z.enum(["NEW", "ONGOING", "RESOLVED", "IGNORED"]).optional(),
   service: z.string().optional(),
   level: z.string().optional(),
+  sortBy: z.enum(["lastSeen", "firstSeen", "eventCount", "service", "level", "status"]).default("lastSeen"),
+  sortDirection: z.enum(["asc", "desc"]).default("desc"),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });

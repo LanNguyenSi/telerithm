@@ -66,9 +66,17 @@ export class LogRepository {
     const where = conditions.join(" AND ");
     const limit = query.limit ?? 100;
     const offset = query.offset ?? 0;
+    const sortFieldMap: Record<NonNullable<LogQuery["sortBy"]>, string> = {
+      timestamp: "timestamp",
+      level: "level",
+      service: "service",
+      host: "host",
+    };
+    const sortBy = sortFieldMap[query.sortBy ?? "timestamp"];
+    const sortDirection = (query.sortDirection ?? "desc").toUpperCase();
 
     const countSql = `SELECT count() as total FROM logs WHERE ${where}`;
-    const dataSql = `SELECT * FROM logs WHERE ${where} ORDER BY timestamp DESC LIMIT {limit:UInt32} OFFSET {offset:UInt32}`;
+    const dataSql = `SELECT * FROM logs WHERE ${where} ORDER BY ${sortBy} ${sortDirection} LIMIT {limit:UInt32} OFFSET {offset:UInt32}`;
 
     params.limit = limit;
     params.offset = offset;
@@ -104,7 +112,7 @@ export class LogRepository {
       fields: row.fields ?? {},
     }));
 
-    const executedQuery = `SELECT * FROM logs WHERE ${where} ORDER BY timestamp DESC LIMIT ${limit} OFFSET ${offset}`;
+    const executedQuery = `SELECT * FROM logs WHERE ${where} ORDER BY ${sortBy} ${sortDirection} LIMIT ${limit} OFFSET ${offset}`;
 
     return {
       logs,
