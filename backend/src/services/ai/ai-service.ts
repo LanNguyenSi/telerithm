@@ -82,7 +82,7 @@ Return ONLY valid JSON with this structure:
 }`;
 
     const response = await this.openai!.chat.completions.create({
-      model: "gpt-4o-mini", // cheap + fast
+      model: process.env.OPENAI_MODEL || "llama-3.3-70b-versatile",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: naturalQuery },
