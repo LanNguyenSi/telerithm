@@ -13,7 +13,7 @@ export function SearchPanel({
   onSearch: (query: string) => Promise<void>;
   sqlPreview?: string;
 }) {
-  const [query, setQuery] = useState("show payment errors");
+  const [query, setQuery] = useState("");
   const [isPending, setIsPending] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [sqlOpen, setSqlOpen] = useState(false);
