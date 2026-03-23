@@ -78,7 +78,7 @@ services:
       DATABASE_URL: postgresql://telerithm:${POSTGRES_PASSWORD}@postgres:5432/telerithm?connection_limit=20&pool_timeout=10
       CLICKHOUSE_URL: http://clickhouse:8123
       REDIS_URL: redis://redis:6379
-      CORS_ORIGINS: https://demo.telerithm.cloud
+      CORS_ORIGINS: https://demo.telerithm.cloud,https://play.telerithm.cloud
       LOG_LEVEL: ${LOG_LEVEL:-info}
       REGISTRATION_MODE: ${REGISTRATION_MODE:-approval}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
