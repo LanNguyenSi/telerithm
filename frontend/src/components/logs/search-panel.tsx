@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
 
 const HISTORY_LIMIT = 5;
@@ -14,17 +14,20 @@ export function SearchPanel({
   sqlPreview?: string;
 }) {
   const [query, setQuery] = useState("show payment errors");
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [sqlOpen, setSqlOpen] = useState(false);
 
-  function runQuery(q: string) {
+  async function runQuery(q: string) {
     setQuery(q);
-    startTransition(async () => {
+    setIsPending(true);
+    try {
       await onSearch(q);
       setHistory((prev) => [q, ...prev.filter((h) => h !== q)].slice(0, HISTORY_LIMIT));
       setSqlOpen(true);
-    });
+    } finally {
+      setIsPending(false);
+    }
   }
 
   return (
@@ -37,7 +40,10 @@ export function SearchPanel({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) runQuery(query);
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void runQuery(query);
+              }
             }}
             rows={2}
             className="w-full rounded-2xl border border-line bg-white/90 px-4 py-3 text-base text-ink outline-none ring-0 resize-none"
@@ -50,13 +56,13 @@ export function SearchPanel({
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-signal [animation-delay:150ms]" />
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-signal [animation-delay:300ms]" />
               </span>
-              <span className="text-xs text-signal">AI generating SQL…</span>
+              <span className="text-xs text-signal">Searching…</span>
             </div>
           )}
         </div>
         <button
           type="button"
-          onClick={() => runQuery(query)}
+          onClick={() => void runQuery(query)}
           disabled={isPending}
           className="shrink-0 rounded-2xl bg-slate-950 px-6 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50 sm:self-start sm:py-4"
         >
@@ -64,14 +70,13 @@ export function SearchPanel({
         </button>
       </div>
 
-      {/* Quick presets */}
       <div className="mt-3 flex flex-wrap gap-2">
         <span className="text-xs text-muted self-center">Try:</span>
         {PRESETS.map((preset) => (
           <button
             key={preset}
             type="button"
-            onClick={() => runQuery(preset)}
+            onClick={() => void runQuery(preset)}
             disabled={isPending}
             className="rounded-full border border-line bg-white/70 px-3 py-1 text-xs text-ink transition hover:border-slate-400 disabled:opacity-50"
           >
@@ -80,7 +85,6 @@ export function SearchPanel({
         ))}
       </div>
 
-      {/* Query history */}
       {history.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted">Recent:</span>
@@ -88,7 +92,7 @@ export function SearchPanel({
             <button
               key={h}
               type="button"
-              onClick={() => runQuery(h)}
+              onClick={() => void runQuery(h)}
               disabled={isPending}
               className="rounded-full border border-line bg-white/50 px-3 py-1 font-mono text-xs text-muted transition hover:text-ink disabled:opacity-50"
             >
@@ -98,7 +102,6 @@ export function SearchPanel({
         </div>
       )}
 
-      {/* Generated SQL (collapsible) */}
       {sqlPreview && (
         <div className="mt-4">
           <button
