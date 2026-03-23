@@ -72,11 +72,8 @@ STRICT RULES:
 6. For time ranges, use ClickHouse interval syntax: "timestamp > now() - INTERVAL 1 HOUR"
 7. To access map fields, use: fields['key_name']
 8. ALWAYS use ILIKE instead of LIKE for case-insensitive matching on message, service, and host
-9. When asked about a service by name (payment, auth, gateway), filter on service ILIKE '%name%', NOT message
-10. Combine filters: service ILIKE '%payment%' AND level = 'error'
-8. When user asks about a service (e.g. "payment", "auth", "gateway"), use service LIKE '%payment%' NOT message LIKE '%payment%'
-9. When user asks for "errors", add level = 'error'
-10. Combine service filter + level filter when appropriate: service LIKE '%payment%' AND level = 'error'
+9. When user asks about a service (payment, auth, gateway), filter on service ILIKE '%name%', NOT on message
+10. Combine filters example: service ILIKE '%payment%' AND level = 'error'
 
 Return ONLY valid JSON with this structure:
 {
