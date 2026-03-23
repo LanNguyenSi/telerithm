@@ -33,15 +33,17 @@ export function LogExplorer({ team }: { team: Team }) {
   async function handleSearch(query: string) {
     setSqlPreview("");
     setLogs([]);
-    setHasSearched(true); // Clear immediately so user sees loading state
-    const result = await getLogs(team.id, query);
+    setHasSearched(true);
+
+    // Run both in parallel — Groq LLM is fast enough
+    const [explanation, result] = await Promise.all([
+      getNaturalExplanation(team.id, query).catch(() => null),
+      getLogs(team.id, query),
+    ]);
+
     setLogs(result.logs);
     setExecution(`${result.total} logs in ${result.executionTimeMs}ms`);
-
-    // Fetch SQL explanation in background (LLM may be slow)
-    getNaturalExplanation(team.id, query)
-      .then((translation) => setSqlPreview(translation.sql))
-      .catch(() => {});
+    if (explanation?.sql) setSqlPreview(explanation.sql);
   }
 
   return (
