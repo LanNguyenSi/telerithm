@@ -58,7 +58,7 @@ The logs table schema is:
 - source_id String
 - timestamp DateTime64(3)
 - level LowCardinality(String) - values: "debug", "info", "warn", "error", "fatal"
-- service LowCardinality(String) - application/service name (e.g. "payment-service", "auth-service", "api-gateway")
+- service LowCardinality(String) - application/service name (e.g. "payment-service", "auth-service", "api-gateway"). When user mentions a service by keyword (e.g. "payment"), match with service ILIKE '%payment%'. Do NOT extract common English words like "the", "last", "hour" as service names.
 - host LowCardinality(String) - hostname
 - message String - log message text
 - fields Map(String, String) - additional key-value metadata
@@ -163,18 +163,21 @@ Return ONLY valid JSON with this structure:
       filters.push({ field: "level", operator: "eq", value: "warn" });
     }
 
-    // Service detection
+    // Service detection — skip stop words after "from" (e.g. "from the last hour")
+    const timeWords = new Set(["the", "last", "past", "next", "this", "today", "yesterday", "ago"]);
     const serviceMatch = lower.match(/(?:service|from)\s+([a-z0-9-]+)/);
-    if (serviceMatch) {
+    if (serviceMatch && !timeWords.has(serviceMatch[1]) && !stopWords.has(serviceMatch[1])) {
       filters.push({ field: "service", operator: "contains", value: serviceMatch[1] });
     }
 
     // Fallback: Try to find service name from tokens
     if (!filters.some((filter) => filter.field === "service")) {
       const tokens = lower.match(/[a-z0-9-]+/g) ?? [];
+      const timeWords2 = new Set(["the", "last", "past", "next", "this", "today", "yesterday", "ago", "hour", "hours", "minute", "minutes", "day", "days"]);
       const candidate = tokens.find(
         (token) =>
           !stopWords.has(token) &&
+          !timeWords2.has(token) &&
           token !== "errors" &&
           token !== "error" &&
           token !== "warnings" &&
