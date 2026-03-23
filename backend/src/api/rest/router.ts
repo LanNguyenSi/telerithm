@@ -97,26 +97,6 @@ async function authenticateApiKey(req: Request, res: Response, next: NextFunctio
   next();
 }
 
-// 2.4 — Sanitize log message content to prevent stored XSS
-function sanitizeHtml(input: string): string {
-  return input
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#x27;");
-}
-
-function sanitizeLogFields(
-  fields: Record<string, string | number | boolean>,
-): Record<string, string | number | boolean> {
-  const sanitized: Record<string, string | number | boolean> = {};
-  for (const [key, value] of Object.entries(fields)) {
-    sanitized[sanitizeHtml(key)] = typeof value === "string" ? sanitizeHtml(value) : value;
-  }
-  return sanitized;
-}
-
 // --- Routes ---
 
 apiRouter.get(
@@ -267,23 +247,8 @@ apiRouter.post(
       return;
     }
 
-    // 2.4 — Sanitize log messages before storage
-    const sanitizedPayload = {
-      ...parsed.data,
-      logs: parsed.data.logs.map((item) => {
-        if (typeof item === "string") return sanitizeHtml(item);
-        return {
-          ...item,
-          message: item.message ? sanitizeHtml(item.message) : item.message,
-          host: item.host ? sanitizeHtml(item.host) : item.host,
-          service: item.service ? sanitizeHtml(item.service) : item.service,
-          fields: item.fields ? sanitizeLogFields(item.fields) : item.fields,
-        };
-      }),
-    };
-
     try {
-      const response = await ingestionService.ingest(String(req.params.sourceId), sanitizedPayload);
+      const response = await ingestionService.ingest(String(req.params.sourceId), parsed.data);
       res.status(202).json(response);
     } catch (error) {
       res.status(404).json({ error: error instanceof Error ? error.message : "Ingest failed" });
@@ -303,7 +268,7 @@ apiRouter.post(
       res.status(400).json({ error: "Empty body" });
       return;
     }
-    const payload = { logs: lines.map((l: string) => sanitizeHtml(l)) };
+    const payload = { logs: lines };
     try {
       const response = await ingestionService.ingest(String(req.params.sourceId), payload);
       res.status(202).json(response);

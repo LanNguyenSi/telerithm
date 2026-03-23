@@ -1,3 +1,13 @@
+/** Decode HTML entities that were stored by the legacy sanitizeHtml ingestion. */
+export function decodeHtml(input: string): string {
+  return input
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&");
+}
+
 export function formatDate(value: string): string {
   return new Intl.DateTimeFormat("de-DE", {
     dateStyle: "medium",
