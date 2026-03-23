@@ -47,8 +47,8 @@ make init
 
 This starts the full stack:
 
-| Service    | URL                  |
-|------------|----------------------|
+| Service    | URL                   |
+| ---------- | --------------------- |
 | Frontend   | http://localhost:3000 |
 | Backend    | http://localhost:4000 |
 | PostgreSQL | localhost:5432        |
@@ -88,15 +88,17 @@ npm run dev
 
 Key environment variables for the backend (`.env`):
 
-| Variable         | Default                  | Description                                      |
-|------------------|--------------------------|--------------------------------------------------|
-| `PORT`           | `4000`                   | API server port                                  |
-| `DATABASE_URL`   | *required*               | PostgreSQL connection string                     |
-| `CLICKHOUSE_URL` | *required*               | ClickHouse connection string                     |
-| `REDIS_URL`      | `redis://localhost:6379` | Redis connection string                          |
-| `MULTI_TENANT`   | `false`                  | `true`: users create teams. `false`: single team |
-| `CORS_ORIGINS`   | `http://localhost:3000`  | Allowed CORS origins                             |
-| `LOG_LEVEL`      | `info`                   | fatal, error, warn, info, debug, trace           |
+| Variable            | Default                  | Description                                      |
+| ------------------- | ------------------------ | ------------------------------------------------ |
+| `PORT`              | `4000`                   | API server port                                  |
+| `DATABASE_URL`      | _required_               | PostgreSQL connection string                     |
+| `CLICKHOUSE_URL`    | _required_               | ClickHouse connection string                     |
+| `REDIS_URL`         | `redis://localhost:6379` | Redis connection string                          |
+| `MULTI_TENANT`      | `false`                  | `true`: users create teams. `false`: single team |
+| `REGISTRATION_MODE` | `approval`               | `open`, `invite-only`, `approval`                |
+| `ADMIN_EMAIL`       | unset                    | Bootstrap admin email for first admin signup     |
+| `CORS_ORIGINS`      | `http://localhost:3000`  | Allowed CORS origins                             |
+| `LOG_LEVEL`         | `info`                   | fatal, error, warn, info, debug, trace           |
 
 ---
 
@@ -157,24 +159,24 @@ log.error("Payment authorization failed", {
 
 All endpoints are under `/api/v1`. Auth endpoints use Bearer tokens.
 
-| Method   | Path                         | Description            |
-|----------|------------------------------|------------------------|
-| `POST`   | `/auth/register`             | Create account         |
-| `POST`   | `/auth/login`                | Sign in                |
-| `GET`    | `/teams`                     | List user's teams      |
-| `POST`   | `/teams`                     | Create team            |
-| `POST`   | `/teams/:id/invites`         | Create team invite     |
-| `POST`   | `/invites/:token/accept`     | Accept invite          |
-| `POST`   | `/ingest/:sourceId`          | Ingest logs (API key)  |
-| `POST`   | `/logs/search`               | Search logs            |
-| `POST`   | `/query/natural`             | Natural language query  |
-| `GET`    | `/stream/logs`               | SSE live tail          |
-| `GET`    | `/alerts/rules`              | List alert rules       |
-| `GET`    | `/alerts/incidents`          | List incidents         |
-| `GET`    | `/issues`                    | List grouped errors    |
-| `GET`    | `/admin/users`               | Admin: list users      |
-| `GET`    | `/admin/stats`               | Admin: system stats    |
-| `GET`    | `/health`                    | Health check           |
+| Method | Path                     | Description            |
+| ------ | ------------------------ | ---------------------- |
+| `POST` | `/auth/register`         | Create account         |
+| `POST` | `/auth/login`            | Sign in                |
+| `GET`  | `/teams`                 | List user's teams      |
+| `POST` | `/teams`                 | Create team            |
+| `POST` | `/teams/:id/invites`     | Create team invite     |
+| `POST` | `/invites/:token/accept` | Accept invite          |
+| `POST` | `/ingest/:sourceId`      | Ingest logs (API key)  |
+| `POST` | `/logs/search`           | Search logs            |
+| `POST` | `/query/natural`         | Natural language query |
+| `GET`  | `/stream/logs`           | SSE live tail          |
+| `GET`  | `/alerts/rules`          | List alert rules       |
+| `GET`  | `/alerts/incidents`      | List incidents         |
+| `GET`  | `/issues`                | List grouped errors    |
+| `GET`  | `/admin/users`           | Admin: list users      |
+| `GET`  | `/admin/stats`           | Admin: system stats    |
+| `GET`  | `/health`                | Health check           |
 
 Full OpenAPI spec available at `GET /api/v1/openapi.json`.
 
@@ -185,6 +187,7 @@ Full OpenAPI spec available at `GET /api/v1/openapi.json`.
 For production deployment with Traefik and SSL, see [DEPLOYMENT.md](./DEPLOYMENT.md).
 
 Quick deploy to VPS with Traefik:
+
 ```bash
 cp .env.production.example .env.production
 # Edit .env.production with your secrets

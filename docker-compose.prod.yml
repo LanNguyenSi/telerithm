@@ -64,6 +64,8 @@ services:
       DATABASE_URL: postgresql://telerithm:${POSTGRES_PASSWORD:-telerithm}@postgres:5432/telerithm?connection_limit=20&pool_timeout=10
       CLICKHOUSE_URL: http://clickhouse:8123
       REDIS_URL: redis://redis:6379
+      REGISTRATION_MODE: ${REGISTRATION_MODE:-approval}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     depends_on:
@@ -81,7 +83,13 @@ services:
           memory: 512M
           cpus: "1.0"
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:4000/api/v1/health').then(r => process.exit(r.ok ? 0 : 1))"]
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:4000/api/v1/health').then(r => process.exit(r.ok ? 0 : 1))",
+        ]
       interval: 30s
       timeout: 10s
       retries: 3

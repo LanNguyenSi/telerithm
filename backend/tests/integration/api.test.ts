@@ -12,6 +12,10 @@ vi.mock("../../src/config/index.js", () => ({
     logLevel: "silent",
     corsOrigins: "*",
     redisUrl: "redis://localhost:6379",
+    multiTenant: false,
+    registrationMode: "approval",
+    adminEmail: "admin@test.com",
+    openaiApiKey: undefined,
   },
 }));
 
@@ -33,6 +37,9 @@ vi.mock("../../src/repositories/prisma.js", () => {
     user: {
       findUnique: vi.fn(),
       create: vi.fn(),
+      update: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
     },
     session: {
       findUnique: vi.fn(),
@@ -40,14 +47,24 @@ vi.mock("../../src/repositories/prisma.js", () => {
     },
     team: {
       create: vi.fn(),
+      findUnique: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      count: vi.fn().mockResolvedValue(0),
     },
     teamMember: {
       findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      upsert: vi.fn(),
+      delete: vi.fn(),
     },
     logSource: {
       findUnique: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
+      count: vi.fn().mockResolvedValue(0),
     },
     alertRule: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -160,9 +177,7 @@ describe("API Routes", () => {
 
   describe("POST /api/v1/ingest/:sourceId", () => {
     it("rejects missing API key", async () => {
-      const res = await app
-        .post("/api/v1/ingest/source-1")
-        .send({ logs: ["test log"] });
+      const res = await app.post("/api/v1/ingest/source-1").send({ logs: ["test log"] });
       expect(res.status).toBe(401);
       expect(res.body.error).toBe("Missing X-API-Key header");
     });
@@ -176,9 +191,7 @@ describe("API Routes", () => {
     });
 
     it("rejects invalid body without API key validation", async () => {
-      const res = await app
-        .post("/api/v1/ingest/source-1")
-        .send({});
+      const res = await app.post("/api/v1/ingest/source-1").send({});
       // Missing X-API-Key header → 401 before body validation
       expect(res.status).toBe(401);
     });
@@ -225,9 +238,7 @@ describe("API Routes", () => {
     });
 
     it("translates natural query", async () => {
-      const res = await app
-        .post("/api/v1/query/natural")
-        .send({ teamId: "t1", query: "show errors" });
+      const res = await app.post("/api/v1/query/natural").send({ teamId: "t1", query: "show errors" });
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("sql");
       expect(res.body).toHaveProperty("explanation");

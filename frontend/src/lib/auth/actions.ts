@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { setSession, clearSession } from "./session";
+import type { SessionUser } from "@/types";
 
 function getApiBaseUrl() {
   return (
@@ -31,7 +32,7 @@ export async function loginAction(_prev: unknown, formData: FormData) {
     return { error: (body as { error?: string }).error ?? "Login failed" };
   }
 
-  const data = (await res.json()) as { token: string; user: { id: string; email: string; name: string } };
+  const data = (await res.json()) as { token: string; user: SessionUser };
   await setSession(data.token, data.user);
   redirect("/");
 }
@@ -57,7 +58,14 @@ export async function registerAction(_prev: unknown, formData: FormData) {
     return { error: (body as { error?: string }).error ?? "Registration failed" };
   }
 
-  const data = (await res.json()) as { token: string; user: { id: string; email: string; name: string } };
+  const data = (await res.json()) as
+    | { token: string; user: SessionUser }
+    | { status: "pending_approval"; message: string };
+
+  if (!("token" in data)) {
+    return { success: data.message, pendingApproval: true };
+  }
+
   await setSession(data.token, data.user);
   redirect("/");
 }

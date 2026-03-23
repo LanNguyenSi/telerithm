@@ -9,6 +9,7 @@ import { IssueService } from "../../services/issue/issue-service.js";
 import { SubscriptionService } from "../../services/subscription/subscription-service.js";
 import { TeamService } from "../../services/team/team-service.js";
 import {
+  addUserToTeamSchema,
   createInviteSchema,
   createSourceSchema,
   createSubscriptionSchema,
@@ -30,6 +31,7 @@ import { prisma } from "../../repositories/prisma.js";
 import { clickhouse } from "../../repositories/clickhouse.js";
 import { redis } from "../../repositories/redis.js";
 import { createChildLogger } from "../../logger.js";
+import { config } from "../../config/index.js";
 
 const log = createChildLogger("router");
 
@@ -166,6 +168,13 @@ apiRouter.post(
       log.warn({ email: parsed.data.email }, "Registration failed");
       res.status(400).json({ error: error instanceof Error ? error.message : "Register failed" });
     }
+  }),
+);
+
+apiRouter.get(
+  "/auth/settings",
+  asyncHandler(async (_req, res) => {
+    res.json({ registrationMode: config.registrationMode });
   }),
 );
 
@@ -799,10 +808,35 @@ apiRouter.get(
   asyncHandler(async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
     const users = await prisma.user.findMany({
-      select: { id: true, email: true, name: true, role: true, createdAt: true },
+      include: {
+        teams: {
+          include: {
+            team: {
+              select: { id: true, name: true, slug: true },
+            },
+          },
+          orderBy: { joinedAt: "asc" },
+        },
+      },
       orderBy: { createdAt: "desc" },
     });
-    res.json({ users });
+    res.json({
+      users: users.map((user) => ({
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+        status: user.status,
+        createdAt: user.createdAt.toISOString(),
+        teams: user.teams.map((membership) => ({
+          id: membership.team.id,
+          name: membership.team.name,
+          slug: membership.team.slug,
+          role: membership.role,
+          joinedAt: membership.joinedAt.toISOString(),
+        })),
+      })),
+    });
   }),
 );
 
@@ -817,13 +851,76 @@ apiRouter.put(
     }
     const data: Record<string, unknown> = {};
     if (parsed.data.role) data.role = parsed.data.role;
-    if (parsed.data.disabled !== undefined) data.disabled = parsed.data.disabled;
+    if (parsed.data.status) data.status = parsed.data.status;
+    if (parsed.data.disabled !== undefined) data.status = parsed.data.disabled ? "DISABLED" : "ACTIVE";
     const user = await prisma.user.update({
       where: { id: String(req.params.id) },
-      select: { id: true, email: true, name: true, role: true, createdAt: true },
+      select: { id: true, email: true, name: true, role: true, status: true, createdAt: true },
       data,
     });
-    res.json({ user });
+    res.json({
+      user: {
+        ...user,
+        createdAt: user.createdAt.toISOString(),
+      },
+    });
+  }),
+);
+
+apiRouter.post(
+  "/admin/users/:id/approve",
+  asyncHandler(async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    try {
+      const user = await teamService.approveUser(String(req.params.id));
+      res.json({ user });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
+    }
+  }),
+);
+
+apiRouter.post(
+  "/admin/users/:id/add-to-team",
+  asyncHandler(async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    const parsed = addUserToTeamSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+
+    try {
+      const membership = await teamService.addUserToTeam(
+        String(req.params.id),
+        parsed.data.teamId,
+        parsed.data.role,
+      );
+      res.status(201).json({
+        membership: {
+          id: membership.id,
+          teamId: membership.teamId,
+          userId: membership.userId,
+          role: membership.role,
+          joinedAt: membership.joinedAt.toISOString(),
+        },
+      });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
+    }
+  }),
+);
+
+apiRouter.delete(
+  "/admin/users/:id/remove-from-team/:teamId",
+  asyncHandler(async (req, res) => {
+    if (!(await requireAdmin(req, res))) return;
+    try {
+      await teamService.removeUserFromTeam(String(req.params.id), String(req.params.teamId));
+      res.status(204).end();
+    } catch {
+      res.status(404).json({ error: "Member not found" });
+    }
   }),
 );
 

@@ -1,4 +1,15 @@
-import type { AlertIncident, AlertRule, AlertSubscription, DashboardOverview, Issue, LogEntry, Source, Team } from "@/types";
+import type {
+  AdminUser,
+  AlertIncident,
+  AlertRule,
+  AlertSubscription,
+  DashboardOverview,
+  Issue,
+  LogEntry,
+  SessionUser,
+  Source,
+  Team,
+} from "@/types";
 
 export function getApiBaseUrl() {
   if (typeof window === "undefined") {
@@ -26,6 +37,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(`API request failed: ${response.status}`);
   }
 
+  if (response.status === 204) {
+    return undefined as T;
+  }
+
   return response.json() as Promise<T>;
 }
 
@@ -51,7 +66,14 @@ export async function getSources(teamId: string) {
   return request<{ sources: Source[] }>(`/sources?teamId=${teamId}`);
 }
 
-export async function getLogs(teamId: string, query?: string) {
+export async function getLogs(
+  teamId: string,
+  options?: {
+    query?: string;
+    limit?: number;
+    offset?: number;
+  },
+) {
   return request<{
     logs: LogEntry[];
     total: number;
@@ -62,22 +84,23 @@ export async function getLogs(teamId: string, query?: string) {
     method: "POST",
     body: JSON.stringify({
       teamId,
-      query: query || undefined,
-      queryType: query ? "natural" : "sql",
-      limit: 100,
-      offset: 0,
+      query: options?.query || undefined,
+      queryType: options?.query ? "natural" : "sql",
+      limit: options?.limit ?? 50,
+      offset: options?.offset ?? 0,
     }),
   });
 }
 
 export async function getNaturalExplanation(teamId: string, query: string) {
-  return request<{ sql: string; explanation: string; filtersApplied: Array<{ field: string; operator: string; value: string | number }> }>(
-    "/query/natural",
-    {
-      method: "POST",
-      body: JSON.stringify({ teamId, query }),
-    },
-  );
+  return request<{
+    sql: string;
+    explanation: string;
+    filtersApplied: Array<{ field: string; operator: string; value: string | number }>;
+  }>("/query/natural", {
+    method: "POST",
+    body: JSON.stringify({ teamId, query }),
+  });
 }
 
 export async function getAlertRules(teamId: string) {
@@ -94,7 +117,13 @@ export async function getSubscriptions(teamId: string, token: string) {
 
 export async function createSubscription(
   token: string,
-  data: { teamId: string; ruleId?: string; channel: string; config: Record<string, unknown>; severities?: string[] },
+  data: {
+    teamId: string;
+    ruleId?: string;
+    channel: string;
+    config: Record<string, unknown>;
+    severities?: string[];
+  },
 ) {
   return authedRequest<{ subscription: AlertSubscription }>("/subscriptions", token, {
     method: "POST",
@@ -111,6 +140,41 @@ export async function getIssues(teamId: string, filters?: { status?: string; ser
   if (filters?.status) params.set("status", filters.status);
   if (filters?.service) params.set("service", filters.service);
   return request<{ issues: Issue[]; total: number }>(`/issues?${params.toString()}`);
+}
+
+export async function getRegistrationSettings() {
+  return request<{ registrationMode: "open" | "invite-only" | "approval" }>("/auth/settings");
+}
+
+export async function getAdminUsers(token: string) {
+  return authedRequest<{ users: AdminUser[] }>("/admin/users", token);
+}
+
+export async function getAdminTeams(token: string) {
+  return authedRequest<{ teams: Array<Team & { memberCount: number }> }>("/admin/teams", token);
+}
+
+export async function approveAdminUser(userId: string, token: string) {
+  return authedRequest<{ user: SessionUser }>(`/admin/users/${userId}/approve`, token, {
+    method: "POST",
+  });
+}
+
+export async function addAdminUserToTeam(
+  userId: string,
+  token: string,
+  data: { teamId: string; role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER" },
+) {
+  return authedRequest<{ membership: { id: string } }>(`/admin/users/${userId}/add-to-team`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function removeAdminUserFromTeam(userId: string, teamId: string, token: string) {
+  return authedRequest<void>(`/admin/users/${userId}/remove-from-team/${teamId}`, token, {
+    method: "DELETE",
+  });
 }
 
 export function streamLogs(teamId: string) {

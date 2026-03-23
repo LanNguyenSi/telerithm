@@ -2,8 +2,9 @@ import Link from "next/link";
 import type { PropsWithChildren } from "react";
 import { LogoutButton } from "./logout-button";
 import { MobileNav } from "./mobile-nav";
+import type { SessionUser } from "@/types";
 
-const navigation = [
+const baseNavigation = [
   { href: "/", label: "Overview" },
   { href: "/logs", label: "Logs" },
   { href: "/issues", label: "Issues" },
@@ -13,10 +14,13 @@ const navigation = [
 ] as const;
 
 interface AppShellProps extends PropsWithChildren {
-  user?: { name: string } | null;
+  user?: SessionUser | null;
 }
 
 export function AppShell({ children, user }: AppShellProps) {
+  const navigation =
+    user?.role === "ADMIN" ? [...baseNavigation, { href: "/admin", label: "Admin" }] : baseNavigation;
+
   return (
     <div className="min-h-screen bg-paper text-ink">
       <div className="absolute inset-x-0 top-0 -z-10 h-[420px] bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.22),_transparent_45%),radial-gradient(circle_at_top_right,_rgba(249,115,22,0.18),_transparent_42%),linear-gradient(180deg,_#fffaf2_0%,_#f6f7fb_100%)] dark:bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.15),_transparent_45%),radial-gradient(circle_at_top_right,_rgba(249,115,22,0.10),_transparent_42%),linear-gradient(180deg,_#0d1117_0%,_#0d1117_100%)]" />
@@ -27,7 +31,7 @@ export function AppShell({ children, user }: AppShellProps) {
               <p className="font-mono text-xs uppercase tracking-[0.4em] text-muted">Telerithm</p>
               <h1 className="mt-1 text-xl font-semibold tracking-tight">Log Analytics</h1>
             </div>
-            <MobileNav />
+            <MobileNav isAdmin={user?.role === "ADMIN"} />
           </div>
 
           <div className="hidden lg:flex lg:items-center lg:justify-between">
