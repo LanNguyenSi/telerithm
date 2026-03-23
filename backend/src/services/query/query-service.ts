@@ -16,10 +16,8 @@ export class QueryService {
       const originalQuery = query.query;
       const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
 
-      // Normalize LIKE → ILIKE for case-insensitive matching
-      const normalizedSql = translation.sql
-        ? translation.sql.replace(/\bLIKE\b/gi, "ILIKE")
-        : undefined;
+      // Normalize LIKE to ILIKE for case-insensitive matching
+      const normalizedSql = translation.sql ? translation.sql.replace(/\bLIKE\b/gi, "ILIKE") : undefined;
 
       const llmQuery: LogQuery = {
         ...query,
@@ -30,7 +28,6 @@ export class QueryService {
 
       const llmResult = await this.logRepo.search(llmQuery);
 
-      // If LLM query returned results, use them
       if (llmResult.logs.length > 0) {
         return llmResult;
       }
