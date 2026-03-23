@@ -5,7 +5,7 @@ import { LiveTail } from "@/components/logs/live-tail";
 import { LogTable } from "@/components/logs/log-table";
 import { SearchPanel } from "@/components/logs/search-panel";
 import { Card } from "@/components/ui/card";
-import { Skeleton, SkeletonTable } from "@/components/ui/skeleton";
+// import { Skeleton, SkeletonTable } from "@/components/ui/skeleton";
 import { getLogs, getNaturalExplanation, streamLogs } from "@/lib/api/client";
 import type { LogEntry, Team } from "@/types";
 
@@ -14,6 +14,7 @@ export function LogExplorer({ team }: { team: Team }) {
   const [sqlPreview, setSqlPreview] = useState("");
   const [execution, setExecution] = useState("");
   const [loading, setLoading] = useState(true);
+  const [hasSearched, setHasSearched] = useState(false);
 
   useEffect(() => {
     setLoading(false);
@@ -31,7 +32,8 @@ export function LogExplorer({ team }: { team: Team }) {
 
   async function handleSearch(query: string) {
     setSqlPreview("");
-    setLogs([]); // Clear immediately so user sees loading state
+    setLogs([]);
+    setHasSearched(true); // Clear immediately so user sees loading state
     const result = await getLogs(team.id, query);
     setLogs(result.logs);
     setExecution(`${result.total} logs in ${result.executionTimeMs}ms`);
@@ -46,17 +48,7 @@ export function LogExplorer({ team }: { team: Team }) {
     <div className="space-y-4 lg:space-y-6">
       <SearchPanel onSearch={handleSearch} sqlPreview={sqlPreview} />
 
-      {loading ? (
-        <section className="rounded-[28px] border border-line bg-panel/85 p-6 shadow-panel backdrop-blur">
-          <div className="flex items-center justify-between">
-            <div className="space-y-2">
-              <Skeleton className="h-3 w-24" />
-              <Skeleton className="h-6 w-40" />
-            </div>
-            <Skeleton className="h-4 w-32" />
-          </div>
-        </section>
-      ) : (
+      {hasSearched && (
         <Card className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-sm uppercase tracking-[0.24em] text-muted">Execution</p>
@@ -68,9 +60,7 @@ export function LogExplorer({ team }: { team: Team }) {
         </Card>
       )}
 
-      {loading ? (
-        <SkeletonTable rows={8} />
-      ) : logs.length === 0 ? (
+      {hasSearched && logs.length === 0 ? (
         <Card>
           <div className="flex flex-col items-center gap-3 py-16 text-center">
             <svg
