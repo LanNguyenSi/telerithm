@@ -13,6 +13,8 @@ export const metadata: Metadata = {
   },
 };
 
+const themeScript = `(function(){try{var t=localStorage.getItem("theme");if(t==="light")return;if(t==="dark"||!t){document.documentElement.classList.add("dark")}}catch(e){}})()`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -20,6 +22,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+      </head>
       <body className="font-sans">{children}</body>
     </html>
   );

@@ -16,8 +16,8 @@ export default async function SettingsPage() {
     <AuthedShell>
       <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr] lg:gap-6">
         <Card>
-          <h2 className="text-xl font-semibold text-ink">Workspace</h2>
-          <dl className="mt-6 space-y-3 text-sm">
+          <h2 className="text-lg font-semibold text-ink">Workspace</h2>
+          <dl className="mt-4 space-y-2 text-sm">
             <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
               <dt className="text-muted">Name</dt>
               <dd className="font-medium text-ink">{team.name}</dd>
@@ -29,7 +29,7 @@ export default async function SettingsPage() {
           </dl>
         </Card>
         <Card>
-          <h2 className="text-xl font-semibold text-ink">Log Sources</h2>
+          <h2 className="text-lg font-semibold text-ink">Log Sources</h2>
           {sources.length === 0 ? (
             <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-dashed border-line bg-white/50 p-8 text-center dark:bg-white/5">
               <svg
@@ -54,16 +54,16 @@ export default async function SettingsPage() {
               </p>
             </div>
           ) : (
-            <div className="mt-6 space-y-4">
+            <div className="mt-4 space-y-3">
               {sources.map((source) => (
                 <article
                   key={source.id}
-                  className="rounded-2xl border border-line bg-white/70 p-4 dark:bg-white/5"
+                  className="rounded-xl border border-line bg-white/70 p-3 dark:bg-white/5"
                 >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <p className="font-medium text-ink">{source.name}</p>
-                      <p className="mt-1 text-sm text-muted">{source.type}</p>
+                      <p className="text-sm font-medium text-ink">{source.name}</p>
+                      <p className="mt-0.5 text-xs text-muted">{source.type}</p>
                     </div>
                     <span className="self-start rounded-full bg-cyan-100 px-3 py-1 font-mono text-xs text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300 sm:self-auto">
                       {source.apiKey}

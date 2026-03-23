@@ -25,12 +25,12 @@ export default async function SubscriptionsPage() {
     <AuthedShell>
       <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
         <Card>
-          <h2 className="text-xl font-semibold text-ink">My Subscriptions</h2>
-          <div className="mt-6 space-y-4">
+          <h2 className="text-lg font-semibold text-ink">My Subscriptions</h2>
+          <div className="mt-4 space-y-3">
             {subscriptions.map((sub) => (
               <article
                 key={sub.id}
-                className="flex items-start justify-between rounded-2xl border border-line bg-white/70 p-4"
+                className="flex items-start justify-between rounded-xl border border-line bg-white/70 p-3 dark:bg-white/5"
               >
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
@@ -62,17 +62,17 @@ export default async function SubscriptionsPage() {
         </Card>
 
         <Card>
-          <h2 className="text-xl font-semibold text-ink">Available Rules</h2>
-          <p className="mt-2 text-sm text-muted">Subscribe to specific rules or to all rules in your team.</p>
-          <div className="mt-6 space-y-3">
+          <h2 className="text-lg font-semibold text-ink">Available Rules</h2>
+          <p className="mt-1 text-xs text-muted">Subscribe to specific rules or to all rules in your team.</p>
+          <div className="mt-4 space-y-2">
             {rules.map((rule) => (
               <article
                 key={rule.id}
-                className="rounded-2xl border border-line bg-white/70 p-4 dark:bg-white/5"
+                className="rounded-xl border border-line bg-white/70 p-3 dark:bg-white/5"
               >
-                <p className="font-medium text-ink">{rule.name}</p>
-                <p className="mt-1 text-sm text-muted">{rule.description ?? "No description"}</p>
-                <p className="mt-2 text-xs text-muted">Threshold: {rule.threshold}</p>
+                <p className="text-sm font-medium text-ink">{rule.name}</p>
+                <p className="mt-0.5 text-xs text-muted">{rule.description ?? "No description"}</p>
+                <p className="mt-1 font-mono text-xs text-muted">Threshold: {rule.threshold}</p>
               </article>
             ))}
             {rules.length === 0 && (

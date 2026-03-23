@@ -22,8 +22,8 @@ export default async function AdminPage() {
           <Card>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
-                <p className="text-sm uppercase tracking-[0.24em] text-muted">Admin</p>
-                <h2 className="mt-2 text-2xl font-semibold text-ink">User management</h2>
+                <p className="text-xs uppercase tracking-[0.2em] text-muted">Admin</p>
+                <h2 className="mt-1 text-lg font-semibold text-ink">User management</h2>
               </div>
               <p className="text-sm text-muted">
                 {users.length} users across {teams.length} teams

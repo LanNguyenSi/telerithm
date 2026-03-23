@@ -200,10 +200,10 @@ export function LogExplorer({ team }: { team: Team }) {
 
       <Card className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <p className="text-sm uppercase tracking-[0.24em] text-muted">Execution</p>
-          <p className="mt-2 text-lg font-semibold text-ink">{execution || `${total} logs`}</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-muted">Execution</p>
+          <p className="mt-1 font-mono text-base font-semibold text-ink">{execution || `${total} logs`}</p>
         </div>
-        <p className="text-sm text-muted">
+        <p className="text-xs text-muted">
           Team <span className="font-mono">{team.slug}</span>
         </p>
       </Card>

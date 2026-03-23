@@ -14,21 +14,14 @@
   --font-ibm-plex-mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-paper: #0d1117;
-    --color-panel: rgba(22, 30, 46, 0.88);
-    --color-ink: #e2e8f0;
-    --color-muted: #8892a4;
-    --color-signal: #22d3ee;
-    --color-danger: #fb7185;
-    --color-line: rgba(226, 232, 240, 0.08);
-  }
-
-  body {
-    background: var(--color-paper);
-    color: var(--color-ink);
-  }
+.dark {
+  --color-paper: #0d1117;
+  --color-panel: rgba(22, 30, 46, 0.88);
+  --color-ink: #e2e8f0;
+  --color-muted: #8892a4;
+  --color-signal: #22d3ee;
+  --color-danger: #fb7185;
+  --color-line: rgba(226, 232, 240, 0.08);
 }
 
 * {
