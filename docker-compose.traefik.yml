@@ -78,7 +78,7 @@ services:
       DATABASE_URL: postgresql://telerithm:${POSTGRES_PASSWORD}@postgres:5432/telerithm?connection_limit=20&pool_timeout=10
       CLICKHOUSE_URL: http://clickhouse:8123
       REDIS_URL: redis://redis:6379
-      CORS_ORIGINS: https://logs.opentriologue.ai
+      CORS_ORIGINS: https://demo.telerithm.cloud
       LOG_LEVEL: ${LOG_LEVEL:-info}
       REGISTRATION_MODE: ${REGISTRATION_MODE:-approval}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
@@ -114,7 +114,7 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"
       # API routes
-      - "traefik.http.routers.telerithm-backend.rule=Host(`logs.opentriologue.ai`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.telerithm-backend.rule=Host(`demo.telerithm.cloud`) && PathPrefix(`/api`)"
       - "traefik.http.routers.telerithm-backend.entrypoints=websecure"
       - "traefik.http.routers.telerithm-backend.tls=true"
       - "traefik.http.routers.telerithm-backend.tls.certresolver=letsencrypt"
@@ -125,11 +125,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE_URL: https://logs.opentriologue.ai/api/v1
+        NEXT_PUBLIC_API_BASE_URL: https://demo.telerithm.cloud/api/v1
     restart: unless-stopped
     environment:
       INTERNAL_API_BASE_URL: http://backend:4000/api/v1
-      NEXT_PUBLIC_API_BASE_URL: https://logs.opentriologue.ai/api/v1
+      NEXT_PUBLIC_API_BASE_URL: https://demo.telerithm.cloud/api/v1
     depends_on:
       backend:
         condition: service_healthy
@@ -145,7 +145,7 @@ services:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"
       # Frontend routes (everything except /api)
-      - "traefik.http.routers.telerithm-frontend.rule=Host(`logs.opentriologue.ai`)"
+      - "traefik.http.routers.telerithm-frontend.rule=Host(`demo.telerithm.cloud`)"
       - "traefik.http.routers.telerithm-frontend.entrypoints=websecure"
       - "traefik.http.routers.telerithm-frontend.tls=true"
       - "traefik.http.routers.telerithm-frontend.tls.certresolver=letsencrypt"
