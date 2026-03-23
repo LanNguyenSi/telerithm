@@ -1,12 +1,17 @@
 # Tasks
 
-## Open
+Implementation tasks for Telerithm.
 
-- [005-frontend-polish.md](./005-frontend-polish.md) — Responsive design + visual polish
+| Task | Title | Status |
+|------|-------|--------|
+| 005 | Frontend Polish (responsive design) | 🔄 Open |
+| 010 | Integration Tests | 🔄 Open |
 
-## Done
+## Completed (merged)
 
-- 001 AI Query Engine — local LLM (llama.cpp + Qwen3.5-4B), see LOCAL_LLM.md
-- 002 Traefik Deployment — live at telerithm.cloud
-- 003 Docker Log Collection — Vector.toml + collect-docker-logs.sh in deploy/
-- 004 Demo Seed Data — merged in PR #4
+| Task | PR | Title |
+|------|-----|-------|
+| 007 | #10 | Registration Modes |
+| 008 | #10 | Admin User Management |
+| 009 | #10/#11 | Logs Pagination + Filters |
+| 010 tests | #13 | Integration Test Coverage |
