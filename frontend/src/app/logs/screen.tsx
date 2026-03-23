@@ -27,8 +27,8 @@ export function LogExplorer({ team }: { team: Team }) {
   }, [team.id]);
 
   async function handleSearch(query: string) {
-    // Run log search immediately (fast heuristic), show SQL preview after
     setSqlPreview("");
+    setLogs([]); // Clear immediately so user sees loading state
     const result = await getLogs(team.id, query);
     setLogs(result.logs);
     setExecution(`${result.total} logs in ${result.executionTimeMs}ms`);
