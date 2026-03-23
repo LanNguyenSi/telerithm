@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeAll } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import supertest from "supertest";
 
 // Mock external dependencies before importing app
@@ -72,6 +72,13 @@ vi.mock("../../src/repositories/prisma.js", () => {
     alertIncident: {
       findMany: vi.fn().mockResolvedValue([]),
     },
+    issue: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+      update: vi.fn(),
+      count: vi.fn().mockResolvedValue(0),
+      upsert: vi.fn(),
+    },
   };
   return {
     prisma: mockPrisma,
@@ -106,11 +113,134 @@ vi.mock("../../src/repositories/redis.js", () => ({
   disconnectRedis: vi.fn(),
 }));
 
+import { config } from "../../src/config/index.js";
+import { clickhouse } from "../../src/repositories/clickhouse.js";
+import { prisma } from "../../src/repositories/prisma.js";
+
 let app: supertest.Agent;
+
+const mockedConfig = config;
+const mockedPrisma = prisma as typeof prisma & {
+  user: {
+    findUnique: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
+  };
+  session: {
+    findUnique: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+  };
+  team: {
+    create: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
+  };
+  teamMember: {
+    findMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    upsert: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
+  };
+  logSource: {
+    findUnique: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
+  };
+  issue: {
+    findMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
+    upsert: ReturnType<typeof vi.fn>;
+  };
+};
+const mockedClickhouse = clickhouse as typeof clickhouse & {
+  query: ReturnType<typeof vi.fn>;
+};
+
+function makeUser(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "user-1",
+    email: "user@test.com",
+    passwordHash: "hashed-password",
+    name: "Test User",
+    role: "USER",
+    status: "ACTIVE",
+    createdAt: new Date("2026-03-23T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function makeSession(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "session-1",
+    userId: "admin-1",
+    token: "sess_admin",
+    expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+    ...overrides,
+  };
+}
+
+function makeClickhouseResult<T>(rows: T[]) {
+  return {
+    json: vi.fn().mockResolvedValue(rows),
+  };
+}
 
 beforeAll(async () => {
   const { createApp } = await import("../../src/app.js");
   app = supertest(createApp());
+});
+
+beforeEach(() => {
+  vi.clearAllMocks();
+
+  mockedConfig.multiTenant = false;
+  mockedConfig.registrationMode = "approval";
+  mockedConfig.adminEmail = "admin@test.com";
+
+  mockedPrisma.user.findUnique.mockResolvedValue(null);
+  mockedPrisma.user.create.mockResolvedValue(makeUser());
+  mockedPrisma.user.update.mockResolvedValue(makeUser());
+  mockedPrisma.session.findUnique.mockResolvedValue(null);
+  mockedPrisma.session.create.mockResolvedValue({ id: "session-1" });
+  mockedPrisma.team.findUnique.mockResolvedValue({
+    id: "team-default",
+    name: "Default",
+    slug: "default",
+    createdAt: new Date("2026-03-23T00:00:00.000Z"),
+  });
+  mockedPrisma.team.create.mockResolvedValue({
+    id: "team-default",
+    name: "Default",
+    slug: "default",
+    createdAt: new Date("2026-03-23T00:00:00.000Z"),
+  });
+  mockedPrisma.teamMember.findUnique.mockResolvedValue(null);
+  mockedPrisma.teamMember.findFirst.mockResolvedValue(null);
+  mockedPrisma.teamMember.upsert.mockResolvedValue({
+    id: "member-1",
+    teamId: "team-default",
+    userId: "user-1",
+    role: "MEMBER",
+    joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+  });
+  mockedPrisma.teamMember.create.mockResolvedValue({
+    id: "member-1",
+    teamId: "team-1",
+    userId: "user-2",
+    role: "MEMBER",
+    joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+  });
+  mockedPrisma.issue.findMany.mockResolvedValue([]);
+  mockedPrisma.issue.count.mockResolvedValue(0);
 });
 
 describe("API Routes", () => {
@@ -144,6 +274,95 @@ describe("API Routes", () => {
       const res = await app.post("/api/v1/auth/register").send({});
       expect(res.status).toBe(400);
       expect(res.body).toHaveProperty("error");
+    });
+
+    it("creates an active user and assigns the default team in open mode", async () => {
+      mockedConfig.registrationMode = "open";
+      mockedConfig.adminEmail = undefined;
+      mockedPrisma.user.create.mockResolvedValueOnce(makeUser());
+
+      const res = await app
+        .post("/api/v1/auth/register")
+        .send({ email: "user@test.com", password: "123456", name: "Test User" });
+
+      expect(res.status).toBe(201);
+      expect(res.body).toHaveProperty("token");
+      expect(res.body.user.status).toBe("ACTIVE");
+      expect(mockedPrisma.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            email: "user@test.com",
+            role: "USER",
+            status: "ACTIVE",
+          }),
+        }),
+      );
+      expect(mockedPrisma.teamMember.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ role: "MEMBER" }),
+          update: expect.objectContaining({ role: "MEMBER" }),
+        }),
+      );
+    });
+
+    it("returns pending approval without team assignment in approval mode", async () => {
+      mockedConfig.registrationMode = "approval";
+      mockedConfig.adminEmail = undefined;
+      mockedPrisma.user.create.mockResolvedValueOnce(makeUser({ status: "PENDING" }));
+
+      const res = await app
+        .post("/api/v1/auth/register")
+        .send({ email: "pending@test.com", password: "123456", name: "Pending User" });
+
+      expect(res.status).toBe(201);
+      expect(res.body.status).toBe("pending_approval");
+      expect(res.body.user.status).toBe("PENDING");
+      expect(mockedPrisma.session.create).not.toHaveBeenCalled();
+      expect(mockedPrisma.teamMember.upsert).not.toHaveBeenCalled();
+    });
+
+    it("rejects registration in invite-only mode", async () => {
+      mockedConfig.registrationMode = "invite-only";
+      mockedConfig.adminEmail = undefined;
+
+      const res = await app
+        .post("/api/v1/auth/register")
+        .send({ email: "blocked@test.com", password: "123456", name: "Blocked User" });
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe("Registration is currently invite-only");
+      expect(mockedPrisma.user.create).not.toHaveBeenCalled();
+    });
+
+    it("creates the bootstrap admin as active regardless of registration mode", async () => {
+      mockedConfig.registrationMode = "invite-only";
+      mockedConfig.adminEmail = "admin@test.com";
+      mockedPrisma.user.create.mockResolvedValueOnce(
+        makeUser({ id: "admin-1", email: "admin@test.com", role: "ADMIN", status: "ACTIVE" }),
+      );
+
+      const res = await app
+        .post("/api/v1/auth/register")
+        .send({ email: "admin@test.com", password: "123456", name: "Admin User" });
+
+      expect(res.status).toBe(201);
+      expect(res.body.user.role).toBe("ADMIN");
+      expect(res.body.user.status).toBe("ACTIVE");
+      expect(mockedPrisma.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            email: "admin@test.com",
+            role: "ADMIN",
+            status: "ACTIVE",
+          }),
+        }),
+      );
+      expect(mockedPrisma.teamMember.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({ role: "OWNER" }),
+          update: expect.objectContaining({ role: "OWNER" }),
+        }),
+      );
     });
   });
 
@@ -201,6 +420,135 @@ describe("API Routes", () => {
     it("rejects missing teamId", async () => {
       const res = await app.post("/api/v1/logs/search").send({});
       expect(res.status).toBe(400);
+    });
+
+    it("supports offset pagination and returns total count", async () => {
+      mockedClickhouse.query
+        .mockResolvedValueOnce(makeClickhouseResult([{ total: "12" }]))
+        .mockResolvedValueOnce(
+          makeClickhouseResult([
+            {
+              team_id: "t1",
+              source_id: "s1",
+              timestamp: "2026-03-23 10:00:00.000",
+              level: "info",
+              service: "svc-1",
+              host: "host-1",
+              message: "first page",
+              fields: {},
+            },
+          ]),
+        );
+
+      const res = await app.post("/api/v1/logs/search").send({ teamId: "t1", limit: 5, offset: 0 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(12);
+      expect(res.body.logs).toHaveLength(1);
+      expect(mockedClickhouse.query).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          query_params: expect.objectContaining({ limit: 5, offset: 0 }),
+        }),
+      );
+    });
+
+    it("returns the next page when offset advances", async () => {
+      mockedClickhouse.query
+        .mockResolvedValueOnce(makeClickhouseResult([{ total: "12" }]))
+        .mockResolvedValueOnce(
+          makeClickhouseResult([
+            {
+              team_id: "t1",
+              source_id: "s1",
+              timestamp: "2026-03-23 10:05:00.000",
+              level: "warn",
+              service: "svc-2",
+              host: "host-2",
+              message: "second page",
+              fields: {},
+            },
+          ]),
+        );
+
+      const res = await app.post("/api/v1/logs/search").send({ teamId: "t1", limit: 5, offset: 5 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.logs[0].message).toBe("second page");
+      expect(mockedClickhouse.query).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          query_params: expect.objectContaining({ limit: 5, offset: 5 }),
+        }),
+      );
+    });
+
+    it("passes the level filter to log search", async () => {
+      mockedClickhouse.query
+        .mockResolvedValueOnce(makeClickhouseResult([{ total: "1" }]))
+        .mockResolvedValueOnce(
+          makeClickhouseResult([
+            {
+              team_id: "t1",
+              source_id: "s1",
+              timestamp: "2026-03-23 10:00:00.000",
+              level: "error",
+              service: "billing",
+              host: "api-1",
+              message: "error log",
+              fields: {},
+            },
+          ]),
+        );
+
+      const res = await app.post("/api/v1/logs/search").send({
+        teamId: "t1",
+        filters: [{ field: "level", operator: "eq", value: "error" }],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.logs[0].level).toBe("error");
+      expect(mockedClickhouse.query).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          query: expect.stringContaining("level = {f0:String}"),
+          query_params: expect.objectContaining({ f0: "error" }),
+        }),
+      );
+    });
+
+    it("passes the service filter to log search", async () => {
+      mockedClickhouse.query
+        .mockResolvedValueOnce(makeClickhouseResult([{ total: "1" }]))
+        .mockResolvedValueOnce(
+          makeClickhouseResult([
+            {
+              team_id: "t1",
+              source_id: "s1",
+              timestamp: "2026-03-23 10:00:00.000",
+              level: "info",
+              service: "payment-api",
+              host: "api-1",
+              message: "service log",
+              fields: {},
+            },
+          ]),
+        );
+
+      const res = await app.post("/api/v1/logs/search").send({
+        teamId: "t1",
+        filters: [{ field: "service", operator: "contains", value: "payment" }],
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.logs[0].service).toBe("payment-api");
+      expect(mockedClickhouse.query).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          query: expect.stringContaining("service ILIKE {f0:String}"),
+          query_params: expect.objectContaining({ f0: "%payment%" }),
+        }),
+      );
     });
   });
 
@@ -281,6 +629,94 @@ describe("API Routes", () => {
       const res = await app.get("/api/v1/health");
       expect(res.headers["x-content-type-options"]).toBe("nosniff");
       expect(res.headers["x-frame-options"]).toBe("SAMEORIGIN");
+    });
+  });
+
+  describe("Admin routes", () => {
+    it("adds a user to a team with the requested role", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession());
+      mockedPrisma.user.findUnique.mockResolvedValueOnce(makeUser({ id: "admin-1", role: "ADMIN" }));
+      mockedPrisma.teamMember.create.mockResolvedValueOnce({
+        id: "member-2",
+        teamId: "team-2",
+        userId: "user-2",
+        role: "VIEWER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+
+      const res = await app
+        .post("/api/v1/admin/users/user-2/add-to-team")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "team-2", role: "VIEWER" });
+
+      expect(res.status).toBe(201);
+      expect(res.body.membership.role).toBe("VIEWER");
+      expect(mockedPrisma.teamMember.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ userId: "user-2", teamId: "team-2", role: "VIEWER" }),
+        }),
+      );
+    });
+
+    it("approves a pending user through the admin route", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession());
+      mockedPrisma.user.findUnique.mockResolvedValueOnce(makeUser({ id: "admin-1", role: "ADMIN" }));
+      mockedPrisma.user.update.mockResolvedValueOnce(makeUser({ id: "user-3", status: "ACTIVE" }));
+
+      const res = await app
+        .post("/api/v1/admin/users/user-3/approve")
+        .set("Authorization", "Bearer sess_admin")
+        .send({});
+
+      expect(res.status).toBe(200);
+      expect(res.body.user.status).toBe("ACTIVE");
+      expect(mockedPrisma.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "user-3" },
+          data: { status: "ACTIVE" },
+        }),
+      );
+    });
+  });
+
+  describe("GET /api/v1/issues", () => {
+    it("passes query, status, sorting, limit and offset to the issue service", async () => {
+      mockedPrisma.issue.findMany.mockResolvedValueOnce([
+        {
+          id: "issue-1",
+          teamId: "t1",
+          fingerprint: "fp-1",
+          title: "Payment timeout",
+          level: "error",
+          service: "payment-api",
+          status: "NEW",
+          firstSeen: new Date("2026-03-23T00:00:00.000Z"),
+          lastSeen: new Date("2026-03-23T01:00:00.000Z"),
+          eventCount: 42,
+          assignee: null,
+        },
+      ]);
+      mockedPrisma.issue.count.mockResolvedValueOnce(7);
+
+      const res = await app.get(
+        "/api/v1/issues?teamId=t1&query=payment&status=NEW&service=api&sortBy=eventCount&sortDirection=desc&limit=2&offset=1",
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.total).toBe(7);
+      expect(mockedPrisma.issue.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            teamId: "t1",
+            title: { contains: "payment", mode: "insensitive" },
+            status: "NEW",
+            service: { contains: "api", mode: "insensitive" },
+          }),
+          orderBy: { eventCount: "desc" },
+          take: 2,
+          skip: 1,
+        }),
+      );
     });
   });
 });
