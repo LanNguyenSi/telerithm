@@ -6,7 +6,7 @@ import { LogTable } from "@/components/logs/log-table";
 import { SearchPanel } from "@/components/logs/search-panel";
 import { Card } from "@/components/ui/card";
 import { Skeleton, SkeletonTable } from "@/components/ui/skeleton";
-import { getLogs, getNaturalExplanation } from "@/lib/api/client";
+import { getLogs, getNaturalExplanation, streamLogs } from "@/lib/api/client";
 import type { LogEntry, Team } from "@/types";
 
 export function LogExplorer({ team }: { team: Team }) {
@@ -24,6 +24,16 @@ export function LogExplorer({ team }: { team: Team }) {
     }
 
     void bootstrap();
+  }, [team.id]);
+
+  // Real-time: prepend new logs to the table via SSE
+  useEffect(() => {
+    const source = streamLogs(team.id);
+    source.addEventListener("log:new", (event: MessageEvent) => {
+      const log = JSON.parse(event.data) as LogEntry;
+      setLogs((current) => [log, ...current].slice(0, 200));
+    });
+    return () => source.close();
   }, [team.id]);
 
   async function handleSearch(query: string) {
