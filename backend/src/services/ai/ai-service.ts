@@ -58,7 +58,7 @@ The logs table schema is:
 - source_id String
 - timestamp DateTime64(3)
 - level LowCardinality(String) - values: "debug", "info", "warn", "error", "fatal"
-- service LowCardinality(String) - application/service name
+- service LowCardinality(String) - application/service name (e.g. "payment-service", "auth-service", "api-gateway")
 - host LowCardinality(String) - hostname
 - message String - log message text
 - fields Map(String, String) - additional key-value metadata
@@ -71,6 +71,9 @@ STRICT RULES:
 5. Add LIMIT clause (default 100, max 1000)
 6. For time ranges, use ClickHouse interval syntax: "timestamp > now() - INTERVAL 1 HOUR"
 7. To access map fields, use: fields['key_name']
+8. When user asks about a service (e.g. "payment", "auth", "gateway"), use service LIKE '%payment%' NOT message LIKE '%payment%'
+9. When user asks for "errors", add level = 'error'
+10. Combine service filter + level filter when appropriate: service LIKE '%payment%' AND level = 'error'
 
 Return ONLY valid JSON with this structure:
 {
