@@ -13,13 +13,31 @@ export class QueryService {
 
   async search(query: LogQuery): Promise<LogSearchResult> {
     if (query.queryType === "natural" && query.query) {
-      const translation = await this.aiService.translateQuery(query.query, query.teamId);
-      query = {
+      const originalQuery = query.query;
+      const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
+
+      // Try LLM-generated SQL first; if it returns no results, fall back to heuristic
+      const llmQuery: LogQuery = {
         ...query,
         filters: [...(query.filters ?? []), ...translation.filtersApplied],
         queryType: "sql",
         query: undefined,
       };
+
+      const llmResult = await this.logRepo.search(llmQuery);
+
+      // If LLM query returned results, use them
+      if (llmResult.logs.length > 0) {
+        return llmResult;
+      }
+
+      // Fallback: re-run with heuristic (queryType="natural" → heuristic in AI service)
+      // Use the original natural query as a text search
+      return this.logRepo.search({
+        ...query,
+        queryType: "sql",
+        query: originalQuery,  // falls back to ILIKE text search in log-repository
+      });
     }
 
     return this.logRepo.search(query);
