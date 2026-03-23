@@ -19,7 +19,10 @@ export class QueryService {
       // Normalize LIKE to ILIKE + lowercase level values for case-insensitive matching
       let normalizedSql = translation.sql ? translation.sql.replace(/\bLIKE\b/gi, "ILIKE") : undefined;
       if (normalizedSql) {
-        normalizedSql = normalizedSql.replace(/level\s*=\s*'([A-Z]+)'/g, (_, lvl) => `level = '${lvl.toLowerCase()}'`);
+        normalizedSql = normalizedSql.replace(
+          /level\s*=\s*'([A-Z]+)'/g,
+          (_, lvl) => `level = '${lvl.toLowerCase()}'`,
+        );
       }
 
       const llmQuery: LogQuery = {

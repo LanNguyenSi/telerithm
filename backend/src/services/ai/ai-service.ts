@@ -173,7 +173,22 @@ Return ONLY valid JSON with this structure:
     // Fallback: Try to find service name from tokens
     if (!filters.some((filter) => filter.field === "service")) {
       const tokens = lower.match(/[a-z0-9-]+/g) ?? [];
-      const timeWords2 = new Set(["the", "last", "past", "next", "this", "today", "yesterday", "ago", "hour", "hours", "minute", "minutes", "day", "days"]);
+      const timeWords2 = new Set([
+        "the",
+        "last",
+        "past",
+        "next",
+        "this",
+        "today",
+        "yesterday",
+        "ago",
+        "hour",
+        "hours",
+        "minute",
+        "minutes",
+        "day",
+        "days",
+      ]);
       const candidate = tokens.find(
         (token) =>
           !stopWords.has(token) &&
