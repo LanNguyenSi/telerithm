@@ -1,6 +1,6 @@
 # Local LLM Integration
 
-Telerithm's AI Query Engine translates natural language into ClickHouse SQL queries. By default it falls back to a heuristic parser, but you can connect a local LLM for much better results — no cloud API keys needed.
+Telerithm's AI Query Engine translates natural language into ClickHouse SQL queries. By default it falls back to a heuristic parser, but you can connect a local LLM for much better results - no cloud API keys needed.
 
 ## How It Works
 
@@ -78,10 +78,10 @@ For SQL generation, smaller models work well because the output format is constr
 
 Any server exposing an OpenAI-compatible `/v1/chat/completions` endpoint works:
 
-- **[llama.cpp](https://github.com/ggerganov/llama.cpp)** — C++, minimal dependencies (recommended)
-- **[Ollama](https://ollama.ai)** — Easy setup, automatic model management
-- **[vLLM](https://github.com/vllm-project/vllm)** — High throughput, GPU optimized
-- **[LocalAI](https://localai.io)** — Drop-in OpenAI replacement
+- **[llama.cpp](https://github.com/ggerganov/llama.cpp)** - C++, minimal dependencies (recommended)
+- **[Ollama](https://ollama.ai)** - Easy setup, automatic model management
+- **[vLLM](https://github.com/vllm-project/vllm)** - High throughput, GPU optimized
+- **[LocalAI](https://localai.io)** - Drop-in OpenAI replacement
 
 ### Ollama Example
 
@@ -123,4 +123,4 @@ If the LLM is unreachable or returns an error, the AI Query Engine automatically
 - **LLM unavailable** → Basic keyword extraction (level, service name) still works
 - **No API key set** → Heuristic mode only, no LLM calls attempted
 
-The system is always functional — the LLM just makes it smarter.
+The system is always functional - the LLM just makes it smarter.
