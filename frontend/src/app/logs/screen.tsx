@@ -27,13 +27,16 @@ export function LogExplorer({ team }: { team: Team }) {
   }, [team.id]);
 
   async function handleSearch(query: string) {
-    const [translation, result] = await Promise.all([
-      getNaturalExplanation(team.id, query),
-      getLogs(team.id, query),
-    ]);
-    setSqlPreview(translation.sql);
+    // Run log search immediately (fast heuristic), show SQL preview after
+    setSqlPreview("");
+    const result = await getLogs(team.id, query);
     setLogs(result.logs);
     setExecution(`${result.total} logs in ${result.executionTimeMs}ms`);
+
+    // Fetch SQL explanation in background (LLM may be slow)
+    getNaturalExplanation(team.id, query)
+      .then((translation) => setSqlPreview(translation.sql))
+      .catch(() => {});
   }
 
   return (
