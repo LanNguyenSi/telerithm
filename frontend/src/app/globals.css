@@ -37,6 +37,11 @@ body {
   min-height: 100vh;
   background: var(--color-paper);
   color: var(--color-ink);
+  color-scheme: light;
+}
+
+.dark body {
+  color-scheme: dark;
 }
 
 a {

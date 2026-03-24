@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 
 const HISTORY_LIMIT = 5;
 const PRESETS = ["show payment errors", "fatal logs last hour", "warn logs from auth-service"];
@@ -12,6 +13,14 @@ const SORT_OPTIONS = [
   { value: "service:desc", label: "Service Z-A" },
   { value: "level:asc", label: "Level A-Z" },
   { value: "host:asc", label: "Host A-Z" },
+] as const;
+const LEVEL_OPTIONS = [
+  { value: "", label: "All levels" },
+  { value: "fatal", label: "fatal" },
+  { value: "error", label: "error" },
+  { value: "warn", label: "warn" },
+  { value: "info", label: "info" },
+  { value: "debug", label: "debug" },
 ] as const;
 
 export function SearchPanel({
@@ -125,18 +134,11 @@ export function SearchPanel({
       <div className="mt-3 grid gap-2 md:grid-cols-4">
         <label className="text-xs text-muted">
           <span className="mb-0.5 block">Level</span>
-          <select
+          <Select
             value={level}
-            onChange={(event) => setLevel(event.target.value)}
-            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
-          >
-            <option value="">All levels</option>
-            <option value="fatal">fatal</option>
-            <option value="error">error</option>
-            <option value="warn">warn</option>
-            <option value="info">info</option>
-            <option value="debug">debug</option>
-          </select>
+            onChange={setLevel}
+            options={[...LEVEL_OPTIONS]}
+          />
         </label>
 
         <label className="text-xs text-muted">
@@ -161,17 +163,11 @@ export function SearchPanel({
 
         <label className="text-xs text-muted">
           <span className="mb-0.5 block">Sort</span>
-          <select
+          <Select
             value={sortValue}
-            onChange={(event) => setSortValue(event.target.value)}
-            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
-          >
-            {SORT_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+            onChange={setSortValue}
+            options={[...SORT_OPTIONS]}
+          />
         </label>
       </div>
 

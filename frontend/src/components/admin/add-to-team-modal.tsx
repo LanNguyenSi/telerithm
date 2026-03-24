@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Select } from "@/components/ui/select";
 import type { Team } from "@/types";
 
 const TEAM_ROLES = ["OWNER", "ADMIN", "MEMBER", "VIEWER"] as const;
+const ROLE_OPTIONS = TEAM_ROLES.map((teamRole) => ({ value: teamRole, label: teamRole }));
 
 export function AddToTeamModal({
   open,
@@ -54,36 +56,31 @@ export function AddToTeamModal({
             <label htmlFor="teamId" className="block text-sm text-muted">
               Team
             </label>
-            <select
+            <Select
               id="teamId"
               value={teamId}
-              onChange={(event) => setTeamId(event.target.value)}
-              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
-            >
-              {teams.map((team) => (
-                <option key={team.id} value={team.id}>
-                  {team.name} ({team.memberCount})
-                </option>
-              ))}
-            </select>
+              onChange={setTeamId}
+              className="mt-1"
+              buttonClassName="rounded-xl px-4 py-2.5"
+              options={teams.map((team) => ({
+                value: team.id,
+                label: `${team.name} (${team.memberCount})`,
+              }))}
+            />
           </div>
 
           <div>
             <label htmlFor="role" className="block text-sm text-muted">
               Role
             </label>
-            <select
+            <Select
               id="role"
               value={role}
-              onChange={(event) => setRole(event.target.value as (typeof TEAM_ROLES)[number])}
-              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
-            >
-              {TEAM_ROLES.map((teamRole) => (
-                <option key={teamRole} value={teamRole}>
-                  {teamRole}
-                </option>
-              ))}
-            </select>
+              onChange={(value) => setRole(value as (typeof TEAM_ROLES)[number])}
+              className="mt-1"
+              buttonClassName="rounded-xl px-4 py-2.5"
+              options={ROLE_OPTIONS}
+            />
           </div>
         </div>
 

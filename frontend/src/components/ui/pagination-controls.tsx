@@ -1,5 +1,7 @@
 "use client";
 
+import { Select } from "@/components/ui/select";
+
 export function PaginationControls({
   page,
   pageSize,
@@ -44,17 +46,13 @@ export function PaginationControls({
 
       <label className="flex items-center gap-2 text-xs text-muted">
         <span>Rows:</span>
-        <select
-          value={pageSize}
-          onChange={(event) => onPageSizeChange?.(Number(event.target.value))}
-          className="rounded-lg border border-line bg-white px-2 py-1.5 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
-        >
-          {pageSizeOptions.map((size) => (
-            <option key={size} value={size}>
-              {size}
-            </option>
-          ))}
-        </select>
+        <Select
+          value={String(pageSize)}
+          onChange={(value) => onPageSizeChange?.(Number(value))}
+          className="w-24"
+          buttonClassName="px-2 py-1.5"
+          options={pageSizeOptions.map((size) => ({ value: String(size), label: String(size) }))}
+        />
       </label>
     </div>
   );
