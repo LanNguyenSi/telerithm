@@ -1,8 +1,8 @@
 "use client";
 
-import { AppShell } from "@/components/dashboard/app-shell";
+import { Card } from "@/components/ui/card";
 
-export default function GlobalError({
+export default function DashboardsError({
   error,
   reset,
 }: {
@@ -10,8 +10,8 @@ export default function GlobalError({
   reset: () => void;
 }) {
   return (
-    <AppShell>
-      <div className="flex flex-col items-center justify-center gap-6 py-24 text-center">
+    <Card>
+      <div className="flex flex-col items-center gap-4 py-12 text-center">
         <div className="rounded-full bg-danger/10 p-4">
           <svg
             className="h-8 w-8 text-danger"
@@ -27,19 +27,17 @@ export default function GlobalError({
             />
           </svg>
         </div>
-        <div>
-          <h2 className="text-xl font-semibold text-ink">Something went wrong</h2>
-          <p className="mt-2 max-w-md text-sm text-muted">
-            {error.message || "An unexpected error occurred. Please try again."}
-          </p>
-        </div>
+        <h2 className="text-lg font-semibold text-ink">Failed to load dashboard</h2>
+        <p className="max-w-md text-sm text-muted">
+          {error.message || "Could not fetch dashboard data. Please try again."}
+        </p>
         <button
           onClick={reset}
-          className="rounded-2xl bg-slate-950 px-6 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800"
+          className="mt-2 rounded-2xl bg-slate-950 px-5 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
         >
-          Try again
+          Retry
         </button>
       </div>
-    </AppShell>
+    </Card>
   );
 }

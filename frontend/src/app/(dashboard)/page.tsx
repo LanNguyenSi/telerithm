@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { AuthedShell } from "@/components/dashboard/authed-shell";
 import { IncidentList } from "@/components/alerts/incident-list";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { ServiceList } from "@/components/dashboard/service-list";
@@ -15,7 +14,7 @@ export default async function HomePage() {
   const { overview } = await getOverview(team.id);
 
   return (
-    <AuthedShell>
+    <>
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-6">
         <MetricCard
           label="Total Logs"
@@ -33,6 +32,6 @@ export default async function HomePage() {
         <ServiceList services={overview.services} />
         <IncidentList incidents={overview.recentIncidents} />
       </section>
-    </AuthedShell>
+    </>
   );
 }
