@@ -2,10 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { logoutAction } from "@/lib/auth/actions";
 import type { SessionUser } from "@/types";
-import { ThemeToggle } from "./theme-toggle";
 
 const baseNavigation = [
   {
@@ -62,16 +61,6 @@ const baseNavigation = [
       </svg>
     ),
   },
-  {
-    href: "/settings",
-    label: "Settings",
-    icon: (
-      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="3" />
-        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-      </svg>
-    ),
-  },
 ] as const;
 
 const adminItem = {
@@ -87,6 +76,81 @@ const adminItem = {
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(href + "/");
+}
+
+function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const pathname = usePathname();
+  const settingsActive = isActive(pathname, "/settings");
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 transition ${
+          open ? "bg-white/10" : "hover:bg-white/[0.06]"
+        }`}
+      >
+        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-signal/20 text-[11px] font-semibold text-signal">
+          {user.name.charAt(0).toUpperCase()}
+        </div>
+        <div className="min-w-0 flex-1 text-left">
+          <p className="truncate text-[12px] font-medium text-slate-300">{user.name}</p>
+        </div>
+        <svg
+          xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
+          className={`flex-shrink-0 text-slate-500 transition ${open ? "rotate-180" : ""}`}
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 right-0 mb-1.5 rounded-lg border border-white/[0.08] bg-[#1a2028] py-1 shadow-xl">
+          <Link
+            href="/settings"
+            onClick={() => { setOpen(false); onNavigate?.(); }}
+            className={`flex items-center gap-2.5 px-3 py-2 text-[13px] transition ${
+              settingsActive
+                ? "text-white"
+                : "text-slate-400 hover:bg-white/[0.06] hover:text-slate-200"
+            }`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+            </svg>
+            Settings
+          </Link>
+          <div className="mx-2 my-1 border-t border-white/[0.06]" />
+          <form action={logoutAction}>
+            <button
+              type="submit"
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-[13px] text-slate-400 transition hover:bg-white/[0.06] hover:text-slate-200"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              Sign out
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
 }
 
 interface SidebarProps {
@@ -129,33 +193,12 @@ export function Sidebar({ user }: SidebarProps) {
         })}
       </nav>
 
-      {/* Bottom section */}
-      <div className="border-t border-white/[0.06] px-3 pb-4 pt-3">
-        <div className="flex items-center justify-between">
-          <ThemeToggle />
-        </div>
-        {user && (
-          <div className="mt-3 flex items-center gap-2">
-            <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-signal/20 text-[11px] font-semibold text-signal">
-              {user.name.charAt(0).toUpperCase()}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[12px] font-medium text-slate-300">{user.name}</p>
-            </div>
-            <form action={logoutAction}>
-              <button
-                type="submit"
-                className="flex-shrink-0 rounded p-1 text-slate-500 transition hover:text-slate-300"
-                aria-label="Sign out"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-                  <polyline points="16 17 21 12 16 7" />
-                  <line x1="21" y1="12" x2="9" y2="12" />
-                </svg>
-              </button>
-            </form>
-          </div>
+      {/* User menu */}
+      <div className="border-t border-white/[0.06] px-2 pb-3 pt-2">
+        {user ? (
+          <UserMenu user={user} onNavigate={() => setMobileOpen(false)} />
+        ) : (
+          <div className="px-2 py-2 text-[12px] text-slate-500">Not signed in</div>
         )}
       </div>
     </>
