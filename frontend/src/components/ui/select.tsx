@@ -168,7 +168,7 @@ export function Select({
           aria-labelledby={buttonId}
           tabIndex={-1}
           className={clsx(
-            "absolute left-0 right-0 z-40 mt-1 max-h-60 overflow-y-auto rounded-xl border border-line bg-white/95 p-1 shadow-2xl backdrop-blur dark:bg-slate-900/95",
+            "absolute left-0 right-0 z-[9999] mt-1 max-h-60 overflow-y-auto rounded-xl border border-line bg-white/95 p-1 shadow-2xl backdrop-blur dark:bg-slate-900/95",
             listClassName,
           )}
         >
