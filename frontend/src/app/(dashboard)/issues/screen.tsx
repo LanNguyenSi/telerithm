@@ -5,6 +5,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { PaginationControls } from "@/components/ui/pagination-controls";
+import { Select } from "@/components/ui/select";
 import { SkeletonTable } from "@/components/ui/skeleton";
 import { getIssues } from "@/lib/api/client";
 import { formatDate } from "@/lib/utils/format";
@@ -13,6 +14,27 @@ import type { Issue, Team } from "@/types";
 const DEFAULT_PAGE_SIZE = 50;
 const ALLOWED_PAGE_SIZES = [25, 50, 100];
 const DEFAULT_SORT = { sortBy: "lastSeen" as const, sortDirection: "desc" as const };
+const STATUS_OPTIONS = [
+  { value: "", label: "All statuses" },
+  { value: "NEW", label: "NEW" },
+  { value: "ONGOING", label: "ONGOING" },
+  { value: "RESOLVED", label: "RESOLVED" },
+  { value: "IGNORED", label: "IGNORED" },
+] as const;
+const LEVEL_OPTIONS = [
+  { value: "", label: "All levels" },
+  { value: "fatal", label: "fatal" },
+  { value: "error", label: "error" },
+  { value: "warn", label: "warn" },
+  { value: "info", label: "info" },
+] as const;
+const SORT_OPTIONS = [
+  { value: "lastSeen:desc", label: "Newest activity" },
+  { value: "firstSeen:asc", label: "Oldest first seen" },
+  { value: "eventCount:desc", label: "Most events" },
+  { value: "service:asc", label: "Service A-Z" },
+  { value: "status:asc", label: "Status A-Z" },
+] as const;
 
 function statusTone(status: Issue["status"]) {
   if (status === "NEW") return "danger";
@@ -36,6 +58,11 @@ export function IssueExplorer({ team }: { team: Team }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [queryInput, setQueryInput] = useState("");
+  const [statusInput, setStatusInput] = useState("");
+  const [serviceInput, setServiceInput] = useState("");
+  const [levelInput, setLevelInput] = useState("");
+  const [sortInput, setSortInput] = useState(`${DEFAULT_SORT.sortBy}:${DEFAULT_SORT.sortDirection}`);
 
   const currentPage = Math.max(1, Number.parseInt(searchParams.get("page") ?? "1", 10) || 1);
   const rawPageSize =
@@ -59,6 +86,21 @@ export function IssueExplorer({ team }: { team: Team }) {
         | null) ?? DEFAULT_SORT.sortBy,
     sortDirection: (searchParams.get("sortDirection") as "asc" | "desc" | null) ?? DEFAULT_SORT.sortDirection,
   };
+
+  useEffect(() => {
+    setQueryInput(currentFilters.query);
+    setStatusInput(currentFilters.status);
+    setServiceInput(currentFilters.service);
+    setLevelInput(currentFilters.level);
+    setSortInput(`${currentSort.sortBy}:${currentSort.sortDirection}`);
+  }, [
+    currentFilters.level,
+    currentFilters.query,
+    currentFilters.service,
+    currentFilters.status,
+    currentSort.sortBy,
+    currentSort.sortDirection,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -172,18 +214,17 @@ export function IssueExplorer({ team }: { team: Team }) {
             className="grid gap-3 md:grid-cols-5"
             onSubmit={(event) => {
               event.preventDefault();
-              const formData = new FormData(event.currentTarget);
-              const [sortBy, sortDirection] = String(formData.get("sort") ?? "lastSeen:desc").split(":") as [
+              const [sortBy, sortDirection] = sortInput.split(":") as [
                 "lastSeen" | "firstSeen" | "eventCount" | "service" | "level" | "status",
                 "asc" | "desc",
               ];
 
               updateSearch({
                 page: 1,
-                query: String(formData.get("query") ?? "").trim(),
-                status: String(formData.get("status") ?? ""),
-                service: String(formData.get("service") ?? "").trim(),
-                level: String(formData.get("level") ?? ""),
+                query: queryInput.trim(),
+                status: statusInput,
+                service: serviceInput.trim(),
+                level: levelInput,
                 sortBy,
                 sortDirection,
               });
@@ -191,49 +232,36 @@ export function IssueExplorer({ team }: { team: Team }) {
           >
             <input
               name="query"
-              defaultValue={currentFilters.query}
+              value={queryInput}
+              onChange={(event) => setQueryInput(event.target.value)}
               placeholder="Search title"
               className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             />
-            <select
+            <Select
               name="status"
-              defaultValue={currentFilters.status}
-              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
-            >
-              <option value="">All statuses</option>
-              <option value="NEW">NEW</option>
-              <option value="ONGOING">ONGOING</option>
-              <option value="RESOLVED">RESOLVED</option>
-              <option value="IGNORED">IGNORED</option>
-            </select>
+              value={statusInput}
+              onChange={setStatusInput}
+              options={[...STATUS_OPTIONS]}
+            />
             <input
               name="service"
-              defaultValue={currentFilters.service}
+              value={serviceInput}
+              onChange={(event) => setServiceInput(event.target.value)}
               placeholder="Service"
               className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
             />
-            <select
+            <Select
               name="level"
-              defaultValue={currentFilters.level}
-              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
-            >
-              <option value="">All levels</option>
-              <option value="fatal">fatal</option>
-              <option value="error">error</option>
-              <option value="warn">warn</option>
-              <option value="info">info</option>
-            </select>
-            <select
+              value={levelInput}
+              onChange={setLevelInput}
+              options={[...LEVEL_OPTIONS]}
+            />
+            <Select
               name="sort"
-              defaultValue={`${currentSort.sortBy}:${currentSort.sortDirection}`}
-              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
-            >
-              <option value="lastSeen:desc">Newest activity</option>
-              <option value="firstSeen:asc">Oldest first seen</option>
-              <option value="eventCount:desc">Most events</option>
-              <option value="service:asc">Service A-Z</option>
-              <option value="status:asc">Status A-Z</option>
-            </select>
+              value={sortInput}
+              onChange={setSortInput}
+              options={[...SORT_OPTIONS]}
+            />
 
             <div className="md:col-span-5 flex flex-wrap gap-2">
               <button
