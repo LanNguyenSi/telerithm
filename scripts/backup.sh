@@ -26,8 +26,14 @@ docker compose exec -T clickhouse clickhouse-client \
   | gzip > "${BACKUP_PATH}/clickhouse_logs.json.gz"
 echo "[backup] ClickHouse dump complete"
 
-# Cleanup old backups (keep last 7 days)
-find "${BACKUP_DIR}" -maxdepth 1 -type d -mtime +7 -exec rm -rf {} \;
+# Cleanup old backups (keep last 10 by count, max 10 days)
+cd "${BACKUP_DIR}"
+BACKUP_COUNT=$(ls -d */ 2>/dev/null | wc -l)
+if [ "${BACKUP_COUNT}" -gt 10 ]; then
+  ls -dt */ | tail -n +11 | xargs rm -rf
+fi
+# Also remove anything older than 10 days
+find "${BACKUP_DIR}" -maxdepth 1 -type d -mtime +10 -exec rm -rf {} \;
 
 echo "[backup] Backup complete: ${BACKUP_PATH}"
 ls -lh "${BACKUP_PATH}"
