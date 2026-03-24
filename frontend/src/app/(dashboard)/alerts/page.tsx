@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AuthedShell } from "@/components/dashboard/authed-shell";
 import { IncidentList } from "@/components/alerts/incident-list";
 import { Card } from "@/components/ui/card";
 import { getAlertIncidents, getAlertRules } from "@/lib/api/client";
@@ -15,7 +14,7 @@ export default async function AlertsPage() {
   const [{ incidents }, { rules }] = await Promise.all([getAlertIncidents(team.id), getAlertRules(team.id)]);
 
   return (
-    <AuthedShell>
+    <>
       <div className="mb-4 flex items-center justify-between lg:mb-6">
         <h2 className="text-lg font-semibold text-ink sm:text-xl">Alerts</h2>
         <Link
@@ -67,6 +66,6 @@ export default async function AlertsPage() {
           )}
         </Card>
       </section>
-    </AuthedShell>
+    </>
   );
 }
