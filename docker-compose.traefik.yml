@@ -39,7 +39,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 1.5G
           cpus: "2.0"
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
