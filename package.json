@@ -1,5 +1,8 @@
 {
   "dependencies": {
     "effect": "^3.21.0"
+  },
+  "overrides": {
+    "picomatch": ">=4.0.4"
   }
 }
