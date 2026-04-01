@@ -286,13 +286,18 @@ export const openApiSpec = {
     },
     "/query/natural": {
       post: {
-        summary: "Translate natural language query to SQL",
+        summary: "Translate natural language query to structured explorer plan",
         tags: ["Logs"],
         requestBody: {
           required: true,
           content: { "application/json": { schema: { $ref: "#/components/schemas/NaturalQueryRequest" } } },
         },
-        responses: { 200: { description: "Translated query" } },
+        responses: {
+          200: {
+            description: "Structured natural-language plan",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/NaturalQueryPlan" } } },
+          },
+        },
       },
     },
     "/query/jobs/{id}": {
@@ -663,6 +668,33 @@ export const openApiSpec = {
         type: "object",
         required: ["teamId", "query"],
         properties: { teamId: { type: "string" }, query: { type: "string", minLength: 3 } },
+      },
+      LogFilter: {
+        type: "object",
+        required: ["field", "operator", "value"],
+        properties: {
+          field: { type: "string" },
+          operator: { type: "string", enum: ["eq", "neq", "gt", "lt", "contains"] },
+          value: { oneOf: [{ type: "string" }, { type: "number" }] },
+        },
+      },
+      NaturalQueryPlan: {
+        type: "object",
+        required: ["explanation", "filtersApplied"],
+        properties: {
+          explanation: { type: "string" },
+          inferredTimeRange: {
+            type: "object",
+            required: ["startTime", "endTime"],
+            properties: {
+              startTime: { type: "string", format: "date-time" },
+              endTime: { type: "string", format: "date-time" },
+            },
+          },
+          filtersApplied: { type: "array", items: { $ref: "#/components/schemas/LogFilter" } },
+          textTerms: { type: "array", items: { type: "string" } },
+          warnings: { type: "array", items: { type: "string" } },
+        },
       },
     },
   },

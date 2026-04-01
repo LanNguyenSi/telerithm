@@ -41,37 +41,30 @@ export class QueryService {
       const originalQuery = query.query;
       const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
 
-      // Normalize LIKE to ILIKE + lowercase level values for case-insensitive matching
-      const normalizedSql = translation.sql
-        ? translation.sql
-            .replace(/\bLIKE\b/gi, "ILIKE")
-            .replace(/level\s*=\s*'([A-Z]+)'/g, (_, lvl) => `level = '${lvl.toLowerCase()}'`)
-        : undefined;
+      const mergedFilters = [...(query.filters ?? []), ...translation.filtersApplied].filter(
+        (filter, index, allFilters) =>
+          allFilters.findIndex(
+            (candidate) =>
+              candidate.field === filter.field &&
+              candidate.operator === filter.operator &&
+              String(candidate.value) === String(filter.value),
+          ) === index,
+      );
+      const textTerms = (translation.textTerms ?? []).join(" ").trim();
+      const inferredStart = translation.inferredTimeRange?.startTime;
+      const inferredEnd = translation.inferredTimeRange?.endTime;
 
-      const llmQuery: LogQuery = {
+      const plannedQuery: LogQuery = {
         ...query,
-        filters: [...(query.filters ?? []), ...translation.filtersApplied],
+        filters: mergedFilters,
+        startTime: query.startTime ?? inferredStart,
+        endTime: query.endTime ?? inferredEnd,
         queryType: "sql",
-        query: normalizedSql,
+        query: textTerms.length > 0 ? textTerms : query.query,
       };
 
-      const llmResult = await this.logRepo.search(llmQuery);
-
-      if (llmResult.logs.length > 0) {
-        return { ...llmResult, requestId };
-      }
-
-      // Fallback: heuristic filters
-      const heuristic = this.aiService.translateQueryHeuristicPublic(originalQuery, query.teamId);
-      const fallbackQuery: LogQuery = {
-        ...query,
-        filters: [...(query.filters ?? []), ...heuristic.filtersApplied],
-        queryType: "sql",
-        query: undefined,
-      };
-
-      const fallbackResult = await this.logRepo.search(fallbackQuery);
-      return { ...fallbackResult, requestId };
+      const plannedResult = await this.logRepo.search(plannedQuery);
+      return { ...plannedResult, requestId };
     }
 
     const result = await this.logRepo.search(query);

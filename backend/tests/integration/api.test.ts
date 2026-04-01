@@ -943,9 +943,9 @@ describe("API Routes", () => {
     it("translates natural query", async () => {
       const res = await app.post("/api/v1/query/natural").send({ teamId: "t1", query: "show errors" });
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("sql");
       expect(res.body).toHaveProperty("explanation");
       expect(res.body).toHaveProperty("filtersApplied");
+      expect(res.body).not.toHaveProperty("sql");
     });
   });
 

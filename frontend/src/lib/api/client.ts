@@ -7,6 +7,7 @@ import type {
   LogFacet,
   LogHistogramBucket,
   LogPattern,
+  NaturalQueryPlan,
   SavedLogView,
   SavedLogViewDefinition,
   Issue,
@@ -149,11 +150,7 @@ export async function getLogs(
 }
 
 export async function getNaturalExplanation(teamId: string, query: string) {
-  return request<{
-    sql: string;
-    explanation: string;
-    filtersApplied: Array<{ field: string; operator: string; value: string | number }>;
-  }>("/query/natural", {
+  return request<NaturalQueryPlan>("/query/natural", {
     method: "POST",
     body: JSON.stringify({ teamId, query }),
   });

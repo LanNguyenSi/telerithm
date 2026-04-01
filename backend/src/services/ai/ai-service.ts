@@ -3,21 +3,7 @@ import type { LogFilter, NLQTranslation } from "../../types/domain.js";
 import { config } from "../../config/index.js";
 import { logger } from "../../logger.js";
 
-function toSqlCondition(filter: LogFilter): string {
-  const operatorMap: Record<LogFilter["operator"], string> = {
-    eq: "=",
-    neq: "!=",
-    gt: ">",
-    lt: "<",
-    contains: "LIKE",
-  };
-  const operator = operatorMap[filter.operator];
-  const value = filter.operator === "contains" ? `'%${String(filter.value)}%'` : `'${String(filter.value)}'`;
-  if (["level", "service", "host", "message"].includes(filter.field)) {
-    return `${filter.field} ${operator} ${value}`;
-  }
-  return `fields['${filter.field}'] ${operator} ${value}`;
-}
+const ALLOWED_OPERATORS: LogFilter["operator"][] = ["eq", "neq", "gt", "lt", "contains"];
 
 export class AIService {
   private openai: OpenAI | null = null;
@@ -51,35 +37,25 @@ export class AIService {
   }
 
   private async translateQueryWithLLM(naturalQuery: string, teamId: string): Promise<NLQTranslation> {
-    const systemPrompt = `You are a ClickHouse SQL expert for a log aggregation system.
-
-The logs table schema is:
-- team_id String (REQUIRED in WHERE clause)
-- source_id String
-- timestamp DateTime64(3)
-- level LowCardinality(String) - values: "debug", "info", "warn", "error", "fatal"
-- service LowCardinality(String) - application/service name (e.g. "payment-service", "auth-service", "api-gateway"). When user mentions a service by keyword (e.g. "payment"), match with service ILIKE '%payment%'. Do NOT extract common English words like "the", "last", "hour" as service names.
-- host LowCardinality(String) - hostname
-- message String - log message text
-- fields Map(String, String) - additional key-value metadata
-
-STRICT RULES:
-1. Only generate SELECT statements
-2. MUST include "WHERE team_id = '${teamId}'" in every query
-3. Only query the "logs" table
-4. Use ORDER BY timestamp DESC for recent logs
-5. Add LIMIT clause (default 100, max 1000)
-6. For time ranges, use ClickHouse interval syntax: "timestamp > now() - INTERVAL 1 HOUR"
-7. To access map fields, use: fields['key_name']
-8. ALWAYS use ILIKE instead of LIKE for case-insensitive matching on message, service, and host
-9. When user asks about a service (payment, auth, gateway), filter on service ILIKE '%name%', NOT on message
-10. Combine filters example: service ILIKE '%payment%' AND level = 'error'
-
-Return ONLY valid JSON with this structure:
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+    const systemPrompt = `You convert natural log queries into a structured explorer plan.
+Team ID is "${teamId}".
+Do not output SQL.
+Return ONLY valid JSON with this exact shape:
 {
-  "sql": "SELECT * FROM logs WHERE ...",
-  "explanation": "Human-readable explanation of the query"
-}`;
+  "explanation": "string",
+  "filtersApplied": [{ "field": "string", "operator": "eq|neq|gt|lt|contains", "value": "string|number" }],
+  "inferredTimeRange": { "startTime": "ISO8601", "endTime": "ISO8601" },
+  "textTerms": ["string"],
+  "warnings": ["string"]
+}
+Rules:
+- Keep filters deterministic and minimal.
+- Use known fields where possible: level, service, host, message, sourceId, env, region, status_code, route.
+- For service intent use operator "contains".
+- inferredTimeRange is optional. If user asks "last hour", use startTime="${oneHourAgo}" and endTime="${now.toISOString()}".
+- If uncertain, add a warning and leave ambiguous items in textTerms.`;
 
     const response = await this.openai!.chat.completions.create({
       model: process.env.OPENAI_MODEL || "llama-3.3-70b-versatile",
@@ -96,43 +72,38 @@ Return ONLY valid JSON with this structure:
       throw new Error("No response from LLM");
     }
 
-    const parsed = JSON.parse(content) as { sql: string; explanation: string };
+    const parsed = JSON.parse(content) as Partial<NLQTranslation>;
+    const filters = Array.isArray(parsed.filtersApplied)
+      ? parsed.filtersApplied
+          .map((filter) => this.normalizeFilter(filter))
+          .filter((filter): filter is LogFilter => filter !== null)
+      : [];
 
-    // Security validation
-    this.validateSQL(parsed.sql, teamId);
+    const inferredTimeRange =
+      parsed.inferredTimeRange &&
+      this.isIsoDate(parsed.inferredTimeRange.startTime) &&
+      this.isIsoDate(parsed.inferredTimeRange.endTime)
+        ? parsed.inferredTimeRange
+        : undefined;
 
     return {
-      sql: parsed.sql,
-      explanation: parsed.explanation,
-      filtersApplied: [], // LLM generates SQL directly, not filters
+      explanation:
+        typeof parsed.explanation === "string" && parsed.explanation.trim().length > 0
+          ? parsed.explanation
+          : "AI interpretation generated from natural-language query.",
+      filtersApplied: filters,
+      inferredTimeRange,
+      textTerms: Array.isArray(parsed.textTerms)
+        ? parsed.textTerms.filter(
+            (term): term is string => typeof term === "string" && term.trim().length > 0,
+          )
+        : undefined,
+      warnings: Array.isArray(parsed.warnings)
+        ? parsed.warnings.filter(
+            (warning): warning is string => typeof warning === "string" && warning.trim().length > 0,
+          )
+        : undefined,
     };
-  }
-
-  private validateSQL(sql: string, teamId: string): void {
-    const upperSQL = sql.toUpperCase();
-
-    // Only allow SELECT
-    if (!upperSQL.startsWith("SELECT")) {
-      throw new Error("Only SELECT statements are allowed");
-    }
-
-    // Prevent dangerous operations
-    const forbidden = ["DROP", "DELETE", "INSERT", "UPDATE", "TRUNCATE", "ALTER", "CREATE"];
-    for (const keyword of forbidden) {
-      if (upperSQL.includes(keyword)) {
-        throw new Error(`Forbidden SQL keyword: ${keyword}`);
-      }
-    }
-
-    // Must query only logs table
-    if (!upperSQL.includes("FROM LOGS")) {
-      throw new Error("Only queries to 'logs' table are allowed");
-    }
-
-    // Must include team_id filter
-    if (!sql.includes(`team_id = '${teamId}'`)) {
-      throw new Error("Query must include team_id filter");
-    }
   }
 
   public translateQueryHeuristicPublic(naturalQuery: string, teamId: string): NLQTranslation {
@@ -203,18 +174,42 @@ Return ONLY valid JSON with this structure:
       }
     }
 
-    const sql = [
-      "SELECT * FROM logs",
-      `WHERE team_id = '${teamId}'`,
-      ...filters.map((filter) => `AND ${toSqlCondition(filter)}`),
-      "ORDER BY timestamp DESC",
-      "LIMIT 100",
-    ].join(" ");
-
     return {
-      sql,
-      explanation: "Heuristic translation using level and service intent extracted from natural language.",
+      explanation: `Heuristic interpretation for team ${teamId} using level/service intent extracted from natural language.`,
       filtersApplied: filters,
+      textTerms: naturalQuery
+        .split(/\s+/)
+        .map((term) => term.trim())
+        .filter((term) => term.length > 2 && !stopWords.has(term.toLowerCase()))
+        .slice(0, 5),
+      warnings: ["AI fallback mode active: heuristic interpretation was used."],
     };
+  }
+
+  private normalizeFilter(filter: unknown): LogFilter | null {
+    if (!filter || typeof filter !== "object") return null;
+    const candidate = filter as Partial<LogFilter>;
+    if (
+      typeof candidate.field !== "string" ||
+      !ALLOWED_OPERATORS.includes(candidate.operator as LogFilter["operator"])
+    ) {
+      return null;
+    }
+    if (typeof candidate.value !== "string" && typeof candidate.value !== "number") {
+      return null;
+    }
+    const normalizedField = candidate.field === "sourceId" ? "source_id" : candidate.field;
+    return {
+      field: normalizedField,
+      operator: candidate.operator as LogFilter["operator"],
+      value:
+        normalizedField === "level" && typeof candidate.value === "string"
+          ? candidate.value.toLowerCase()
+          : candidate.value,
+    };
+  }
+
+  private isIsoDate(value: unknown): value is string {
+    return typeof value === "string" && !Number.isNaN(new Date(value).getTime());
   }
 }
