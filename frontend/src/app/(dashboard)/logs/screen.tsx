@@ -1,18 +1,46 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { LiveTail } from "@/components/logs/live-tail";
+import { LogEventDrawer } from "@/components/logs/log-event-drawer";
 import { LogTable } from "@/components/logs/log-table";
 import { SearchPanel } from "@/components/logs/search-panel";
 import { Card } from "@/components/ui/card";
 import { SkeletonTable } from "@/components/ui/skeleton";
-import { getLogs, getNaturalExplanation, streamLogs } from "@/lib/api/client";
+import { getLogContext, getLogs, getNaturalExplanation } from "@/lib/api/client";
 import type { LogEntry, Team } from "@/types";
 
 const DEFAULT_PAGE_SIZE = 50;
 const ALLOWED_PAGE_SIZES = [25, 50, 100];
 const DEFAULT_SORT = { sortBy: "timestamp" as const, sortDirection: "desc" as const };
+const DEFAULT_LOOKBACK_MS = 60 * 60 * 1000;
+const EXCLUDE_PARAM_SEPARATOR = "::";
+
+function defaultTimeRange(): { startTime: string; endTime: string } {
+  const end = new Date();
+  const start = new Date(end.getTime() - DEFAULT_LOOKBACK_MS);
+  return { startTime: start.toISOString(), endTime: end.toISOString() };
+}
+
+interface ExclusionChip {
+  field: string;
+  value: string;
+}
+
+function parseExclusions(params: URLSearchParams): ExclusionChip[] {
+  return params
+    .getAll("exclude")
+    .map((token) => {
+      const [field, value] = token.split(EXCLUDE_PARAM_SEPARATOR);
+      if (!field || !value) return null;
+      return {
+        field: decodeURIComponent(field),
+        value: decodeURIComponent(value),
+      };
+    })
+    .filter((item): item is ExclusionChip => item !== null);
+}
 
 export function LogExplorer({ team }: { team: Team }) {
   const router = useRouter();
@@ -25,8 +53,15 @@ export function LogExplorer({ team }: { team: Team }) {
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
+  const [contextBefore, setContextBefore] = useState<LogEntry[]>([]);
+  const [contextAfter, setContextAfter] = useState<LogEntry[]>([]);
+  const [contextLoading, setContextLoading] = useState(false);
+  const [contextScope, setContextScope] = useState<"source" | "service" | "host">("source");
+  const [fallbackRange] = useState(defaultTimeRange);
 
   const currentQuery = searchParams.get("q")?.trim() ?? "";
+  const searchParamString = searchParams.toString();
   const currentPage = Math.max(1, Number.parseInt(searchParams.get("page") ?? "1", 10) || 1);
   const rawPageSize =
     Number.parseInt(searchParams.get("pageSize") ?? `${DEFAULT_PAGE_SIZE}`, 10) || DEFAULT_PAGE_SIZE;
@@ -36,22 +71,18 @@ export function LogExplorer({ team }: { team: Team }) {
     service: searchParams.get("service") ?? "",
     host: searchParams.get("host") ?? "",
   };
+  const currentSourceId = searchParams.get("sourceId") ?? "";
+  const currentExclusions = useMemo(() => parseExclusions(new URLSearchParams(searchParamString)), [searchParamString]);
+  const currentTimeRange = {
+    startTime: searchParams.get("startTime") ?? fallbackRange.startTime,
+    endTime: searchParams.get("endTime") ?? fallbackRange.endTime,
+  };
   const currentSort = {
     sortBy:
       (searchParams.get("sortBy") as "timestamp" | "level" | "service" | "host" | null) ??
       DEFAULT_SORT.sortBy,
     sortDirection: (searchParams.get("sortDirection") as "asc" | "desc" | null) ?? DEFAULT_SORT.sortDirection,
   };
-
-  // Real-time: prepend new logs to the table via SSE
-  useEffect(() => {
-    const source = streamLogs(team.id);
-    source.addEventListener("log:new", (event: MessageEvent) => {
-      const log = JSON.parse(event.data) as LogEntry;
-      setLogs((current) => [log, ...current].slice(0, 200));
-    });
-    return () => source.close();
-  }, [team.id]);
 
   useEffect(() => {
     let active = true;
@@ -74,14 +105,22 @@ export function LogExplorer({ team }: { team: Team }) {
           currentFilters.host
             ? { field: "host", operator: "contains" as const, value: currentFilters.host }
             : null,
+          ...currentExclusions.map((item) => ({
+            field: item.field,
+            operator: "neq" as const,
+            value: item.value,
+          })),
         ].filter(
-          (item): item is { field: string; operator: "eq" | "contains"; value: string } => item !== null,
+          (item): item is { field: string; operator: "eq" | "contains" | "neq"; value: string } => item !== null,
         );
         const [explanation, result] = await Promise.all([
           currentQuery
             ? getNaturalExplanation(team.id, currentQuery).catch(() => null)
             : Promise.resolve(null),
           getLogs(team.id, {
+            sourceId: currentSourceId || undefined,
+            startTime: currentTimeRange.startTime,
+            endTime: currentTimeRange.endTime,
             query: currentQuery || undefined,
             filters,
             sortBy: currentSort.sortBy,
@@ -123,6 +162,10 @@ export function LogExplorer({ team }: { team: Team }) {
     currentQuery,
     currentSort.sortBy,
     currentSort.sortDirection,
+    currentSourceId,
+    currentExclusions,
+    currentTimeRange.endTime,
+    currentTimeRange.startTime,
     pageSize,
     reloadToken,
     team.id,
@@ -132,6 +175,10 @@ export function LogExplorer({ team }: { team: Team }) {
     query?: string;
     page?: number;
     pageSize?: number;
+    sourceId?: string;
+    exclusions?: ExclusionChip[];
+    startTime?: string;
+    endTime?: string;
     level?: string;
     service?: string;
     host?: string;
@@ -142,6 +189,10 @@ export function LogExplorer({ team }: { team: Team }) {
     const query = next.query ?? currentQuery;
     const page = next.page ?? currentPage;
     const nextPageSize = next.pageSize ?? pageSize;
+    const sourceId = next.sourceId ?? currentSourceId;
+    const exclusions = next.exclusions ?? currentExclusions;
+    const startTime = next.startTime ?? currentTimeRange.startTime;
+    const endTime = next.endTime ?? currentTimeRange.endTime;
     const level = next.level ?? currentFilters.level;
     const service = next.service ?? currentFilters.service;
     const host = next.host ?? currentFilters.host;
@@ -154,6 +205,19 @@ export function LogExplorer({ team }: { team: Team }) {
     else params.delete("page");
     if (nextPageSize !== DEFAULT_PAGE_SIZE) params.set("pageSize", String(nextPageSize));
     else params.delete("pageSize");
+    if (sourceId) params.set("sourceId", sourceId);
+    else params.delete("sourceId");
+    params.delete("exclude");
+    for (const exclusion of exclusions) {
+      params.append(
+        "exclude",
+        `${encodeURIComponent(exclusion.field)}${EXCLUDE_PARAM_SEPARATOR}${encodeURIComponent(exclusion.value)}`,
+      );
+    }
+    if (startTime) params.set("startTime", startTime);
+    else params.delete("startTime");
+    if (endTime) params.set("endTime", endTime);
+    else params.delete("endTime");
     if (level) params.set("level", level);
     else params.delete("level");
     if (service) params.set("service", service);
@@ -171,7 +235,8 @@ export function LogExplorer({ team }: { team: Team }) {
 
   async function handleSearch(
     query: string,
-    filters: { level: string; service: string; host: string },
+    filters: { level: string; service: string; host: string; sourceId: string },
+    timeRange: { startTime: string; endTime: string },
     sort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" },
     nextPageSize: number,
   ) {
@@ -179,6 +244,9 @@ export function LogExplorer({ team }: { team: Team }) {
       query: query.trim(),
       page: 1,
       pageSize: nextPageSize,
+      sourceId: filters.sourceId,
+      startTime: timeRange.startTime,
+      endTime: timeRange.endTime,
       level: filters.level,
       service: filters.service,
       host: filters.host,
@@ -187,6 +255,28 @@ export function LogExplorer({ team }: { team: Team }) {
     });
   }
 
+  useEffect(() => {
+    if (!selectedLog) return;
+    setContextLoading(true);
+    void getLogContext({
+      teamId: team.id,
+      sourceId: selectedLog.sourceId,
+      timestamp: selectedLog.timestamp,
+      service: selectedLog.service,
+      host: selectedLog.host,
+      scope: contextScope,
+    })
+      .then((context) => {
+        setContextBefore(context.before);
+        setContextAfter(context.after);
+      })
+      .catch(() => {
+        setContextBefore([]);
+        setContextAfter([]);
+      })
+      .finally(() => setContextLoading(false));
+  }, [contextScope, selectedLog, team.id]);
+
   return (
     <div className="space-y-4 lg:space-y-6">
       <SearchPanel
@@ -194,8 +284,36 @@ export function LogExplorer({ team }: { team: Team }) {
         sqlPreview={sqlPreview}
         currentQuery={currentQuery}
         currentFilters={currentFilters}
+        currentTimeRange={currentTimeRange}
+        currentSourceId={currentSourceId}
+        currentExclusions={currentExclusions}
         currentSort={currentSort}
         pageSize={pageSize}
+        onRemoveChip={(chip) => {
+          if (chip === "query") {
+            updateSearch({ page: 1, query: "" });
+            return;
+          }
+          if (chip === "level") {
+            updateSearch({ page: 1, level: "" });
+            return;
+          }
+          if (chip === "service") {
+            updateSearch({ page: 1, service: "" });
+            return;
+          }
+          if (chip === "host") {
+            updateSearch({ page: 1, host: "" });
+            return;
+          }
+          if (chip === "source") {
+            updateSearch({ page: 1, sourceId: "" });
+          }
+        }}
+        onRemoveExclusion={(index) => {
+          const next = currentExclusions.filter((_, idx) => idx !== index);
+          updateSearch({ page: 1, exclusions: next });
+        }}
       />
 
       <Card className="flex flex-wrap items-center justify-between gap-3">
@@ -205,6 +323,10 @@ export function LogExplorer({ team }: { team: Team }) {
         </div>
         <p className="text-xs text-muted">
           Team <span className="font-mono">{team.slug}</span>
+        </p>
+        <p className="text-xs text-muted">
+          Range <span className="font-mono">{new Date(currentTimeRange.startTime).toLocaleString("de-DE")}</span>{" "}
+          to <span className="font-mono">{new Date(currentTimeRange.endTime).toLocaleString("de-DE")}</span>
         </p>
       </Card>
 
@@ -256,12 +378,45 @@ export function LogExplorer({ team }: { team: Team }) {
           page={currentPage}
           pageSize={pageSize}
           total={total}
+          selectedLogId={selectedLog?.id}
+          onSelectLog={(log) => setSelectedLog(log)}
           onPageChange={(page) => updateSearch({ page })}
           onPageSizeChange={(nextPageSize) => updateSearch({ page: 1, pageSize: nextPageSize })}
         />
       ) : null}
 
       <LiveTail teamId={team.id} />
+      <LogEventDrawer
+        log={selectedLog}
+        contextBefore={contextLoading ? [] : contextBefore}
+        contextAfter={contextLoading ? [] : contextAfter}
+        contextScope={contextScope}
+        onScopeChange={setContextScope}
+        onClose={() => setSelectedLog(null)}
+        onFilter={(field, value) => {
+          setSelectedLog(null);
+          void handleSearch(
+            currentQuery,
+            {
+              level: field === "level" ? value : currentFilters.level,
+              service: field === "service" ? value : currentFilters.service,
+              host: field === "host" ? value : currentFilters.host,
+              sourceId: currentSourceId,
+            },
+            currentTimeRange,
+            currentSort,
+            pageSize,
+          );
+        }}
+        onExclude={(_field, _value) => {
+          const next = [...currentExclusions, { field: _field, value: _value }].filter(
+            (item, index, arr) =>
+              arr.findIndex((candidate) => candidate.field === item.field && candidate.value === item.value) === index,
+          );
+          updateSearch({ page: 1, exclusions: next });
+          setSelectedLog(null);
+        }}
+      />
     </div>
   );
 }

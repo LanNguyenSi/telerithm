@@ -24,6 +24,7 @@ import {
   naturalQuerySchema,
   registerSchema,
   searchSchema,
+  contextSchema,
   updateSubscriptionSchema,
   updateUserRoleSchema,
 } from "../../validation/schemas.js";
@@ -36,6 +37,8 @@ import { config } from "../../config/index.js";
 const log = createChildLogger("router");
 
 export const apiRouter = Router();
+
+const DEFAULT_SEARCH_LOOKBACK_MS = 60 * 60 * 1000;
 
 const teamService = new TeamService();
 const queryService = new QueryService();
@@ -76,6 +79,30 @@ function parseToken(header?: string): string {
     throw new Error("Missing authorization header");
   }
   return header.replace(/^Bearer\s+/i, "");
+}
+
+function toIsoDate(value: Date): string {
+  return value.toISOString();
+}
+
+function withDefaultSearchRange(input: unknown): unknown {
+  if (!input || typeof input !== "object") {
+    return input;
+  }
+
+  const payload = input as Record<string, unknown>;
+  if (payload.startTime && payload.endTime) {
+    return payload;
+  }
+
+  const now = new Date();
+  const start = new Date(now.getTime() - DEFAULT_SEARCH_LOOKBACK_MS);
+
+  return {
+    ...payload,
+    startTime: typeof payload.startTime === "string" ? payload.startTime : toIsoDate(start),
+    endTime: typeof payload.endTime === "string" ? payload.endTime : toIsoDate(now),
+  };
 }
 
 // 2.5 — API-Key authentication middleware for ingest endpoints
@@ -281,7 +308,7 @@ apiRouter.post(
 apiRouter.post(
   "/logs/search",
   asyncHandler(async (req, res) => {
-    const parsed = searchSchema.safeParse(req.body);
+    const parsed = searchSchema.safeParse(withDefaultSearchRange(req.body));
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
@@ -294,7 +321,7 @@ apiRouter.post(
 apiRouter.get(
   "/logs",
   asyncHandler(async (req, res) => {
-    const parsed = searchSchema.safeParse({
+    const parsed = searchSchema.safeParse(withDefaultSearchRange({
       teamId: req.query.teamId,
       sourceId: req.query.sourceId,
       startTime: req.query.startTime,
@@ -303,12 +330,25 @@ apiRouter.get(
       queryType: req.query.queryType ?? "sql",
       limit: req.query.limit ? Number(req.query.limit) : 100,
       offset: req.query.offset ? Number(req.query.offset) : 0,
-    });
+    }));
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
     const result = await queryService.search(parsed.data);
+    res.json(result);
+  }),
+);
+
+apiRouter.post(
+  "/logs/context",
+  asyncHandler(async (req, res) => {
+    const parsed = contextSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const result = await queryService.getContext(parsed.data);
     res.json(result);
   }),
 );
@@ -975,6 +1015,18 @@ apiRouter.get("/stream/logs", (req, res) => {
     res.status(400).json({ error: "teamId is required" });
     return;
   }
-  const unsubscribe = streamingService.subscribe(teamId, res);
+  const sourceId = typeof req.query.sourceId === "string" ? req.query.sourceId : undefined;
+  const service = typeof req.query.service === "string" ? req.query.service : undefined;
+  const host = typeof req.query.host === "string" ? req.query.host : undefined;
+  const level = typeof req.query.level === "string" ? req.query.level : undefined;
+  const query = typeof req.query.query === "string" ? req.query.query : undefined;
+
+  const unsubscribe = streamingService.subscribe(teamId, res, {
+    sourceId,
+    service,
+    host,
+    level,
+    query,
+  });
   req.on("close", unsubscribe);
 });

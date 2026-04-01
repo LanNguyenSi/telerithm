@@ -76,7 +76,7 @@ export class LogRepository {
     const sortDirection = (query.sortDirection ?? "desc").toUpperCase();
 
     const countSql = `SELECT count() as total FROM logs WHERE ${where}`;
-    const dataSql = `SELECT * FROM logs WHERE ${where} ORDER BY ${sortBy} ${sortDirection} LIMIT {limit:UInt32} OFFSET {offset:UInt32}`;
+    const dataSql = `SELECT * FROM logs WHERE ${where} ORDER BY ${sortBy} ${sortDirection}, source_id ${sortDirection} LIMIT {limit:UInt32} OFFSET {offset:UInt32}`;
 
     params.limit = limit;
     params.offset = offset;
@@ -112,7 +112,7 @@ export class LogRepository {
       fields: row.fields ?? {},
     }));
 
-    const executedQuery = `SELECT * FROM logs WHERE ${where} ORDER BY ${sortBy} ${sortDirection} LIMIT ${limit} OFFSET ${offset}`;
+    const executedQuery = `SELECT * FROM logs WHERE ${where} ORDER BY ${sortBy} ${sortDirection}, source_id ${sortDirection} LIMIT ${limit} OFFSET ${offset}`;
 
     return {
       logs,
@@ -159,6 +159,95 @@ export class LogRepository {
       totalLogs: total,
       errorRate: total === 0 ? 0 : Number(((errors / total) * 100).toFixed(1)),
       services: serviceRows.map((r) => ({ service: r.service, count: Number(r.cnt) })),
+    };
+  }
+
+  async getContext(query: {
+    teamId: string;
+    sourceId: string;
+    timestamp: string;
+    before: number;
+    after: number;
+    scope: "source" | "service" | "host";
+    service?: string;
+    host?: string;
+  }): Promise<{ before: LogEntry[]; after: LogEntry[] }> {
+    const params: Record<string, string | number> = {
+      teamId: query.teamId,
+      sourceId: query.sourceId,
+      ts: query.timestamp,
+      beforeLimit: query.before,
+      afterLimit: query.after,
+    };
+    const scopeConditions: string[] = ["team_id = {teamId:String}"];
+
+    if (query.scope === "source") {
+      scopeConditions.push("source_id = {sourceId:String}");
+    } else if (query.scope === "service" && query.service) {
+      scopeConditions.push("service = {service:String}");
+      params.service = query.service;
+    } else if (query.scope === "host" && query.host) {
+      scopeConditions.push("host = {host:String}");
+      params.host = query.host;
+    } else {
+      scopeConditions.push("source_id = {sourceId:String}");
+    }
+
+    const scopeWhere = scopeConditions.join(" AND ");
+
+    const beforeSql = `SELECT * FROM logs WHERE ${scopeWhere} AND timestamp < {ts:String} ORDER BY timestamp DESC, source_id DESC LIMIT {beforeLimit:UInt32}`;
+    const afterSql = `SELECT * FROM logs WHERE ${scopeWhere} AND timestamp > {ts:String} ORDER BY timestamp ASC, source_id ASC LIMIT {afterLimit:UInt32}`;
+
+    const [beforeResult, afterResult] = await Promise.all([
+      clickhouse.query({ query: beforeSql, query_params: params, format: "JSONEachRow" }),
+      clickhouse.query({ query: afterSql, query_params: params, format: "JSONEachRow" }),
+    ]);
+
+    const beforeRows = await beforeResult.json<{
+      team_id: string;
+      source_id: string;
+      timestamp: string;
+      level: string;
+      service: string;
+      host: string;
+      message: string;
+      fields: Record<string, string>;
+    }>();
+    const afterRows = await afterResult.json<{
+      team_id: string;
+      source_id: string;
+      timestamp: string;
+      level: string;
+      service: string;
+      host: string;
+      message: string;
+      fields: Record<string, string>;
+    }>();
+
+    const mapRow = (row: {
+      team_id: string;
+      source_id: string;
+      timestamp: string;
+      level: string;
+      service: string;
+      host: string;
+      message: string;
+      fields: Record<string, string>;
+    }): LogEntry => ({
+      id: `${row.team_id}:${row.source_id}:${row.timestamp}`,
+      teamId: row.team_id,
+      sourceId: row.source_id,
+      timestamp: row.timestamp,
+      level: row.level as LogEntry["level"],
+      service: row.service,
+      host: row.host,
+      message: row.message,
+      fields: row.fields ?? {},
+    });
+
+    return {
+      before: beforeRows.map(mapRow).reverse(),
+      after: afterRows.map(mapRow),
     };
   }
 

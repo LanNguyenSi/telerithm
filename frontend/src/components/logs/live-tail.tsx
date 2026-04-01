@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { decodeHtml, formatDate } from "@/lib/utils/format";
 import { streamLogs } from "@/lib/api/client";
@@ -9,10 +9,28 @@ import type { LogEntry } from "@/types";
 export function LiveTail({ teamId }: { teamId: string }) {
   const [items, setItems] = useState<LogEntry[]>([]);
   const [connected, setConnected] = useState(false);
+  const [running, setRunning] = useState(true);
+  const [level, setLevel] = useState("");
+  const [service, setService] = useState("");
+  const [host, setHost] = useState("");
+  const [query, setQuery] = useState("");
+  const sourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    const source = streamLogs(teamId);
+    if (!running) {
+      sourceRef.current?.close();
+      sourceRef.current = null;
+      setConnected(false);
+      return;
+    }
 
+    const source = streamLogs(teamId, {
+      level: level || undefined,
+      service: service.trim() || undefined,
+      host: host.trim() || undefined,
+      query: query.trim() || undefined,
+    });
+    sourceRef.current = source;
     source.addEventListener("open", () => setConnected(true));
     source.addEventListener("error", () => setConnected(false));
     source.addEventListener("log:new", (event) => {
@@ -23,18 +41,60 @@ export function LiveTail({ teamId }: { teamId: string }) {
     return () => {
       source.close();
     };
-  }, [teamId]);
+  }, [host, level, query, running, service, teamId]);
 
   return (
     <Card>
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold text-ink">Live Tail</h2>
-          <p className="text-xs text-muted">SSE stream for newly ingested logs.</p>
+          <p className="text-xs text-muted">Dedicated stream mode, independent from historical search results.</p>
         </div>
         <span className={connected ? "text-sm text-emerald-600 dark:text-emerald-400" : "text-sm text-muted"}>
-          {connected ? "Connected" : "Waiting"}
+          {running ? (connected ? "Connected" : "Waiting") : "Paused"}
         </span>
+      </div>
+      <div className="mt-3 grid gap-2 md:grid-cols-4">
+        <input
+          value={level}
+          onChange={(event) => setLevel(event.target.value)}
+          placeholder="level"
+          className="rounded-lg border border-line bg-white px-2 py-1.5 text-xs text-ink dark:bg-white/10"
+        />
+        <input
+          value={service}
+          onChange={(event) => setService(event.target.value)}
+          placeholder="service"
+          className="rounded-lg border border-line bg-white px-2 py-1.5 text-xs text-ink dark:bg-white/10"
+        />
+        <input
+          value={host}
+          onChange={(event) => setHost(event.target.value)}
+          placeholder="host"
+          className="rounded-lg border border-line bg-white px-2 py-1.5 text-xs text-ink dark:bg-white/10"
+        />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="contains text"
+          className="rounded-lg border border-line bg-white px-2 py-1.5 text-xs text-ink dark:bg-white/10"
+        />
+      </div>
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          onClick={() => setRunning((value) => !value)}
+          className="rounded-md border border-line px-2 py-1 text-xs text-muted transition hover:text-ink"
+        >
+          {running ? "Pause stream" : "Resume stream"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setItems([])}
+          className="rounded-md border border-line px-2 py-1 text-xs text-muted transition hover:text-ink"
+        >
+          Clear
+        </button>
       </div>
       <div className="mt-4 space-y-2">
         {items.length === 0 ? (
