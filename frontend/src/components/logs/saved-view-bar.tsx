@@ -1,6 +1,7 @@
 "use client";
 
 import { Card } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
 import type { SavedLogView } from "@/types";
 
 export function SavedViewBar({
@@ -33,21 +34,17 @@ export function SavedViewBar({
   return (
     <Card className="flex flex-wrap items-center gap-2">
       <p className="text-xs uppercase tracking-[0.16em] text-muted">Saved Views</p>
-      <select
+      <Select
         value={selectedId}
-        onChange={(event) => onSelect(event.target.value)}
+        onChange={onSelect}
         disabled={loading}
-        className="min-w-60 rounded-md border border-line bg-white px-2 py-1 text-sm text-ink dark:bg-white/10"
-      >
-        <option value="">Select saved view</option>
-        {views.map((view) => (
-          <option key={view.id} value={view.id}>
-            {view.name}
-            {view.isDefault ? " (default)" : ""}
-            {view.isShared ? " [shared]" : " [private]"}
-          </option>
-        ))}
-      </select>
+        placeholder="Select saved view"
+        className="min-w-60"
+        options={views.map((view) => ({
+          value: view.id,
+          label: `${view.name}${view.isDefault ? " (default)" : ""}${view.isShared ? " [shared]" : " [private]"}`,
+        }))}
+      />
       {unsaved && selected ? (
         <span className="text-xs font-medium text-amber-700">Unsaved changes</span>
       ) : null}
