@@ -13,7 +13,7 @@
 | 023 | Phase 2 | Facets, Histogram, and Field Explorer | Done |
 | 024 | Phase 2 | Saved Views and Shared Searches | Done |
 | 025 | Phase 3 | Patterns, Grouping, and Noise Reduction | Done |
-| 026 | Phase 3 | Query Engine Hardening, Cursors, and Async Search | Planned |
+| 026 | Phase 3 | Query Engine Hardening, Cursors, and Async Search | Done |
 | 027 | Phase 3 | NLQ Reframing and Structured Query DSL | Planned |
 
 ## Completed

@@ -32,14 +32,18 @@ export interface LogQuery {
   sortDirection?: "asc" | "desc";
   limit?: number;
   offset?: number;
+  pageToken?: string;
 }
 
 export interface LogSearchResult {
   logs: LogEntry[];
   total: number;
+  requestId: string;
+  partial: boolean;
   query: string;
   executionTimeMs: number;
   cached: boolean;
+  nextPageToken?: string;
 }
 
 export interface FacetBucket {
@@ -62,6 +66,7 @@ export interface LogFacetQuery {
   filters?: LogFilter[];
   fields?: string[];
   limit?: number;
+  async?: boolean;
 }
 
 export interface LogFacetResult {
@@ -83,6 +88,7 @@ export interface LogHistogramQuery {
   queryType: QueryType;
   filters?: LogFilter[];
   interval: "minute" | "5m" | "15m" | "hour" | "day";
+  async?: boolean;
 }
 
 export interface LogHistogramResult {
@@ -111,6 +117,7 @@ export interface LogPatternsQuery {
   filters?: LogFilter[];
   groupBy?: "none" | "service" | "level" | "service_level";
   limit?: number;
+  async?: boolean;
 }
 
 export interface LogPatternsResult {

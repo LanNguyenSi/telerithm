@@ -103,6 +103,9 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [sqlPreview, setSqlPreview] = useState("");
   const [execution, setExecution] = useState("");
+  const [lastRequestId, setLastRequestId] = useState("");
+  const [isPartial, setIsPartial] = useState(false);
+  const [nextPageToken, setNextPageToken] = useState<string | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -126,6 +129,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
 
   const currentQuery = searchParams.get("q")?.trim() ?? "";
   const currentMode = searchParams.get("mode") === "patterns" ? "patterns" : "raw";
+  const currentPageToken = searchParams.get("pageToken") ?? "";
   const currentViewId = searchParams.get("viewId") ?? "";
   const searchParamString = searchParams.toString();
   const currentPage = Math.max(1, Number.parseInt(searchParams.get("page") ?? "1", 10) || 1);
@@ -272,6 +276,8 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
       setError(null);
       setSqlPreview("");
       setExecution("");
+      setLastRequestId("");
+      setIsPartial(false);
 
       try {
         const offset = (currentPage - 1) * pageSize;
@@ -313,6 +319,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
             sortDirection: currentSort.sortDirection,
             limit: pageSize,
             offset,
+            pageToken: currentPageToken || undefined,
           }),
           getLogFacets(team.id, {
             sourceId: currentSourceId || undefined,
@@ -347,6 +354,9 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         setLogs(result.logs);
         setTotal(result.total);
         setExecution(`${result.total} logs in ${result.executionTimeMs}ms`);
+        setLastRequestId(result.requestId);
+        setIsPartial(result.partial);
+        setNextPageToken(result.nextPageToken);
         if (explanation?.sql) setSqlPreview(explanation.sql);
         setFacets(facetResult.facets);
         setHistogram(histogramResult.buckets);
@@ -359,6 +369,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
           setFacets([]);
           setHistogram([]);
           setPatterns([]);
+          setNextPageToken(undefined);
         }
       } finally {
         if (active) {
@@ -380,6 +391,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
     currentFilters.level,
     currentFilters.service,
     currentPage,
+    currentPageToken,
     currentQuery,
     currentSort.sortBy,
     currentSort.sortDirection,
@@ -441,6 +453,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   function updateSearch(next: {
     query?: string;
     mode?: "raw" | "patterns";
+    pageToken?: string;
     viewId?: string;
     page?: number;
     pageSize?: number;
@@ -459,6 +472,8 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
     const params = new URLSearchParams(searchParams.toString());
     const query = next.query ?? currentQuery;
     const mode = next.mode ?? currentMode;
+    const pageToken =
+      next.pageToken ?? (next.page !== undefined && next.page !== currentPage ? "" : currentPageToken);
     const viewId = next.viewId ?? currentViewId;
     const page = next.page ?? currentPage;
     const nextPageSize = next.pageSize ?? pageSize;
@@ -478,6 +493,8 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
     else params.delete("q");
     if (mode === "patterns") params.set("mode", "patterns");
     else params.delete("mode");
+    if (pageToken) params.set("pageToken", pageToken);
+    else params.delete("pageToken");
     if (viewId) params.set("viewId", viewId);
     else params.delete("viewId");
     if (page > 1) params.set("page", String(page));
@@ -718,6 +735,12 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-muted">Execution</p>
           <p className="mt-1 font-mono text-base font-semibold text-ink">{execution || `${total} logs`}</p>
+          {lastRequestId ? (
+            <p className="mt-1 font-mono text-[11px] text-muted">
+              requestId: {lastRequestId}
+              {isPartial ? " (partial)" : ""}
+            </p>
+          ) : null}
         </div>
         <p className="text-xs text-muted">
           Team <span className="font-mono">{team.slug}</span>
@@ -878,7 +901,13 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
                 total={total}
                 selectedLogId={selectedLog?.id}
                 onSelectLog={(log) => setSelectedLog(log)}
-                onPageChange={(page) => updateSearch({ page })}
+                onPageChange={(page) => {
+                  if (page > currentPage && nextPageToken) {
+                    updateSearch({ page, pageToken: nextPageToken });
+                    return;
+                  }
+                  updateSearch({ page, pageToken: "" });
+                }}
                 onPageSizeChange={(nextPageSize) => updateSearch({ page: 1, pageSize: nextPageSize })}
               />
             )
