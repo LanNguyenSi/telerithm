@@ -74,6 +74,36 @@ export const histogramSchema = searchScopeSchema.extend({
   interval: z.enum(["minute", "5m", "15m", "hour", "day"]).default("5m"),
 });
 
+export const savedViewDefinitionSchema = z.object({
+  startTime: z.string().datetime().optional(),
+  endTime: z.string().datetime().optional(),
+  relativeTime: z.string().optional(),
+  text: z.string().optional(),
+  sourceId: z.string().optional(),
+  filters: z.array(logFilterSchema).default([]),
+  columns: z.array(z.string()).default([]),
+  sortBy: z.enum(["timestamp", "level", "service", "host"]).default("timestamp"),
+  sortDirection: z.enum(["asc", "desc"]).default("desc"),
+  facets: z.array(z.object({ field: z.string(), value: z.string() })).default([]),
+  exclusions: z.array(z.object({ field: z.string(), value: z.string() })).default([]),
+  pageSize: z.number().int().min(1).max(500).default(50),
+});
+
+export const createSavedViewSchema = z.object({
+  teamId: z.string().min(1),
+  name: z.string().min(1).max(120),
+  isShared: z.boolean().default(false),
+  isDefault: z.boolean().default(false),
+  definition: savedViewDefinitionSchema,
+});
+
+export const updateSavedViewSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  isShared: z.boolean().optional(),
+  isDefault: z.boolean().optional(),
+  definition: savedViewDefinitionSchema.optional(),
+});
+
 export const contextSchema = z.object({
   teamId: z.string().min(1),
   sourceId: z.string().min(1),
