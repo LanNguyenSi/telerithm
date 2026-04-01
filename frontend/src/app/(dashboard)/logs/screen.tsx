@@ -587,7 +587,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
 
   return (
     <div className="space-y-4 lg:space-y-6">
-      <SavedViewBar
+      {savedViewsLoading ? null : <SavedViewBar
         views={savedViews}
         selectedId={currentViewId}
         unsaved={hasUnsavedChanges}
@@ -692,7 +692,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
               setSavedViewsError(deleteError instanceof Error ? deleteError.message : "Delete failed"),
             );
         }}
-      />
+      />}
       {savedViewsError ? <p className="text-xs text-rose-700">{savedViewsError}</p> : null}
 
       <SearchPanel
