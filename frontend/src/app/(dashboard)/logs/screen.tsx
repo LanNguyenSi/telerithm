@@ -126,7 +126,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   const [savedViewsLoading, setSavedViewsLoading] = useState(false);
   const [savedViewsError, setSavedViewsError] = useState<string | null>(null);
   const [defaultHydrated, setDefaultHydrated] = useState(false);
-  const [fallbackRange] = useState(defaultTimeRange);
+  const [fallbackRange] = useState(() => defaultTimeRange());
 
   const currentQuery = searchParams.get("q")?.trim() ?? "";
   const currentMode = searchParams.get("mode") === "patterns" ? "patterns" : "raw";
@@ -786,8 +786,8 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         </p>
         <p className="text-xs text-muted">
           Range{" "}
-          <span className="font-mono">{new Date(currentTimeRange.startTime).toLocaleString("de-DE")}</span> to{" "}
-          <span className="font-mono">{new Date(currentTimeRange.endTime).toLocaleString("de-DE")}</span>
+          <span className="font-mono" suppressHydrationWarning>{new Date(currentTimeRange.startTime).toLocaleString("de-DE")}</span> to{" "}
+          <span className="font-mono" suppressHydrationWarning>{new Date(currentTimeRange.endTime).toLocaleString("de-DE")}</span>
         </p>
         {currentFacetSelections.length > 0 ? (
           <div className="w-full border-t border-line/70 pt-3">
