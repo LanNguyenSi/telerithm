@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Logs" };
 
 export default async function LogsPage() {
-  const { team } = await requireAuth();
+  const { team, token } = await requireAuth();
 
-  return <LogExplorer team={team} />;
+  return <LogExplorer team={team} token={token} />;
 }

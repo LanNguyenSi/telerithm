@@ -6,6 +6,8 @@ import type {
   DashboardOverview,
   LogFacet,
   LogHistogramBucket,
+  SavedLogView,
+  SavedLogViewDefinition,
   Issue,
   LogEntry,
   SessionUser,
@@ -183,6 +185,64 @@ export async function getLogHistogram(
       filters: options?.filters,
       interval: options?.interval ?? "5m",
     }),
+  });
+}
+
+export async function getSavedLogViews(teamId: string, token: string) {
+  return authedRequest<{ views: SavedLogView[] }>(`/logs/views?teamId=${encodeURIComponent(teamId)}`, token);
+}
+
+export async function createSavedLogView(
+  token: string,
+  payload: {
+    teamId: string;
+    name: string;
+    isShared: boolean;
+    isDefault: boolean;
+    definition: SavedLogViewDefinition;
+  },
+) {
+  return authedRequest<{ view: SavedLogView }>("/logs/views", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateSavedLogView(
+  id: string,
+  teamId: string,
+  token: string,
+  payload: Partial<{
+    name: string;
+    isShared: boolean;
+    isDefault: boolean;
+    definition: SavedLogViewDefinition;
+  }>,
+) {
+  return authedRequest<{ view: SavedLogView }>(
+    `/logs/views/${id}?teamId=${encodeURIComponent(teamId)}`,
+    token,
+    {
+      method: "PUT",
+      body: JSON.stringify({ teamId, ...payload }),
+    },
+  );
+}
+
+export async function duplicateSavedLogView(
+  id: string,
+  token: string,
+  payload: { teamId: string; name?: string },
+) {
+  return authedRequest<{ view: SavedLogView }>(`/logs/views/${id}/duplicate`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteSavedLogView(id: string, teamId: string, token: string) {
+  return authedRequest<void>(`/logs/views/${id}?teamId=${encodeURIComponent(teamId)}`, token, {
+    method: "DELETE",
   });
 }
 

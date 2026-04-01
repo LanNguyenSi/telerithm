@@ -173,6 +173,87 @@ export const openApiSpec = {
         },
       },
     },
+    "/logs/views": {
+      get: {
+        summary: "List saved log views for current user/team",
+        tags: ["Logs"],
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "teamId", in: "query", required: true, schema: { type: "string" } }],
+        responses: {
+          200: {
+            description: "Saved views",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/SavedViewsResponse" } } },
+          },
+        },
+      },
+      post: {
+        summary: "Create saved log view",
+        tags: ["Logs"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/SavedViewCreateRequest" } },
+          },
+        },
+        responses: {
+          201: {
+            description: "Saved view created",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/SavedViewResponse" } } },
+          },
+        },
+      },
+    },
+    "/logs/views/{id}": {
+      put: {
+        summary: "Update saved log view",
+        tags: ["Logs"],
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/SavedViewUpdateRequest" } },
+          },
+        },
+        responses: {
+          200: {
+            description: "Saved view updated",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/SavedViewResponse" } } },
+          },
+        },
+      },
+      delete: {
+        summary: "Delete saved log view",
+        tags: ["Logs"],
+        security: [{ bearerAuth: [] }],
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "string" } },
+          { name: "teamId", in: "query", required: true, schema: { type: "string" } },
+        ],
+        responses: { 204: { description: "Deleted" } },
+      },
+    },
+    "/logs/views/{id}/duplicate": {
+      post: {
+        summary: "Duplicate saved log view",
+        tags: ["Logs"],
+        security: [{ bearerAuth: [] }],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/SavedViewDuplicateRequest" } },
+          },
+        },
+        responses: {
+          201: {
+            description: "Duplicate created",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/SavedViewResponse" } } },
+          },
+        },
+      },
+    },
     "/logs": {
       get: {
         summary: "Query logs via GET",
@@ -430,6 +511,74 @@ export const openApiSpec = {
             },
           },
         },
+      },
+      SavedViewDefinition: {
+        type: "object",
+        properties: {
+          startTime: { type: "string", format: "date-time" },
+          endTime: { type: "string", format: "date-time" },
+          relativeTime: { type: "string" },
+          text: { type: "string" },
+          sourceId: { type: "string" },
+          filters: { type: "array" },
+          columns: { type: "array", items: { type: "string" } },
+          sortBy: { type: "string", enum: ["timestamp", "level", "service", "host"] },
+          sortDirection: { type: "string", enum: ["asc", "desc"] },
+          facets: { type: "array" },
+          exclusions: { type: "array" },
+          pageSize: { type: "integer" },
+        },
+      },
+      SavedViewCreateRequest: {
+        type: "object",
+        required: ["teamId", "name", "definition"],
+        properties: {
+          teamId: { type: "string" },
+          name: { type: "string" },
+          isShared: { type: "boolean" },
+          isDefault: { type: "boolean" },
+          definition: { $ref: "#/components/schemas/SavedViewDefinition" },
+        },
+      },
+      SavedViewUpdateRequest: {
+        type: "object",
+        properties: {
+          teamId: { type: "string" },
+          name: { type: "string" },
+          isShared: { type: "boolean" },
+          isDefault: { type: "boolean" },
+          definition: { $ref: "#/components/schemas/SavedViewDefinition" },
+        },
+      },
+      SavedViewDuplicateRequest: {
+        type: "object",
+        required: ["teamId"],
+        properties: {
+          teamId: { type: "string" },
+          name: { type: "string" },
+        },
+      },
+      SavedView: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          teamId: { type: "string" },
+          ownerUserId: { type: "string", nullable: true },
+          name: { type: "string" },
+          isShared: { type: "boolean" },
+          isDefault: { type: "boolean" },
+          definition: { $ref: "#/components/schemas/SavedViewDefinition" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
+      SavedViewResponse: {
+        type: "object",
+        properties: { view: { $ref: "#/components/schemas/SavedView" } },
+      },
+      SavedViewsResponse: {
+        type: "object",
+        properties: { views: { type: "array", items: { $ref: "#/components/schemas/SavedView" } } },
       },
       SearchResponse: {
         type: "object",

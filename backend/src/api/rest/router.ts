@@ -4,6 +4,7 @@ import { IngestionService } from "../../ingestion/ingestion-service.js";
 import { AlertService } from "../../services/alert/alert-service.js";
 import { DashboardService } from "../../services/dashboard/dashboard-service.js";
 import { QueryService } from "../../services/query/query-service.js";
+import { LogViewService } from "../../services/log-view/log-view-service.js";
 import { StreamingService } from "../../services/streaming/streaming-service.js";
 import { IssueService } from "../../services/issue/issue-service.js";
 import { SubscriptionService } from "../../services/subscription/subscription-service.js";
@@ -12,6 +13,7 @@ import {
   addUserToTeamSchema,
   createInviteSchema,
   createSourceSchema,
+  createSavedViewSchema,
   createSubscriptionSchema,
   createTeamSchema,
   incidentActionSchema,
@@ -27,6 +29,7 @@ import {
   contextSchema,
   facetsSchema,
   histogramSchema,
+  updateSavedViewSchema,
   updateSubscriptionSchema,
   updateUserRoleSchema,
 } from "../../validation/schemas.js";
@@ -50,6 +53,7 @@ const ingestionService = new IngestionService();
 const streamingService = new StreamingService(ingestionService.events);
 const subscriptionService = new SubscriptionService();
 const issueService = new IssueService();
+const logViewService = new LogViewService();
 
 // 2.6 — Async error wrapper so unhandled rejections go to error middleware
 function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => Promise<unknown>) {
@@ -383,6 +387,128 @@ apiRouter.post(
   }),
 );
 
+apiRouter.get(
+  "/logs/views",
+  asyncHandler(async (req, res) => {
+    try {
+      const userId = await resolveUserId(req);
+      const teamId = String(req.query.teamId ?? "");
+      if (!teamId) {
+        res.status(400).json({ error: "teamId is required" });
+        return;
+      }
+      await resolveTeamRole(userId, teamId);
+      const views = await logViewService.list(teamId, userId);
+      res.json({ views });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    }
+  }),
+);
+
+apiRouter.post(
+  "/logs/views",
+  asyncHandler(async (req, res) => {
+    try {
+      const userId = await resolveUserId(req);
+      const parsed = createSavedViewSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      await resolveTeamRole(userId, parsed.data.teamId);
+      const view = await logViewService.create({
+        teamId: parsed.data.teamId,
+        userId,
+        name: parsed.data.name,
+        isShared: parsed.data.isShared,
+        isDefault: parsed.data.isDefault,
+        definition: parsed.data.definition,
+      });
+      res.status(201).json({ view });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    }
+  }),
+);
+
+apiRouter.put(
+  "/logs/views/:id",
+  asyncHandler(async (req, res) => {
+    try {
+      const userId = await resolveUserId(req);
+      const teamId = String(req.query.teamId ?? req.body?.teamId ?? "");
+      if (!teamId) {
+        res.status(400).json({ error: "teamId is required" });
+        return;
+      }
+      const parsed = updateSavedViewSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const role = await resolveTeamRole(userId, teamId);
+      const view = await logViewService.update(String(req.params.id), {
+        teamId,
+        userId,
+        canManageShared: role === "OWNER" || role === "ADMIN",
+        ...parsed.data,
+      });
+      res.json({ view });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    }
+  }),
+);
+
+apiRouter.post(
+  "/logs/views/:id/duplicate",
+  asyncHandler(async (req, res) => {
+    try {
+      const userId = await resolveUserId(req);
+      const teamId = String(req.body?.teamId ?? "");
+      if (!teamId) {
+        res.status(400).json({ error: "teamId is required" });
+        return;
+      }
+      const name = typeof req.body?.name === "string" ? req.body.name : undefined;
+      const role = await resolveTeamRole(userId, teamId);
+      const view = await logViewService.duplicate(String(req.params.id), {
+        teamId,
+        userId,
+        canManageShared: role === "OWNER" || role === "ADMIN",
+        name,
+      });
+      res.status(201).json({ view });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    }
+  }),
+);
+
+apiRouter.delete(
+  "/logs/views/:id",
+  asyncHandler(async (req, res) => {
+    try {
+      const userId = await resolveUserId(req);
+      const teamId = String(req.query.teamId ?? "");
+      if (!teamId) {
+        res.status(400).json({ error: "teamId is required" });
+        return;
+      }
+      const role = await resolveTeamRole(userId, teamId);
+      await logViewService.remove(String(req.params.id), {
+        teamId,
+        userId,
+        canManageShared: role === "OWNER" || role === "ADMIN",
+      });
+      res.status(204).end();
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    }
+  }),
+);
+
 apiRouter.post(
   "/query/natural",
   asyncHandler(async (req, res) => {
@@ -542,6 +668,19 @@ async function resolveUserId(req: Request): Promise<string> {
     throw new Error("Unauthorized");
   }
   return session.userId;
+}
+
+async function resolveTeamRole(
+  userId: string,
+  teamId: string,
+): Promise<"OWNER" | "ADMIN" | "MEMBER" | "VIEWER"> {
+  const membership = await prisma.teamMember.findUnique({
+    where: { teamId_userId: { teamId, userId } },
+  });
+  if (!membership) {
+    throw new Error("Forbidden");
+  }
+  return membership.role as "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
 }
 
 apiRouter.post(

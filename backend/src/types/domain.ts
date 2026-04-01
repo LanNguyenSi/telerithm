@@ -205,3 +205,30 @@ export interface NLQTranslation {
   explanation: string;
   filtersApplied: LogFilter[];
 }
+
+export interface SavedLogViewDefinition {
+  startTime?: string;
+  endTime?: string;
+  relativeTime?: string;
+  text?: string;
+  sourceId?: string;
+  filters: LogFilter[];
+  columns: string[];
+  sortBy: "timestamp" | "level" | "service" | "host";
+  sortDirection: "asc" | "desc";
+  facets: Array<{ field: string; value: string }>;
+  exclusions: Array<{ field: string; value: string }>;
+  pageSize: number;
+}
+
+export interface SavedLogView {
+  id: string;
+  teamId: string;
+  ownerUserId?: string | null;
+  name: string;
+  isShared: boolean;
+  isDefault: boolean;
+  definition: SavedLogViewDefinition;
+  createdAt: string;
+  updatedAt: string;
+}

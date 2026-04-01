@@ -66,6 +66,14 @@ vi.mock("../../src/repositories/prisma.js", () => {
       create: vi.fn(),
       count: vi.fn().mockResolvedValue(0),
     },
+    logView: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      delete: vi.fn(),
+    },
     alertRule: {
       findMany: vi.fn().mockResolvedValue([]),
     },
@@ -152,6 +160,14 @@ const mockedPrisma = prisma as typeof prisma & {
     findMany: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
+  };
+  logView: {
+    findMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
   };
   issue: {
     findMany: ReturnType<typeof vi.fn>;
@@ -241,6 +257,8 @@ beforeEach(() => {
   });
   mockedPrisma.issue.findMany.mockResolvedValue([]);
   mockedPrisma.issue.count.mockResolvedValue(0);
+  mockedPrisma.logView.findMany.mockResolvedValue([]);
+  mockedPrisma.logView.updateMany.mockResolvedValue({ count: 0 });
 });
 
 describe("API Routes", () => {
@@ -620,6 +638,146 @@ describe("API Routes", () => {
           query: expect.stringContaining("toStartOfInterval(timestamp, INTERVAL 5 MINUTE)"),
         }),
       );
+    });
+  });
+
+  describe("Saved log views API", () => {
+    it("lists saved views for authenticated team member", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.findMany.mockResolvedValueOnce([
+        {
+          id: "view-1",
+          teamId: "t1",
+          ownerUserId: "user-1",
+          name: "Errors",
+          isShared: false,
+          isDefault: true,
+          definition: { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 },
+          createdAt: new Date("2026-03-23T00:00:00.000Z"),
+          updatedAt: new Date("2026-03-23T00:00:00.000Z"),
+        },
+      ]);
+
+      const res = await app.get("/api/v1/logs/views?teamId=t1").set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(200);
+      expect(res.body.views).toHaveLength(1);
+      expect(res.body.views[0].name).toBe("Errors");
+    });
+
+    it("creates a saved view", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.create.mockResolvedValueOnce({
+        id: "view-2",
+        teamId: "t1",
+        ownerUserId: "user-1",
+        name: "Payments",
+        isShared: false,
+        isDefault: false,
+        definition: { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 },
+        createdAt: new Date("2026-03-23T00:00:00.000Z"),
+        updatedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+
+      const res = await app
+        .post("/api/v1/logs/views")
+        .set("Authorization", "Bearer sess_admin")
+        .send({
+          teamId: "t1",
+          name: "Payments",
+          isShared: false,
+          isDefault: false,
+          definition: { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 },
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.view.name).toBe("Payments");
+      expect(mockedPrisma.logView.create).toHaveBeenCalled();
+    });
+
+    it("updates a saved view", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.findUnique.mockResolvedValueOnce({
+        id: "view-3",
+        teamId: "t1",
+        ownerUserId: "user-1",
+        name: "Old name",
+        isShared: false,
+        isDefault: false,
+        definition: { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 },
+        createdAt: new Date("2026-03-23T00:00:00.000Z"),
+        updatedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.update.mockResolvedValueOnce({
+        id: "view-3",
+        teamId: "t1",
+        ownerUserId: "user-1",
+        name: "New name",
+        isShared: false,
+        isDefault: false,
+        definition: { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 },
+        createdAt: new Date("2026-03-23T00:00:00.000Z"),
+        updatedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+
+      const res = await app
+        .put("/api/v1/logs/views/view-3?teamId=t1")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ name: "New name" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.view.name).toBe("New name");
+      expect(mockedPrisma.logView.update).toHaveBeenCalled();
+    });
+
+    it("deletes a saved view", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.findUnique.mockResolvedValueOnce({
+        id: "view-4",
+        teamId: "t1",
+        ownerUserId: "user-1",
+        name: "Delete me",
+        isShared: false,
+        isDefault: false,
+        definition: { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 },
+        createdAt: new Date("2026-03-23T00:00:00.000Z"),
+        updatedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+
+      const res = await app
+        .delete("/api/v1/logs/views/view-4?teamId=t1")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(204);
+      expect(mockedPrisma.logView.delete).toHaveBeenCalledWith({ where: { id: "view-4" } });
     });
   });
 

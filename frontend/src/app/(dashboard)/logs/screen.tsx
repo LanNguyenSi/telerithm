@@ -7,18 +7,31 @@ import { FieldExplorer } from "@/components/logs/field-explorer";
 import { HistogramStrip } from "@/components/logs/histogram-strip";
 import { LiveTail } from "@/components/logs/live-tail";
 import { LogEventDrawer } from "@/components/logs/log-event-drawer";
+import { SavedViewBar } from "@/components/logs/saved-view-bar";
 import { LogTable } from "@/components/logs/log-table";
 import { SearchPanel } from "@/components/logs/search-panel";
 import { Card } from "@/components/ui/card";
 import { SkeletonTable } from "@/components/ui/skeleton";
 import {
+  createSavedLogView,
+  deleteSavedLogView,
+  duplicateSavedLogView,
   getLogContext,
   getLogFacets,
   getLogHistogram,
   getLogs,
   getNaturalExplanation,
+  getSavedLogViews,
+  updateSavedLogView,
 } from "@/lib/api/client";
-import type { LogEntry, LogFacet, LogHistogramBucket, Team } from "@/types";
+import type {
+  LogEntry,
+  LogFacet,
+  LogHistogramBucket,
+  SavedLogView,
+  SavedLogViewDefinition,
+  Team,
+} from "@/types";
 
 const DEFAULT_PAGE_SIZE = 50;
 const ALLOWED_PAGE_SIZES = [25, 50, 100];
@@ -80,7 +93,7 @@ function parseColumns(params: URLSearchParams): string[] {
     .filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
 }
 
-export function LogExplorer({ team }: { team: Team }) {
+export function LogExplorer({ team, token }: { team: Team; token: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -100,9 +113,14 @@ export function LogExplorer({ team }: { team: Team }) {
   const [facetLoading, setFacetLoading] = useState(false);
   const [histogram, setHistogram] = useState<LogHistogramBucket[]>([]);
   const [histogramLoading, setHistogramLoading] = useState(false);
+  const [savedViews, setSavedViews] = useState<SavedLogView[]>([]);
+  const [savedViewsLoading, setSavedViewsLoading] = useState(false);
+  const [savedViewsError, setSavedViewsError] = useState<string | null>(null);
+  const [defaultHydrated, setDefaultHydrated] = useState(false);
   const [fallbackRange] = useState(defaultTimeRange);
 
   const currentQuery = searchParams.get("q")?.trim() ?? "";
+  const currentViewId = searchParams.get("viewId") ?? "";
   const searchParamString = searchParams.toString();
   const currentPage = Math.max(1, Number.parseInt(searchParams.get("page") ?? "1", 10) || 1);
   const rawPageSize =
@@ -161,6 +179,79 @@ export function LogExplorer({ team }: { team: Team }) {
       .sort((left, right) => right.hits - left.hits)
       .slice(0, 20);
   }, [logs]);
+  const currentDefinition = useMemo<SavedLogViewDefinition>(
+    () => ({
+      startTime: currentTimeRange.startTime,
+      endTime: currentTimeRange.endTime,
+      text: currentQuery || undefined,
+      sourceId: currentSourceId || undefined,
+      filters: [
+        ...(currentFilters.level
+          ? [{ field: "level", operator: "eq" as const, value: currentFilters.level }]
+          : []),
+        ...(currentFilters.service
+          ? [{ field: "service", operator: "contains" as const, value: currentFilters.service }]
+          : []),
+        ...(currentFilters.host
+          ? [{ field: "host", operator: "contains" as const, value: currentFilters.host }]
+          : []),
+      ],
+      columns: currentColumns,
+      sortBy: currentSort.sortBy,
+      sortDirection: currentSort.sortDirection,
+      facets: currentFacetSelections,
+      exclusions: currentExclusions,
+      pageSize,
+    }),
+    [
+      currentColumns,
+      currentExclusions,
+      currentFacetSelections,
+      currentFilters.host,
+      currentFilters.level,
+      currentFilters.service,
+      currentQuery,
+      currentSort.sortBy,
+      currentSort.sortDirection,
+      currentSourceId,
+      currentTimeRange.endTime,
+      currentTimeRange.startTime,
+      pageSize,
+    ],
+  );
+  const selectedView = useMemo(
+    () => savedViews.find((view) => view.id === currentViewId) ?? null,
+    [currentViewId, savedViews],
+  );
+  const hasUnsavedChanges = useMemo(() => {
+    if (!selectedView) return false;
+    return JSON.stringify(selectedView.definition) !== JSON.stringify(currentDefinition);
+  }, [currentDefinition, selectedView]);
+
+  useEffect(() => {
+    let active = true;
+    setSavedViewsLoading(true);
+    setSavedViewsError(null);
+
+    void getSavedLogViews(team.id, token)
+      .then((response) => {
+        if (!active) return;
+        setSavedViews(response.views);
+      })
+      .catch((loadError) => {
+        if (!active) return;
+        setSavedViews([]);
+        setSavedViewsError(loadError instanceof Error ? loadError.message : "Could not load saved views");
+      })
+      .finally(() => {
+        if (!active) return;
+        setSavedViewsLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [team.id, token]);
 
   useEffect(() => {
     let active = true;
@@ -281,8 +372,53 @@ export function LogExplorer({ team }: { team: Team }) {
     team.id,
   ]);
 
+  function applySavedView(view: SavedLogView) {
+    updateSearch({
+      query: view.definition.text ?? "",
+      page: 1,
+      pageSize: view.definition.pageSize ?? DEFAULT_PAGE_SIZE,
+      sourceId: view.definition.sourceId ?? "",
+      exclusions: view.definition.exclusions ?? [],
+      facets: view.definition.facets ?? [],
+      columns: view.definition.columns ?? [],
+      startTime: view.definition.startTime ?? fallbackRange.startTime,
+      endTime: view.definition.endTime ?? fallbackRange.endTime,
+      level: String(
+        view.definition.filters.find((item) => item.field === "level" && item.operator === "eq")?.value ?? "",
+      ),
+      service: String(
+        view.definition.filters.find((item) => item.field === "service" && item.operator === "contains")
+          ?.value ?? "",
+      ),
+      host: String(
+        view.definition.filters.find((item) => item.field === "host" && item.operator === "contains")
+          ?.value ?? "",
+      ),
+      sortBy: view.definition.sortBy ?? DEFAULT_SORT.sortBy,
+      sortDirection: view.definition.sortDirection ?? DEFAULT_SORT.sortDirection,
+      viewId: view.id,
+    });
+  }
+
+  useEffect(() => {
+    if (defaultHydrated) return;
+    if (currentViewId) {
+      setDefaultHydrated(true);
+      return;
+    }
+    if (savedViewsLoading) return;
+    const defaultView = savedViews.find((view) => view.isDefault);
+    if (!defaultView) {
+      setDefaultHydrated(true);
+      return;
+    }
+    applySavedView(defaultView);
+    setDefaultHydrated(true);
+  }, [currentViewId, defaultHydrated, savedViews, savedViewsLoading]);
+
   function updateSearch(next: {
     query?: string;
+    viewId?: string;
     page?: number;
     pageSize?: number;
     sourceId?: string;
@@ -299,6 +435,7 @@ export function LogExplorer({ team }: { team: Team }) {
   }) {
     const params = new URLSearchParams(searchParams.toString());
     const query = next.query ?? currentQuery;
+    const viewId = next.viewId ?? currentViewId;
     const page = next.page ?? currentPage;
     const nextPageSize = next.pageSize ?? pageSize;
     const sourceId = next.sourceId ?? currentSourceId;
@@ -315,6 +452,8 @@ export function LogExplorer({ team }: { team: Team }) {
 
     if (query) params.set("q", query);
     else params.delete("q");
+    if (viewId) params.set("viewId", viewId);
+    else params.delete("viewId");
     if (page > 1) params.set("page", String(page));
     else params.delete("page");
     if (nextPageSize !== DEFAULT_PAGE_SIZE) params.set("pageSize", String(nextPageSize));
@@ -404,6 +543,114 @@ export function LogExplorer({ team }: { team: Team }) {
 
   return (
     <div className="space-y-4 lg:space-y-6">
+      <SavedViewBar
+        views={savedViews}
+        selectedId={currentViewId}
+        unsaved={hasUnsavedChanges}
+        loading={savedViewsLoading}
+        onSelect={(id) => {
+          if (!id) {
+            updateSearch({ viewId: "", page: 1 });
+            return;
+          }
+          const view = savedViews.find((item) => item.id === id);
+          if (view) {
+            applySavedView(view);
+          }
+        }}
+        onSave={() => {
+          const defaultName = `View ${new Date().toLocaleString("de-DE")}`;
+          const name = window.prompt("Name der gespeicherten Ansicht", defaultName);
+          if (!name) return;
+          const isShared = window.confirm("Team-weit teilen?");
+          const isDefault = window.confirm("Als Standardansicht setzen?");
+          void createSavedLogView(token, {
+            teamId: team.id,
+            name,
+            isShared,
+            isDefault,
+            definition: currentDefinition,
+          })
+            .then(async ({ view }) => {
+              const { views } = await getSavedLogViews(team.id, token);
+              setSavedViews(views);
+              applySavedView(view);
+            })
+            .catch((saveError) =>
+              setSavedViewsError(saveError instanceof Error ? saveError.message : "Save failed"),
+            );
+        }}
+        onOverwrite={() => {
+          if (!selectedView) return;
+          if (!window.confirm(`Ansicht "${selectedView.name}" überschreiben?`)) return;
+          void updateSavedLogView(selectedView.id, team.id, token, { definition: currentDefinition })
+            .then(async ({ view }) => {
+              const { views } = await getSavedLogViews(team.id, token);
+              setSavedViews(views);
+              applySavedView(view);
+            })
+            .catch((updateError) =>
+              setSavedViewsError(updateError instanceof Error ? updateError.message : "Update failed"),
+            );
+        }}
+        onDuplicate={() => {
+          if (!selectedView) return;
+          const name = window.prompt("Name für Kopie", `${selectedView.name} (copy)`);
+          if (!name) return;
+          void duplicateSavedLogView(selectedView.id, token, { teamId: team.id, name })
+            .then(async ({ view }) => {
+              const { views } = await getSavedLogViews(team.id, token);
+              setSavedViews(views);
+              applySavedView(view);
+            })
+            .catch((duplicateError) =>
+              setSavedViewsError(
+                duplicateError instanceof Error ? duplicateError.message : "Duplicate failed",
+              ),
+            );
+        }}
+        onRename={() => {
+          if (!selectedView) return;
+          const name = window.prompt("Neuer Name", selectedView.name);
+          if (!name) return;
+          void updateSavedLogView(selectedView.id, team.id, token, { name })
+            .then(async ({ view }) => {
+              const { views } = await getSavedLogViews(team.id, token);
+              setSavedViews(views);
+              applySavedView(view);
+            })
+            .catch((renameError) =>
+              setSavedViewsError(renameError instanceof Error ? renameError.message : "Rename failed"),
+            );
+        }}
+        onSetDefault={() => {
+          if (!selectedView) return;
+          void updateSavedLogView(selectedView.id, team.id, token, { isDefault: true })
+            .then(async ({ view }) => {
+              const { views } = await getSavedLogViews(team.id, token);
+              setSavedViews(views);
+              applySavedView(view);
+            })
+            .catch((defaultError) =>
+              setSavedViewsError(defaultError instanceof Error ? defaultError.message : "Set default failed"),
+            );
+        }}
+        onDelete={() => {
+          if (!selectedView) return;
+          if (!window.confirm(`Ansicht "${selectedView.name}" löschen?`)) return;
+          void deleteSavedLogView(selectedView.id, team.id, token)
+            .then(async () => {
+              const { views } = await getSavedLogViews(team.id, token);
+              setSavedViews(views);
+              updateSearch({ viewId: "" });
+            })
+            .catch((deleteError) =>
+              setSavedViewsError(deleteError instanceof Error ? deleteError.message : "Delete failed"),
+            );
+        }}
+      />
+      {savedViewsError ? <p className="text-xs text-rose-700">{savedViewsError}</p> : null}
+
       <SearchPanel
         onSearch={handleSearch}
         sqlPreview={sqlPreview}
