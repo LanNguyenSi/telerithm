@@ -70,6 +70,7 @@ export function SearchPanel({
   const [isPending, setIsPending] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [aiOpen, setAiOpen] = useState(false);
+  const [timeRangeError, setTimeRangeError] = useState<string | null>(null);
 
   useEffect(() => {
     setQuery(currentQuery ?? "");
@@ -88,6 +89,14 @@ export function SearchPanel({
   useEffect(() => {
     setStartTime(currentTimeRange.startTime.slice(0, 16));
     setEndTime(currentTimeRange.endTime.slice(0, 16));
+    // Validate range on load
+    const s = new Date(currentTimeRange.startTime).getTime();
+    const e = new Date(currentTimeRange.endTime).getTime();
+    if (Number.isFinite(s) && Number.isFinite(e) && e - s > 7 * 24 * 60 * 60 * 1000) {
+      setTimeRangeError("Time range cannot exceed 7 days. Please narrow your selection.");
+    } else {
+      setTimeRangeError(null);
+    }
   }, [currentTimeRange.endTime, currentTimeRange.startTime]);
 
   useEffect(() => {
@@ -112,6 +121,13 @@ export function SearchPanel({
       normalizedEnd.getTime() < normalizedStart.getTime()
         ? new Date(normalizedStart.getTime() + 60 * 1000)
         : normalizedEnd;
+
+    const MAX_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+    if (fixedEnd.getTime() - normalizedStart.getTime() > MAX_LOOKBACK_MS) {
+      setTimeRangeError("Time range cannot exceed 7 days. Please narrow your selection.");
+      return;
+    }
+    setTimeRangeError(null);
 
     setQuery(trimmed);
     setIsPending(true);
@@ -192,6 +208,12 @@ export function SearchPanel({
             className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
           />
         </label>
+
+        {timeRangeError ? (
+          <p className="col-span-full text-xs font-medium text-amber-700 dark:text-amber-400">
+            ⚠ {timeRangeError}
+          </p>
+        ) : null}
 
         <label className="text-xs text-muted">
           <span className="mb-0.5 block">Source</span>
