@@ -45,6 +45,7 @@ export const searchSchema = z.object({
   sortDirection: z.enum(["asc", "desc"]).default("desc"),
   limit: z.number().int().min(1).max(500).default(100),
   offset: z.number().int().min(0).default(0),
+  pageToken: z.string().optional(),
 });
 
 const facetFieldSchema = z.enum([
@@ -68,15 +69,18 @@ const searchScopeSchema = searchSchema.omit({
 export const facetsSchema = searchScopeSchema.extend({
   fields: z.array(facetFieldSchema).min(1).max(12).default(["service", "level", "host", "sourceId"]),
   limit: z.number().int().min(1).max(50).default(10),
+  async: z.boolean().default(false),
 });
 
 export const histogramSchema = searchScopeSchema.extend({
   interval: z.enum(["minute", "5m", "15m", "hour", "day"]).default("5m"),
+  async: z.boolean().default(false),
 });
 
 export const patternsSchema = searchScopeSchema.extend({
   groupBy: z.enum(["none", "service", "level", "service_level"]).default("service_level"),
   limit: z.number().int().min(1).max(200).default(50),
+  async: z.boolean().default(false),
 });
 
 export const savedViewDefinitionSchema = z.object({

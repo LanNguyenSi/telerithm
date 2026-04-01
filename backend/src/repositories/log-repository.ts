@@ -75,7 +75,7 @@ export class LogRepository {
     const startedAt = performance.now();
     const { where, params } = this.buildScopedWhere(query);
     const limit = query.limit ?? 100;
-    const offset = query.offset ?? 0;
+    const offset = this.resolveOffset(query);
     const sortFieldMap: Record<NonNullable<LogQuery["sortBy"]>, string> = {
       timestamp: "timestamp",
       level: "level",
@@ -127,9 +127,12 @@ export class LogRepository {
     return {
       logs,
       total,
+      requestId: "",
+      partial: false,
       query: executedQuery,
       executionTimeMs: Math.round((performance.now() - startedAt) * 100) / 100,
       cached: false,
+      nextPageToken: offset + limit < total ? this.encodePageToken(offset + limit) : undefined,
     };
   }
 
@@ -474,5 +477,26 @@ export class LogRepository {
 
   private patternSignatureExpression(): string {
     return patternSignatureSqlExpression("message");
+  }
+
+  private resolveOffset(query: LogQuery): number {
+    if (!query.pageToken) {
+      return query.offset ?? 0;
+    }
+    try {
+      const parsed = JSON.parse(Buffer.from(query.pageToken, "base64url").toString("utf8")) as {
+        offset?: number;
+      };
+      if (typeof parsed.offset === "number" && parsed.offset >= 0) {
+        return parsed.offset;
+      }
+    } catch {
+      /* ignore invalid token and fallback */
+    }
+    return query.offset ?? 0;
+  }
+
+  private encodePageToken(offset: number): string {
+    return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url");
   }
 }

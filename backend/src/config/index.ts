@@ -21,6 +21,13 @@ const configSchema = z.object({
     .or(z.literal(""))
     .transform((v) => (v === "" ? undefined : v)),
   openaiApiKey: z.string().optional(), // Optional: AI query engine falls back to heuristic if not provided
+  maxLookbackMs: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(7 * 24 * 60 * 60 * 1000),
+  maxPageSize: z.coerce.number().int().min(50).max(2000).default(500),
+  maxSyncRuntimeMs: z.coerce.number().int().min(100).max(30_000).default(1500),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -39,6 +46,9 @@ function loadConfig(): Config {
     registrationMode: process.env.REGISTRATION_MODE,
     adminEmail: process.env.ADMIN_EMAIL,
     openaiApiKey: process.env.OPENAI_API_KEY,
+    maxLookbackMs: process.env.MAX_LOOKBACK_MS,
+    maxPageSize: process.env.MAX_PAGE_SIZE,
+    maxSyncRuntimeMs: process.env.MAX_SYNC_RUNTIME_MS,
   });
 
   if (!result.success) {

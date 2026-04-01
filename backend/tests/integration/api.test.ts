@@ -16,6 +16,9 @@ vi.mock("../../src/config/index.js", () => ({
     registrationMode: "approval",
     adminEmail: "admin@test.com",
     openaiApiKey: undefined,
+    maxLookbackMs: 7 * 24 * 60 * 60 * 1000,
+    maxPageSize: 500,
+    maxSyncRuntimeMs: 1500,
   },
 }));
 
@@ -221,6 +224,9 @@ beforeEach(() => {
   mockedConfig.multiTenant = false;
   mockedConfig.registrationMode = "approval";
   mockedConfig.adminEmail = "admin@test.com";
+  mockedConfig.maxPageSize = 500;
+  mockedConfig.maxLookbackMs = 7 * 24 * 60 * 60 * 1000;
+  mockedConfig.maxSyncRuntimeMs = 1500;
 
   mockedPrisma.user.findUnique.mockResolvedValue(null);
   mockedPrisma.user.create.mockResolvedValue(makeUser());
@@ -462,11 +468,37 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body.total).toBe(12);
+      expect(res.body.requestId).toBeTruthy();
+      expect(res.body.partial).toBe(false);
       expect(res.body.logs).toHaveLength(1);
       expect(mockedClickhouse.query).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({
           query_params: expect.objectContaining({ limit: 5, offset: 0 }),
+        }),
+      );
+    });
+
+    it("rejects search limit above configured max page size", async () => {
+      mockedConfig.maxPageSize = 50;
+      const res = await app.post("/api/v1/logs/search").send({ teamId: "t1", limit: 100 });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("limit exceeds maximum");
+    });
+
+    it("accepts opaque page token and maps it to offset", async () => {
+      mockedClickhouse.query
+        .mockResolvedValueOnce(makeClickhouseResult([{ total: "20" }]))
+        .mockResolvedValueOnce(makeClickhouseResult([]));
+
+      const pageToken = Buffer.from(JSON.stringify({ offset: 10 }), "utf8").toString("base64url");
+      const res = await app.post("/api/v1/logs/search").send({ teamId: "t1", limit: 5, pageToken });
+
+      expect(res.status).toBe(200);
+      expect(mockedClickhouse.query).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          query_params: expect.objectContaining({ limit: 5, offset: 10 }),
         }),
       );
     });
@@ -641,6 +673,20 @@ describe("API Routes", () => {
         }),
       );
     });
+
+    it("supports async mode and returns job envelope", async () => {
+      mockedClickhouse.query.mockResolvedValue(makeClickhouseResult([{ value: "api", count: "1" }]));
+
+      const res = await app.post("/api/v1/logs/facets").send({
+        teamId: "t1",
+        fields: ["service"],
+        async: true,
+      });
+
+      expect(res.status).toBe(202);
+      expect(res.body.requestId).toBeTruthy();
+      expect(res.body.status).toBe("pending");
+    });
   });
 
   describe("POST /api/v1/logs/histogram", () => {
@@ -711,6 +757,13 @@ describe("API Routes", () => {
           query_params: expect.objectContaining({ patternLimit: 20 }),
         }),
       );
+    });
+  });
+
+  describe("GET /api/v1/query/jobs/:id", () => {
+    it("returns 404 for unknown job", async () => {
+      const res = await app.get("/api/v1/query/jobs/unknown-job");
+      expect(res.status).toBe(404);
     });
   });
 

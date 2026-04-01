@@ -295,6 +295,14 @@ export const openApiSpec = {
         responses: { 200: { description: "Translated query" } },
       },
     },
+    "/query/jobs/{id}": {
+      get: {
+        summary: "Read async query job status/result",
+        tags: ["Logs"],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: { 200: { description: "Job state" }, 404: { description: "Job not found" } },
+      },
+    },
     "/alerts/rules": {
       get: {
         summary: "List alert rules",
@@ -429,6 +437,7 @@ export const openApiSpec = {
           queryType: { type: "string", enum: ["sql", "natural"], default: "sql" },
           limit: { type: "integer", default: 100, maximum: 500 },
           offset: { type: "integer", default: 0 },
+          pageToken: { type: "string" },
         },
       },
       ContextRequest: {
@@ -642,9 +651,12 @@ export const openApiSpec = {
         properties: {
           logs: { type: "array" },
           total: { type: "integer" },
+          requestId: { type: "string" },
+          partial: { type: "boolean" },
           query: { type: "string" },
           executionTimeMs: { type: "number" },
           cached: { type: "boolean" },
+          nextPageToken: { type: "string" },
         },
       },
       NaturalQueryRequest: {
