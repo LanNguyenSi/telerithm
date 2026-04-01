@@ -1,4 +1,12 @@
-import type { DashboardSummary, LogQuery, LogSearchResult } from "../../types/domain.js";
+import type {
+  DashboardSummary,
+  LogFacetQuery,
+  LogFacetResult,
+  LogHistogramQuery,
+  LogHistogramResult,
+  LogQuery,
+  LogSearchResult,
+} from "../../types/domain.js";
 import { LogRepository } from "../../repositories/log-repository.js";
 import { AIService } from "../ai/ai-service.js";
 import { AlertService } from "../alert/alert-service.js";
@@ -66,6 +74,14 @@ export class QueryService {
     host?: string;
   }) {
     return this.logRepo.getContext(query);
+  }
+
+  async getFacets(query: LogFacetQuery): Promise<LogFacetResult> {
+    return this.logRepo.getFacets(query);
+  }
+
+  async getHistogram(query: LogHistogramQuery): Promise<LogHistogramResult> {
+    return this.logRepo.getHistogram(query);
   }
 
   async getDashboardSummary(teamId: string): Promise<DashboardSummary> {
