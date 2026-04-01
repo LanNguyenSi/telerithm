@@ -48,10 +48,7 @@ export class LogRepository {
   async insert(entries: LogEntry[]): Promise<void> {
     if (entries.length === 0) return;
 
-    // ClickHouse DateTime64(3) does not accept ISO 'Z' suffix — convert to CH format
-    const toChTimestamp = (ts: string): string => {
-      return new Date(ts).toISOString().replace("T", " ").replace("Z", "");
-    };
+    const toChTimestamp = (ts: string): string => this.toChTimestamp(ts);
 
     await clickhouse.insert({
       table: "logs",
@@ -312,7 +309,7 @@ export class LogRepository {
     const params: Record<string, string | number> = {
       teamId: query.teamId,
       sourceId: query.sourceId,
-      ts: query.timestamp,
+      ts: this.toChTimestamp(query.timestamp),
       beforeLimit: query.before,
       afterLimit: query.after,
     };
@@ -428,6 +425,10 @@ export class LogRepository {
     }
   }
 
+  private toChTimestamp(ts: string): string {
+    return new Date(ts).toISOString().replace("T", " ").replace("Z", "");
+  }
+
   private buildScopedWhere(query: {
     teamId: string;
     sourceId?: string;
@@ -446,11 +447,11 @@ export class LogRepository {
     }
     if (query.startTime) {
       conditions.push(`timestamp >= {startTime:String}`);
-      params.startTime = query.startTime;
+      params.startTime = this.toChTimestamp(query.startTime);
     }
     if (query.endTime) {
       conditions.push(`timestamp <= {endTime:String}`);
-      params.endTime = query.endTime;
+      params.endTime = this.toChTimestamp(query.endTime);
     }
 
     if (query.filters) {
