@@ -321,16 +321,18 @@ apiRouter.post(
 apiRouter.get(
   "/logs",
   asyncHandler(async (req, res) => {
-    const parsed = searchSchema.safeParse(withDefaultSearchRange({
-      teamId: req.query.teamId,
-      sourceId: req.query.sourceId,
-      startTime: req.query.startTime,
-      endTime: req.query.endTime,
-      query: req.query.query,
-      queryType: req.query.queryType ?? "sql",
-      limit: req.query.limit ? Number(req.query.limit) : 100,
-      offset: req.query.offset ? Number(req.query.offset) : 0,
-    }));
+    const parsed = searchSchema.safeParse(
+      withDefaultSearchRange({
+        teamId: req.query.teamId,
+        sourceId: req.query.sourceId,
+        startTime: req.query.startTime,
+        endTime: req.query.endTime,
+        query: req.query.query,
+        queryType: req.query.queryType ?? "sql",
+        limit: req.query.limit ? Number(req.query.limit) : 100,
+        offset: req.query.offset ? Number(req.query.offset) : 0,
+      }),
+    );
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
