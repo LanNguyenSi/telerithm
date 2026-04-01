@@ -74,7 +74,13 @@ export const histogramSchema = searchScopeSchema.extend({
   interval: z.enum(["minute", "5m", "15m", "hour", "day"]).default("5m"),
 });
 
+export const patternsSchema = searchScopeSchema.extend({
+  groupBy: z.enum(["none", "service", "level", "service_level"]).default("service_level"),
+  limit: z.number().int().min(1).max(200).default(50),
+});
+
 export const savedViewDefinitionSchema = z.object({
+  mode: z.enum(["raw", "patterns"]).optional(),
   startTime: z.string().datetime().optional(),
   endTime: z.string().datetime().optional(),
   relativeTime: z.string().optional(),

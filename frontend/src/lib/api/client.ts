@@ -6,6 +6,7 @@ import type {
   DashboardOverview,
   LogFacet,
   LogHistogramBucket,
+  LogPattern,
   SavedLogView,
   SavedLogViewDefinition,
   Issue,
@@ -184,6 +185,38 @@ export async function getLogHistogram(
       queryType: options?.query ? "natural" : "sql",
       filters: options?.filters,
       interval: options?.interval ?? "5m",
+    }),
+  });
+}
+
+export async function getLogPatterns(
+  teamId: string,
+  options?: {
+    sourceId?: string;
+    startTime?: string;
+    endTime?: string;
+    query?: string;
+    filters?: Array<{
+      field: string;
+      operator: "eq" | "neq" | "gt" | "lt" | "contains";
+      value: string | number;
+    }>;
+    groupBy?: "none" | "service" | "level" | "service_level";
+    limit?: number;
+  },
+) {
+  return request<{ patterns: LogPattern[] }>("/logs/patterns", {
+    method: "POST",
+    body: JSON.stringify({
+      teamId,
+      sourceId: options?.sourceId || undefined,
+      startTime: options?.startTime || undefined,
+      endTime: options?.endTime || undefined,
+      query: options?.query || undefined,
+      queryType: options?.query ? "natural" : "sql",
+      filters: options?.filters,
+      groupBy: options?.groupBy ?? "service_level",
+      limit: options?.limit ?? 50,
     }),
   });
 }

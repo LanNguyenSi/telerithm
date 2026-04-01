@@ -173,6 +173,22 @@ export const openApiSpec = {
         },
       },
     },
+    "/logs/patterns": {
+      post: {
+        summary: "Fetch grouped log patterns for current search scope",
+        tags: ["Logs"],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/PatternsRequest" } } },
+        },
+        responses: {
+          200: {
+            description: "Pattern groups",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/PatternsResponse" } } },
+          },
+        },
+      },
+    },
     "/logs/views": {
       get: {
         summary: "List saved log views for current user/team",
@@ -512,9 +528,50 @@ export const openApiSpec = {
           },
         },
       },
+      PatternsRequest: {
+        type: "object",
+        required: ["teamId"],
+        properties: {
+          teamId: { type: "string" },
+          sourceId: { type: "string" },
+          startTime: { type: "string", format: "date-time" },
+          endTime: { type: "string", format: "date-time" },
+          query: { type: "string" },
+          queryType: { type: "string", enum: ["sql", "natural"], default: "sql" },
+          filters: { type: "array" },
+          groupBy: {
+            type: "string",
+            enum: ["none", "service", "level", "service_level"],
+            default: "service_level",
+          },
+          limit: { type: "integer", minimum: 1, maximum: 200, default: 50 },
+        },
+      },
+      PatternsResponse: {
+        type: "object",
+        properties: {
+          patterns: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                key: { type: "string" },
+                signature: { type: "string" },
+                sampleMessage: { type: "string" },
+                count: { type: "integer" },
+                latestTimestamp: { type: "string", format: "date-time" },
+                service: { type: "string" },
+                level: { type: "string" },
+                host: { type: "string" },
+              },
+            },
+          },
+        },
+      },
       SavedViewDefinition: {
         type: "object",
         properties: {
+          mode: { type: "string", enum: ["raw", "patterns"] },
           startTime: { type: "string", format: "date-time" },
           endTime: { type: "string", format: "date-time" },
           relativeTime: { type: "string" },

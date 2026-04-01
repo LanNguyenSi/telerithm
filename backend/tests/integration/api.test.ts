@@ -568,6 +568,39 @@ describe("API Routes", () => {
         }),
       );
     });
+
+    it("supports normalized pattern filter", async () => {
+      mockedClickhouse.query
+        .mockResolvedValueOnce(makeClickhouseResult([{ total: "1" }]))
+        .mockResolvedValueOnce(
+          makeClickhouseResult([
+            {
+              team_id: "t1",
+              source_id: "s1",
+              timestamp: "2026-03-23 10:00:00.000",
+              level: "error",
+              service: "payment-api",
+              host: "api-1",
+              message: "Error user 123 failed",
+              fields: {},
+            },
+          ]),
+        );
+
+      const res = await app.post("/api/v1/logs/search").send({
+        teamId: "t1",
+        filters: [{ field: "__pattern", operator: "eq", value: "error <id> failed" }],
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockedClickhouse.query).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          query: expect.stringContaining("replaceRegexpAll("),
+          query_params: expect.objectContaining({ f0: "error <id> failed" }),
+        }),
+      );
+    });
   });
 
   describe("POST /api/v1/logs/facets", () => {
@@ -636,6 +669,46 @@ describe("API Routes", () => {
       expect(mockedClickhouse.query).toHaveBeenCalledWith(
         expect.objectContaining({
           query: expect.stringContaining("toStartOfInterval(timestamp, INTERVAL 5 MINUTE)"),
+        }),
+      );
+    });
+  });
+
+  describe("POST /api/v1/logs/patterns", () => {
+    it("rejects missing teamId", async () => {
+      const res = await app.post("/api/v1/logs/patterns").send({});
+      expect(res.status).toBe(400);
+    });
+
+    it("returns grouped patterns", async () => {
+      mockedClickhouse.query.mockResolvedValueOnce(
+        makeClickhouseResult([
+          {
+            signature: "error user <id> failed",
+            sample_message: "Error user 123 failed",
+            count: "15",
+            latest_timestamp: "2026-03-23 10:05:00",
+            service: "payment-api",
+            level: "error",
+            sample_host: "api-1",
+          },
+        ]),
+      );
+
+      const res = await app.post("/api/v1/logs/patterns").send({
+        teamId: "t1",
+        groupBy: "service_level",
+        limit: 20,
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.patterns).toHaveLength(1);
+      expect(res.body.patterns[0].count).toBe(15);
+      expect(res.body.patterns[0].service).toBe("payment-api");
+      expect(mockedClickhouse.query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: expect.stringContaining("GROUP BY signature, service, level"),
+          query_params: expect.objectContaining({ patternLimit: 20 }),
         }),
       );
     });

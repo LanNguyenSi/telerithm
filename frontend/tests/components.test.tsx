@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { LogTable } from "@/components/logs/log-table";
+import { PatternTable } from "@/components/logs/pattern-table";
 import { IncidentList } from "@/components/alerts/incident-list";
 
 describe("Card", () => {
@@ -97,6 +98,34 @@ describe("LogTable", () => {
   it("renders empty table without errors", () => {
     render(<LogTable logs={[]} />);
     expect(screen.getByText("Time")).toBeInTheDocument();
+  });
+});
+
+describe("PatternTable", () => {
+  it("renders pattern rows and action buttons", () => {
+    render(
+      <PatternTable
+        patterns={[
+          {
+            key: "error|payment|user <id> failed",
+            signature: "user <id> failed",
+            sampleMessage: "User 42 failed",
+            count: 12,
+            latestTimestamp: "2024-06-15T10:30:00.000Z",
+            level: "error",
+            service: "payment",
+            host: "api-1",
+          },
+        ]}
+        onOpenPattern={() => {}}
+        onConvertToFilter={() => {}}
+      />,
+    );
+
+    expect(screen.getByText("Pattern")).toBeInTheDocument();
+    expect(screen.getByText("User 42 failed")).toBeInTheDocument();
+    expect(screen.getByText("Open events")).toBeInTheDocument();
+    expect(screen.getByText("Add as filter")).toBeInTheDocument();
   });
 });
 
