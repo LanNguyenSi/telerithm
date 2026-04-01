@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
+import type { NaturalQueryPlan } from "@/types";
 
 const HISTORY_LIMIT = 5;
 const PRESETS = ["show payment errors", "fatal logs last hour", "warn logs from auth-service"];
@@ -25,7 +26,7 @@ const LEVEL_OPTIONS = [
 
 export function SearchPanel({
   onSearch,
-  sqlPreview,
+  aiPlan,
   currentQuery,
   currentFilters,
   currentTimeRange,
@@ -35,6 +36,8 @@ export function SearchPanel({
   pageSize,
   onRemoveChip,
   onRemoveExclusion,
+  onApplyAiPlan,
+  onDiscardAiPlan,
 }: {
   onSearch: (
     query: string,
@@ -43,7 +46,7 @@ export function SearchPanel({
     sort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" },
     pageSize: number,
   ) => Promise<void>;
-  sqlPreview?: string;
+  aiPlan?: NaturalQueryPlan | null;
   currentQuery?: string;
   currentFilters: { level: string; service: string; host: string };
   currentTimeRange: { startTime: string; endTime: string };
@@ -53,6 +56,8 @@ export function SearchPanel({
   pageSize: number;
   onRemoveChip: (chip: "query" | "level" | "service" | "host" | "source") => void;
   onRemoveExclusion: (index: number) => void;
+  onApplyAiPlan?: (plan: NaturalQueryPlan) => void;
+  onDiscardAiPlan?: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [level, setLevel] = useState("");
@@ -64,7 +69,7 @@ export function SearchPanel({
   const [sortValue, setSortValue] = useState(`${currentSort.sortBy}:${currentSort.sortDirection}`);
   const [isPending, setIsPending] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
-  const [sqlOpen, setSqlOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
 
   useEffect(() => {
     setQuery(currentQuery ?? "");
@@ -99,9 +104,14 @@ export function SearchPanel({
     const now = new Date();
     const safeStart = startTime ? new Date(startTime) : new Date(now.getTime() - 60 * 60 * 1000);
     const safeEnd = endTime ? new Date(endTime) : now;
-    const normalizedStart = Number.isNaN(safeStart.getTime()) ? new Date(now.getTime() - 60 * 60 * 1000) : safeStart;
+    const normalizedStart = Number.isNaN(safeStart.getTime())
+      ? new Date(now.getTime() - 60 * 60 * 1000)
+      : safeStart;
     const normalizedEnd = Number.isNaN(safeEnd.getTime()) ? now : safeEnd;
-    const fixedEnd = normalizedEnd.getTime() < normalizedStart.getTime() ? new Date(normalizedStart.getTime() + 60 * 1000) : normalizedEnd;
+    const fixedEnd =
+      normalizedEnd.getTime() < normalizedStart.getTime()
+        ? new Date(normalizedStart.getTime() + 60 * 1000)
+        : normalizedEnd;
 
     setQuery(trimmed);
     setIsPending(true);
@@ -115,7 +125,7 @@ export function SearchPanel({
       );
       if (trimmed) {
         setHistory((prev) => [trimmed, ...prev.filter((h) => h !== trimmed)].slice(0, HISTORY_LIMIT));
-        setSqlOpen(true);
+        setAiOpen(true);
       }
     } finally {
       setIsPending(false);
@@ -197,11 +207,7 @@ export function SearchPanel({
       <div className="mt-2 grid gap-2 md:grid-cols-4">
         <label className="text-xs text-muted">
           <span className="mb-0.5 block">Level</span>
-          <Select
-            value={level}
-            onChange={setLevel}
-            options={[...LEVEL_OPTIONS]}
-          />
+          <Select value={level} onChange={setLevel} options={[...LEVEL_OPTIONS]} />
         </label>
 
         <label className="text-xs text-muted">
@@ -226,11 +232,7 @@ export function SearchPanel({
 
         <label className="text-xs text-muted">
           <span className="mb-0.5 block">Sort</span>
-          <Select
-            value={sortValue}
-            onChange={setSortValue}
-            options={[...SORT_OPTIONS]}
-          />
+          <Select value={sortValue} onChange={setSortValue} options={[...SORT_OPTIONS]} />
         </label>
       </div>
 
@@ -353,11 +355,11 @@ export function SearchPanel({
         ))}
       </div>
 
-      {sqlPreview && (
+      {aiPlan && (
         <div className="mt-3">
           <button
             type="button"
-            onClick={() => setSqlOpen((v) => !v)}
+            onClick={() => setAiOpen((v) => !v)}
             className="flex items-center gap-2 text-xs text-muted transition hover:text-ink"
           >
             <svg
@@ -370,7 +372,7 @@ export function SearchPanel({
               strokeWidth="2"
               strokeLinecap="round"
               strokeLinejoin="round"
-              className={`transition-transform ${sqlOpen ? "rotate-90" : ""}`}
+              className={`transition-transform ${aiOpen ? "rotate-90" : ""}`}
             >
               <polyline points="9 18 15 12 9 6" />
             </svg>
@@ -379,9 +381,53 @@ export function SearchPanel({
               AI
             </span>
           </button>
-          {sqlOpen && (
-            <div className="mt-2 overflow-x-auto rounded-xl bg-slate-950 p-3 font-mono text-xs text-cyan-200">
-              {sqlPreview}
+          {aiOpen && (
+            <div className="mt-2 space-y-2 rounded-xl bg-slate-950 p-3 text-xs text-cyan-200">
+              <p className="text-cyan-100">{aiPlan.explanation}</p>
+              {aiPlan.textTerms && aiPlan.textTerms.length > 0 ? (
+                <p className="font-mono text-cyan-300">terms: {aiPlan.textTerms.join(", ")}</p>
+              ) : null}
+              {aiPlan.inferredTimeRange ? (
+                <p className="font-mono text-cyan-300">
+                  inferred range: {new Date(aiPlan.inferredTimeRange.startTime).toLocaleString("de-DE")} -{" "}
+                  {new Date(aiPlan.inferredTimeRange.endTime).toLocaleString("de-DE")}
+                </p>
+              ) : null}
+              {aiPlan.filtersApplied.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {aiPlan.filtersApplied.map((filter, index) => (
+                    <span
+                      key={`${filter.field}:${filter.operator}:${String(filter.value)}:${index}`}
+                      className="rounded bg-cyan-900/40 px-2 py-0.5 font-mono text-[11px] text-cyan-200"
+                    >
+                      {filter.field} {filter.operator} {String(filter.value)}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              {aiPlan.warnings && aiPlan.warnings.length > 0 ? (
+                <div className="space-y-1 text-amber-300">
+                  {aiPlan.warnings.map((warning) => (
+                    <p key={warning}>warning: {warning}</p>
+                  ))}
+                </div>
+              ) : null}
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => onApplyAiPlan?.(aiPlan)}
+                  className="rounded border border-cyan-600 px-2 py-1 text-[11px] text-cyan-100 hover:bg-cyan-800/30"
+                >
+                  Apply AI filters
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDiscardAiPlan?.()}
+                  className="rounded border border-slate-600 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800/30"
+                >
+                  Discard plan
+                </button>
+              </div>
             </div>
           )}
         </div>

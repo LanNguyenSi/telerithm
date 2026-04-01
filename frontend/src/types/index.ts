@@ -39,6 +39,18 @@ export interface LogPattern {
   host?: string;
 }
 
+export interface NaturalQueryPlan {
+  explanation: string;
+  inferredTimeRange?: { startTime: string; endTime: string };
+  filtersApplied: Array<{
+    field: string;
+    operator: "eq" | "neq" | "gt" | "lt" | "contains";
+    value: string | number;
+  }>;
+  textTerms?: string[];
+  warnings?: string[];
+}
+
 export interface SavedLogViewDefinition {
   mode?: "raw" | "patterns";
   startTime?: string;

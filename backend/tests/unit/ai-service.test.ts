@@ -51,11 +51,16 @@ describe("AIService", () => {
     });
   });
 
-  it("generates valid SQL with team_id", async () => {
+  it("returns structured plan without SQL passthrough", async () => {
     const result = await service.translateQuery("show errors", "team-abc");
-    expect(result.sql).toContain("team_id = 'team-abc'");
-    expect(result.sql).toContain("ORDER BY timestamp DESC");
-    expect(result.sql).toContain("LIMIT 100");
+    expect(result).not.toHaveProperty("sql");
+    expect(Array.isArray(result.filtersApplied)).toBe(true);
+  });
+
+  it("returns extracted text terms for deterministic search fallback", async () => {
+    const result = await service.translateQuery("show payment errors in checkout service", "team-abc");
+    expect(result.textTerms).toBeDefined();
+    expect(result.textTerms?.length).toBeGreaterThan(0);
   });
 
   it("returns explanation string", async () => {

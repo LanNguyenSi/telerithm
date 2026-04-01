@@ -235,9 +235,11 @@ export interface IngestResponse {
 }
 
 export interface NLQTranslation {
-  sql: string;
   explanation: string;
+  inferredTimeRange?: { startTime: string; endTime: string };
   filtersApplied: LogFilter[];
+  textTerms?: string[];
+  warnings?: string[];
 }
 
 export interface SavedLogViewDefinition {

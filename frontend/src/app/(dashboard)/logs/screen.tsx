@@ -31,6 +31,7 @@ import type {
   LogFacet,
   LogHistogramBucket,
   LogPattern,
+  NaturalQueryPlan,
   SavedLogView,
   SavedLogViewDefinition,
   Team,
@@ -101,7 +102,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [sqlPreview, setSqlPreview] = useState("");
+  const [aiPlan, setAiPlan] = useState<NaturalQueryPlan | null>(null);
   const [execution, setExecution] = useState("");
   const [lastRequestId, setLastRequestId] = useState("");
   const [isPartial, setIsPartial] = useState(false);
@@ -274,7 +275,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
       setHistogramLoading(true);
       setPatternsLoading(true);
       setError(null);
-      setSqlPreview("");
+      setAiPlan(null);
       setExecution("");
       setLastRequestId("");
       setIsPartial(false);
@@ -357,7 +358,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         setLastRequestId(result.requestId);
         setIsPartial(result.partial);
         setNextPageToken(result.nextPageToken);
-        if (explanation?.sql) setSqlPreview(explanation.sql);
+        if (explanation) setAiPlan(explanation);
         setFacets(facetResult.facets);
         setHistogram(histogramResult.buckets);
         setPatterns(patternResult.patterns);
@@ -696,7 +697,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
 
       <SearchPanel
         onSearch={handleSearch}
-        sqlPreview={sqlPreview}
+        aiPlan={aiPlan}
         currentQuery={currentQuery}
         currentFilters={currentFilters}
         currentTimeRange={currentTimeRange}
@@ -729,6 +730,44 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
           const next = currentExclusions.filter((_, idx) => idx !== index);
           updateSearch({ page: 1, exclusions: next });
         }}
+        onApplyAiPlan={(plan) => {
+          const level = String(
+            plan.filtersApplied.find((item) => item.field === "level" && item.operator === "eq")?.value ??
+              currentFilters.level,
+          );
+          const service = String(
+            plan.filtersApplied.find((item) => item.field === "service")?.value ?? currentFilters.service,
+          );
+          const host = String(
+            plan.filtersApplied.find((item) => item.field === "host")?.value ?? currentFilters.host,
+          );
+          const facets = [
+            ...currentFacetSelections,
+            ...plan.filtersApplied
+              .filter(
+                (item) =>
+                  !["level", "service", "host"].includes(item.field) &&
+                  (item.operator === "eq" || item.operator === "contains"),
+              )
+              .map((item) => ({ field: item.field, value: String(item.value) })),
+          ].filter(
+            (item, index, allItems) =>
+              allItems.findIndex(
+                (candidate) => candidate.field === item.field && candidate.value === item.value,
+              ) === index,
+          );
+
+          updateSearch({
+            page: 1,
+            level,
+            service,
+            host,
+            facets,
+            startTime: plan.inferredTimeRange?.startTime ?? currentTimeRange.startTime,
+            endTime: plan.inferredTimeRange?.endTime ?? currentTimeRange.endTime,
+          });
+        }}
+        onDiscardAiPlan={() => setAiPlan(null)}
       />
 
       <Card className="flex flex-wrap items-center justify-between gap-3">
