@@ -117,20 +117,16 @@ function enforceSearchLimits(input: { startTime?: string; endTime?: string; limi
   if (typeof input.limit === "number" && input.limit > config.maxPageSize) {
     return `limit exceeds maximum of ${config.maxPageSize}`;
   }
-  return null;
-}
-
-/** Clamp time range to maxLookbackMs from endTime. Mutates input in-place. */
-function clampSearchRange(input: Record<string, unknown>): void {
-  const startTime = typeof input.startTime === "string" ? input.startTime : undefined;
-  const endTime = typeof input.endTime === "string" ? input.endTime : undefined;
-  if (!startTime || !endTime) return;
-  const start = new Date(startTime).getTime();
-  const end = new Date(endTime).getTime();
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return;
-  if (end - start > config.maxLookbackMs) {
-    input.startTime = new Date(end - config.maxLookbackMs).toISOString();
+  if (input.startTime && input.endTime) {
+    const start = new Date(input.startTime).getTime();
+    const end = new Date(input.endTime).getTime();
+    if (Number.isFinite(start) && Number.isFinite(end) && end >= start) {
+      if (end - start > config.maxLookbackMs) {
+        return `Time range cannot exceed 7 days. Please narrow your selection.`;
+      }
+    }
   }
+  return null;
 }
 
 const SYNC_TIMEOUT = Symbol("sync-timeout");
@@ -349,7 +345,6 @@ apiRouter.post(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
-    clampSearchRange(parsed.data as Record<string, unknown>);
     const limitError = enforceSearchLimits(parsed.data);
     if (limitError) {
       res.status(400).json({ error: limitError });
@@ -380,7 +375,6 @@ apiRouter.get(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
-    clampSearchRange(parsed.data as Record<string, unknown>);
     const limitError = enforceSearchLimits(parsed.data);
     if (limitError) {
       res.status(400).json({ error: limitError });
@@ -412,7 +406,6 @@ apiRouter.post(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
-    clampSearchRange(parsed.data as Record<string, unknown>);
     const limitError = enforceSearchLimits(parsed.data);
     if (limitError) {
       res.status(400).json({ error: limitError });
@@ -446,7 +439,6 @@ apiRouter.post(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
-    clampSearchRange(parsed.data as Record<string, unknown>);
     const limitError = enforceSearchLimits(parsed.data);
     if (limitError) {
       res.status(400).json({ error: limitError });
@@ -480,7 +472,6 @@ apiRouter.post(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
-    clampSearchRange(parsed.data as Record<string, unknown>);
     const limitError = enforceSearchLimits(parsed.data);
     if (limitError) {
       res.status(400).json({ error: limitError });
