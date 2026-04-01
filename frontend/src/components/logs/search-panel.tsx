@@ -28,25 +28,39 @@ export function SearchPanel({
   sqlPreview,
   currentQuery,
   currentFilters,
+  currentTimeRange,
+  currentSourceId,
+  currentExclusions,
   currentSort,
   pageSize,
+  onRemoveChip,
+  onRemoveExclusion,
 }: {
   onSearch: (
     query: string,
-    filters: { level: string; service: string; host: string },
+    filters: { level: string; service: string; host: string; sourceId: string },
+    timeRange: { startTime: string; endTime: string },
     sort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" },
     pageSize: number,
   ) => Promise<void>;
   sqlPreview?: string;
   currentQuery?: string;
   currentFilters: { level: string; service: string; host: string };
+  currentTimeRange: { startTime: string; endTime: string };
+  currentSourceId: string;
+  currentExclusions: Array<{ field: string; value: string }>;
   currentSort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" };
   pageSize: number;
+  onRemoveChip: (chip: "query" | "level" | "service" | "host" | "source") => void;
+  onRemoveExclusion: (index: number) => void;
 }) {
   const [query, setQuery] = useState("");
   const [level, setLevel] = useState("");
   const [service, setService] = useState("");
   const [host, setHost] = useState("");
+  const [sourceId, setSourceId] = useState("");
+  const [startTime, setStartTime] = useState("");
+  const [endTime, setEndTime] = useState("");
   const [sortValue, setSortValue] = useState(`${currentSort.sortBy}:${currentSort.sortDirection}`);
   const [isPending, setIsPending] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
@@ -63,6 +77,15 @@ export function SearchPanel({
   }, [currentFilters.host, currentFilters.level, currentFilters.service]);
 
   useEffect(() => {
+    setSourceId(currentSourceId);
+  }, [currentSourceId]);
+
+  useEffect(() => {
+    setStartTime(currentTimeRange.startTime.slice(0, 16));
+    setEndTime(currentTimeRange.endTime.slice(0, 16));
+  }, [currentTimeRange.endTime, currentTimeRange.startTime]);
+
+  useEffect(() => {
     setSortValue(`${currentSort.sortBy}:${currentSort.sortDirection}`);
   }, [currentSort.sortBy, currentSort.sortDirection]);
 
@@ -73,12 +96,20 @@ export function SearchPanel({
       "asc" | "desc",
     ];
 
+    const now = new Date();
+    const safeStart = startTime ? new Date(startTime) : new Date(now.getTime() - 60 * 60 * 1000);
+    const safeEnd = endTime ? new Date(endTime) : now;
+    const normalizedStart = Number.isNaN(safeStart.getTime()) ? new Date(now.getTime() - 60 * 60 * 1000) : safeStart;
+    const normalizedEnd = Number.isNaN(safeEnd.getTime()) ? now : safeEnd;
+    const fixedEnd = normalizedEnd.getTime() < normalizedStart.getTime() ? new Date(normalizedStart.getTime() + 60 * 1000) : normalizedEnd;
+
     setQuery(trimmed);
     setIsPending(true);
     try {
       await onSearch(
         trimmed,
-        { level, service: service.trim(), host: host.trim() },
+        { level, service: service.trim(), host: host.trim(), sourceId: sourceId.trim() },
+        { startTime: normalizedStart.toISOString(), endTime: fixedEnd.toISOString() },
         { sortBy, sortDirection },
         pageSize,
       );
@@ -93,7 +124,7 @@ export function SearchPanel({
 
   return (
     <Card>
-      <p className="text-xs uppercase tracking-[0.2em] text-muted">Natural Language Search</p>
+      <p className="text-xs uppercase tracking-[0.2em] text-muted">Log Query</p>
 
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:gap-3">
         <div className="relative flex-1">
@@ -117,7 +148,7 @@ export function SearchPanel({
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-signal [animation-delay:150ms]" />
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-signal [animation-delay:300ms]" />
               </span>
-              <span className="text-xs text-signal">AI generating SQL...</span>
+              <span className="text-xs text-signal">AI interpreting query...</span>
             </div>
           )}
         </div>
@@ -131,7 +162,39 @@ export function SearchPanel({
         </button>
       </div>
 
-      <div className="mt-3 grid gap-2 md:grid-cols-4">
+      <div className="mt-3 grid gap-2 md:grid-cols-3">
+        <label className="text-xs text-muted">
+          <span className="mb-0.5 block">Start</span>
+          <input
+            type="datetime-local"
+            value={startTime}
+            onChange={(event) => setStartTime(event.target.value)}
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+          />
+        </label>
+
+        <label className="text-xs text-muted">
+          <span className="mb-0.5 block">End</span>
+          <input
+            type="datetime-local"
+            value={endTime}
+            onChange={(event) => setEndTime(event.target.value)}
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+          />
+        </label>
+
+        <label className="text-xs text-muted">
+          <span className="mb-0.5 block">Source</span>
+          <input
+            value={sourceId}
+            onChange={(event) => setSourceId(event.target.value)}
+            placeholder="source-id"
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+          />
+        </label>
+      </div>
+
+      <div className="mt-2 grid gap-2 md:grid-cols-4">
         <label className="text-xs text-muted">
           <span className="mb-0.5 block">Level</span>
           <Select
@@ -178,10 +241,18 @@ export function SearchPanel({
             setLevel("");
             setService("");
             setHost("");
+            setSourceId("");
             setSortValue("timestamp:desc");
+            const now = new Date();
+            const start = new Date(now.getTime() - 60 * 60 * 1000);
+            const nextStart = start.toISOString().slice(0, 16);
+            const nextEnd = now.toISOString().slice(0, 16);
+            setStartTime(nextStart);
+            setEndTime(nextEnd);
             void onSearch(
               "",
-              { level: "", service: "", host: "" },
+              { level: "", service: "", host: "", sourceId: "" },
+              { startTime: new Date(nextStart).toISOString(), endTime: new Date(nextEnd).toISOString() },
               { sortBy: "timestamp", sortDirection: "desc" },
               pageSize,
             );
@@ -224,6 +295,64 @@ export function SearchPanel({
         </div>
       )}
 
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {query && (
+          <button
+            type="button"
+            onClick={() => onRemoveChip("query")}
+            className="rounded-full border border-line bg-white/70 px-3 py-1 text-xs text-ink transition hover:border-slate-400 dark:bg-white/5"
+          >
+            q:{query} x
+          </button>
+        )}
+        {level && (
+          <button
+            type="button"
+            onClick={() => onRemoveChip("level")}
+            className="rounded-full border border-line bg-white/70 px-3 py-1 text-xs text-ink transition hover:border-slate-400 dark:bg-white/5"
+          >
+            level:{level} x
+          </button>
+        )}
+        {service && (
+          <button
+            type="button"
+            onClick={() => onRemoveChip("service")}
+            className="rounded-full border border-line bg-white/70 px-3 py-1 text-xs text-ink transition hover:border-slate-400 dark:bg-white/5"
+          >
+            service:{service} x
+          </button>
+        )}
+        {host && (
+          <button
+            type="button"
+            onClick={() => onRemoveChip("host")}
+            className="rounded-full border border-line bg-white/70 px-3 py-1 text-xs text-ink transition hover:border-slate-400 dark:bg-white/5"
+          >
+            host:{host} x
+          </button>
+        )}
+        {sourceId && (
+          <button
+            type="button"
+            onClick={() => onRemoveChip("source")}
+            className="rounded-full border border-line bg-white/70 px-3 py-1 text-xs text-ink transition hover:border-slate-400 dark:bg-white/5"
+          >
+            source:{sourceId} x
+          </button>
+        )}
+        {currentExclusions.map((exclusion, index) => (
+          <button
+            key={`${exclusion.field}:${exclusion.value}:${index}`}
+            type="button"
+            onClick={() => onRemoveExclusion(index)}
+            className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs text-rose-700 transition hover:border-rose-300 dark:border-rose-900/40 dark:bg-rose-900/20 dark:text-rose-200"
+          >
+            exclude {exclusion.field}:{exclusion.value} x
+          </button>
+        ))}
+      </div>
+
       {sqlPreview && (
         <div className="mt-3">
           <button
@@ -245,7 +374,7 @@ export function SearchPanel({
             >
               <polyline points="9 18 15 12 9 6" />
             </svg>
-            <span>Generated SQL</span>
+            <span>AI interpretation</span>
             <span className="rounded bg-cyan-100 px-1.5 py-0.5 font-mono text-[10px] text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
               AI
             </span>

@@ -55,6 +55,19 @@ export class QueryService {
     return await this.aiService.translateQuery(naturalQuery, teamId);
   }
 
+  async getContext(query: {
+    teamId: string;
+    sourceId: string;
+    timestamp: string;
+    before: number;
+    after: number;
+    scope: "source" | "service" | "host";
+    service?: string;
+    host?: string;
+  }) {
+    return this.logRepo.getContext(query);
+  }
+
   async getDashboardSummary(teamId: string): Promise<DashboardSummary> {
     const cacheKey = `dashboard:overview:${teamId}`;
     const cached = await cache.get<DashboardSummary>(cacheKey);

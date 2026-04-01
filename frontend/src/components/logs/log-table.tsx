@@ -16,6 +16,8 @@ export function LogTable({
   total = logs.length,
   onPageChange,
   onPageSizeChange,
+  selectedLogId,
+  onSelectLog,
 }: {
   logs: LogEntry[];
   page?: number;
@@ -23,6 +25,8 @@ export function LogTable({
   total?: number;
   onPageChange?: (page: number) => void;
   onPageSizeChange?: (pageSize: number) => void;
+  selectedLogId?: string;
+  onSelectLog?: (log: LogEntry) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -62,6 +66,7 @@ export function LogTable({
                       key={log.id}
                       className={clsx(
                         "border-b border-line/80 bg-white/70 dark:bg-white/5",
+                        selectedLogId === log.id && "bg-cyan-50/70 dark:bg-cyan-900/20",
                         isLong && "cursor-pointer hover:bg-white/90 dark:hover:bg-white/10",
                       )}
                       onClick={isLong ? () => toggle(log.id) : undefined}
@@ -93,6 +98,18 @@ export function LogTable({
                         ) : (
                           <span className="whitespace-pre-wrap break-all">{msg}</span>
                         )}
+                        <div className="mt-1.5">
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onSelectLog?.(log);
+                            }}
+                            className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted transition hover:text-ink"
+                          >
+                            details
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -140,6 +157,15 @@ export function LogTable({
                   {decodeHtml(log.service)}
                 </span>
                 <span className="font-mono">{decodeHtml(log.host)}</span>
+              </div>
+              <div className="mt-2">
+                <button
+                  type="button"
+                  onClick={() => onSelectLog?.(log)}
+                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted transition hover:text-ink"
+                >
+                  details
+                </button>
               </div>
             </article>
           );

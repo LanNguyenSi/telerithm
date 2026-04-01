@@ -69,6 +69,9 @@ export async function getSources(teamId: string) {
 export async function getLogs(
   teamId: string,
   options?: {
+    sourceId?: string;
+    startTime?: string;
+    endTime?: string;
     query?: string;
     filters?: Array<{
       field: string;
@@ -91,6 +94,9 @@ export async function getLogs(
     method: "POST",
     body: JSON.stringify({
       teamId,
+      sourceId: options?.sourceId || undefined,
+      startTime: options?.startTime || undefined,
+      endTime: options?.endTime || undefined,
       query: options?.query || undefined,
       queryType: options?.query ? "natural" : "sql",
       filters: options?.filters,
@@ -110,6 +116,34 @@ export async function getNaturalExplanation(teamId: string, query: string) {
   }>("/query/natural", {
     method: "POST",
     body: JSON.stringify({ teamId, query }),
+  });
+}
+
+export async function getLogContext(options: {
+  teamId: string;
+  sourceId: string;
+  timestamp: string;
+  before?: number;
+  after?: number;
+  scope?: "source" | "service" | "host";
+  service?: string;
+  host?: string;
+}) {
+  return request<{
+    before: LogEntry[];
+    after: LogEntry[];
+  }>("/logs/context", {
+    method: "POST",
+    body: JSON.stringify({
+      teamId: options.teamId,
+      sourceId: options.sourceId,
+      timestamp: options.timestamp,
+      before: options.before ?? 20,
+      after: options.after ?? 20,
+      scope: options.scope ?? "source",
+      service: options.service,
+      host: options.host,
+    }),
   });
 }
 
@@ -205,6 +239,21 @@ export async function removeAdminUserFromTeam(userId: string, teamId: string, to
   });
 }
 
-export function streamLogs(teamId: string) {
-  return new EventSource(`${getApiBaseUrl()}/stream/logs?teamId=${teamId}`);
+export function streamLogs(
+  teamId: string,
+  filters?: {
+    sourceId?: string;
+    service?: string;
+    host?: string;
+    level?: string;
+    query?: string;
+  },
+) {
+  const params = new URLSearchParams({ teamId });
+  if (filters?.sourceId) params.set("sourceId", filters.sourceId);
+  if (filters?.service) params.set("service", filters.service);
+  if (filters?.host) params.set("host", filters.host);
+  if (filters?.level) params.set("level", filters.level);
+  if (filters?.query) params.set("query", filters.query);
+  return new EventSource(`${getApiBaseUrl()}/stream/logs?${params.toString()}`);
 }

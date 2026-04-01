@@ -125,6 +125,22 @@ export const openApiSpec = {
         },
       },
     },
+    "/logs/context": {
+      post: {
+        summary: "Fetch surrounding events around an anchor log",
+        tags: ["Logs"],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/ContextRequest" } } },
+        },
+        responses: {
+          200: {
+            description: "Context events",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/ContextResponse" } } },
+          },
+        },
+      },
+    },
     "/logs": {
       get: {
         summary: "Query logs via GET",
@@ -178,7 +194,14 @@ export const openApiSpec = {
       get: {
         summary: "Server-Sent Events log stream",
         tags: ["Streaming"],
-        parameters: [{ name: "teamId", in: "query", required: true, schema: { type: "string" } }],
+        parameters: [
+          { name: "teamId", in: "query", required: true, schema: { type: "string" } },
+          { name: "sourceId", in: "query", schema: { type: "string" } },
+          { name: "service", in: "query", schema: { type: "string" } },
+          { name: "host", in: "query", schema: { type: "string" } },
+          { name: "level", in: "query", schema: { type: "string" } },
+          { name: "query", in: "query", schema: { type: "string" } },
+        ],
         responses: { 200: { description: "SSE stream", content: { "text/event-stream": {} } } },
       },
     },
@@ -270,10 +293,34 @@ export const openApiSpec = {
         required: ["teamId"],
         properties: {
           teamId: { type: "string" },
+          sourceId: { type: "string" },
+          startTime: { type: "string", format: "date-time" },
+          endTime: { type: "string", format: "date-time" },
           query: { type: "string" },
           queryType: { type: "string", enum: ["sql", "natural"], default: "sql" },
           limit: { type: "integer", default: 100, maximum: 500 },
           offset: { type: "integer", default: 0 },
+        },
+      },
+      ContextRequest: {
+        type: "object",
+        required: ["teamId", "sourceId", "timestamp"],
+        properties: {
+          teamId: { type: "string" },
+          sourceId: { type: "string" },
+          timestamp: { type: "string", format: "date-time" },
+          before: { type: "integer", default: 20, minimum: 1, maximum: 100 },
+          after: { type: "integer", default: 20, minimum: 1, maximum: 100 },
+          scope: { type: "string", enum: ["source", "service", "host"], default: "source" },
+          service: { type: "string" },
+          host: { type: "string" },
+        },
+      },
+      ContextResponse: {
+        type: "object",
+        properties: {
+          before: { type: "array" },
+          after: { type: "array" },
         },
       },
       SearchResponse: {

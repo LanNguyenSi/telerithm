@@ -47,6 +47,17 @@ export const searchSchema = z.object({
   offset: z.number().int().min(0).default(0),
 });
 
+export const contextSchema = z.object({
+  teamId: z.string().min(1),
+  sourceId: z.string().min(1),
+  timestamp: z.string().datetime(),
+  before: z.number().int().min(1).max(100).default(20),
+  after: z.number().int().min(1).max(100).default(20),
+  scope: z.enum(["source", "service", "host"]).default("source"),
+  service: z.string().optional(),
+  host: z.string().optional(),
+});
+
 export const naturalQuerySchema = z.object({
   teamId: z.string().min(1),
   query: z.string().min(3),
