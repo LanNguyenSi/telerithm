@@ -4,6 +4,8 @@ import type {
   LogFacetResult,
   LogHistogramQuery,
   LogHistogramResult,
+  LogPatternsQuery,
+  LogPatternsResult,
   LogQuery,
   LogSearchResult,
 } from "../../types/domain.js";
@@ -82,6 +84,10 @@ export class QueryService {
 
   async getHistogram(query: LogHistogramQuery): Promise<LogHistogramResult> {
     return this.logRepo.getHistogram(query);
+  }
+
+  async getPatterns(query: LogPatternsQuery): Promise<LogPatternsResult> {
+    return this.logRepo.getPatterns(query);
   }
 
   async getDashboardSummary(teamId: string): Promise<DashboardSummary> {

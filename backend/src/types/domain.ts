@@ -90,6 +90,33 @@ export interface LogHistogramResult {
   buckets: HistogramBucket[];
 }
 
+export interface LogPattern {
+  key: string;
+  signature: string;
+  sampleMessage: string;
+  count: number;
+  latestTimestamp: string;
+  level?: string;
+  service?: string;
+  host?: string;
+}
+
+export interface LogPatternsQuery {
+  teamId: string;
+  sourceId?: string;
+  startTime?: string;
+  endTime?: string;
+  query?: string;
+  queryType: QueryType;
+  filters?: LogFilter[];
+  groupBy?: "none" | "service" | "level" | "service_level";
+  limit?: number;
+}
+
+export interface LogPatternsResult {
+  patterns: LogPattern[];
+}
+
 export interface User {
   id: string;
   email: string;
@@ -207,6 +234,7 @@ export interface NLQTranslation {
 }
 
 export interface SavedLogViewDefinition {
+  mode?: "raw" | "patterns";
   startTime?: string;
   endTime?: string;
   relativeTime?: string;

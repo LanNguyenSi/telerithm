@@ -29,6 +29,7 @@ import {
   contextSchema,
   facetsSchema,
   histogramSchema,
+  patternsSchema,
   updateSavedViewSchema,
   updateSubscriptionSchema,
   updateUserRoleSchema,
@@ -383,6 +384,19 @@ apiRouter.post(
       return;
     }
     const result = await queryService.getHistogram(parsed.data);
+    res.json(result);
+  }),
+);
+
+apiRouter.post(
+  "/logs/patterns",
+  asyncHandler(async (req, res) => {
+    const parsed = patternsSchema.safeParse(withDefaultSearchRange(req.body));
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const result = await queryService.getPatterns(parsed.data);
     res.json(result);
   }),
 );

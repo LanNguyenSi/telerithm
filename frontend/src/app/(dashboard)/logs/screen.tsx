@@ -7,6 +7,7 @@ import { FieldExplorer } from "@/components/logs/field-explorer";
 import { HistogramStrip } from "@/components/logs/histogram-strip";
 import { LiveTail } from "@/components/logs/live-tail";
 import { LogEventDrawer } from "@/components/logs/log-event-drawer";
+import { PatternTable } from "@/components/logs/pattern-table";
 import { SavedViewBar } from "@/components/logs/saved-view-bar";
 import { LogTable } from "@/components/logs/log-table";
 import { SearchPanel } from "@/components/logs/search-panel";
@@ -19,6 +20,7 @@ import {
   getLogContext,
   getLogFacets,
   getLogHistogram,
+  getLogPatterns,
   getLogs,
   getNaturalExplanation,
   getSavedLogViews,
@@ -28,6 +30,7 @@ import type {
   LogEntry,
   LogFacet,
   LogHistogramBucket,
+  LogPattern,
   SavedLogView,
   SavedLogViewDefinition,
   Team,
@@ -113,6 +116,8 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   const [facetLoading, setFacetLoading] = useState(false);
   const [histogram, setHistogram] = useState<LogHistogramBucket[]>([]);
   const [histogramLoading, setHistogramLoading] = useState(false);
+  const [patterns, setPatterns] = useState<LogPattern[]>([]);
+  const [patternsLoading, setPatternsLoading] = useState(false);
   const [savedViews, setSavedViews] = useState<SavedLogView[]>([]);
   const [savedViewsLoading, setSavedViewsLoading] = useState(false);
   const [savedViewsError, setSavedViewsError] = useState<string | null>(null);
@@ -120,6 +125,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   const [fallbackRange] = useState(defaultTimeRange);
 
   const currentQuery = searchParams.get("q")?.trim() ?? "";
+  const currentMode = searchParams.get("mode") === "patterns" ? "patterns" : "raw";
   const currentViewId = searchParams.get("viewId") ?? "";
   const searchParamString = searchParams.toString();
   const currentPage = Math.max(1, Number.parseInt(searchParams.get("page") ?? "1", 10) || 1);
@@ -181,6 +187,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   }, [logs]);
   const currentDefinition = useMemo<SavedLogViewDefinition>(
     () => ({
+      mode: currentMode,
       startTime: currentTimeRange.startTime,
       endTime: currentTimeRange.endTime,
       text: currentQuery || undefined,
@@ -210,6 +217,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
       currentFilters.host,
       currentFilters.level,
       currentFilters.service,
+      currentMode,
       currentQuery,
       currentSort.sortBy,
       currentSort.sortDirection,
@@ -260,6 +268,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
       setLoading(true);
       setFacetLoading(true);
       setHistogramLoading(true);
+      setPatternsLoading(true);
       setError(null);
       setSqlPreview("");
       setExecution("");
@@ -290,7 +299,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
           (item): item is { field: string; operator: "eq" | "contains" | "neq"; value: string } =>
             item !== null,
         );
-        const [explanation, result, facetResult, histogramResult] = await Promise.all([
+        const [explanation, result, facetResult, histogramResult, patternResult] = await Promise.all([
           currentQuery
             ? getNaturalExplanation(team.id, currentQuery).catch(() => null)
             : Promise.resolve(null),
@@ -322,6 +331,15 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
             filters,
             interval: "5m",
           }),
+          getLogPatterns(team.id, {
+            sourceId: currentSourceId || undefined,
+            startTime: currentTimeRange.startTime,
+            endTime: currentTimeRange.endTime,
+            query: currentQuery || undefined,
+            filters,
+            groupBy: "service_level",
+            limit: 50,
+          }),
         ]);
 
         if (!active) return;
@@ -332,6 +350,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         if (explanation?.sql) setSqlPreview(explanation.sql);
         setFacets(facetResult.facets);
         setHistogram(histogramResult.buckets);
+        setPatterns(patternResult.patterns);
       } catch (loadError) {
         if (active) {
           setError(loadError instanceof Error ? loadError.message : "Could not load logs");
@@ -339,12 +358,14 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
           setTotal(0);
           setFacets([]);
           setHistogram([]);
+          setPatterns([]);
         }
       } finally {
         if (active) {
           setLoading(false);
           setFacetLoading(false);
           setHistogramLoading(false);
+          setPatternsLoading(false);
         }
       }
     }
@@ -375,6 +396,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   function applySavedView(view: SavedLogView) {
     updateSearch({
       query: view.definition.text ?? "",
+      mode: view.definition.mode ?? "raw",
       page: 1,
       pageSize: view.definition.pageSize ?? DEFAULT_PAGE_SIZE,
       sourceId: view.definition.sourceId ?? "",
@@ -418,6 +440,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
 
   function updateSearch(next: {
     query?: string;
+    mode?: "raw" | "patterns";
     viewId?: string;
     page?: number;
     pageSize?: number;
@@ -435,6 +458,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   }) {
     const params = new URLSearchParams(searchParams.toString());
     const query = next.query ?? currentQuery;
+    const mode = next.mode ?? currentMode;
     const viewId = next.viewId ?? currentViewId;
     const page = next.page ?? currentPage;
     const nextPageSize = next.pageSize ?? pageSize;
@@ -452,6 +476,8 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
 
     if (query) params.set("q", query);
     else params.delete("q");
+    if (mode === "patterns") params.set("mode", "patterns");
+    else params.delete("mode");
     if (viewId) params.set("viewId", viewId);
     else params.delete("viewId");
     if (page > 1) params.set("page", String(page));
@@ -723,6 +749,34 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         ) : null}
       </Card>
 
+      <Card className="flex items-center justify-between gap-3">
+        <p className="text-xs uppercase tracking-[0.16em] text-muted">View Mode</p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => updateSearch({ mode: "raw", page: 1 })}
+            className={`rounded-md px-3 py-1 text-xs ${
+              currentMode === "raw"
+                ? "bg-slate-950 text-white"
+                : "border border-line text-ink hover:bg-slate-900/5 dark:hover:bg-white/5"
+            }`}
+          >
+            Raw events
+          </button>
+          <button
+            type="button"
+            onClick={() => updateSearch({ mode: "patterns", page: 1 })}
+            className={`rounded-md px-3 py-1 text-xs ${
+              currentMode === "patterns"
+                ? "bg-slate-950 text-white"
+                : "border border-line text-ink hover:bg-slate-900/5 dark:hover:bg-white/5"
+            }`}
+          >
+            Patterns
+          </button>
+        </div>
+      </Card>
+
       <HistogramStrip
         buckets={histogram}
         loading={histogramLoading}
@@ -789,17 +843,45 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
               </div>
             </Card>
           ) : !loading ? (
-            <LogTable
-              logs={logs}
-              extraColumns={currentColumns}
-              page={currentPage}
-              pageSize={pageSize}
-              total={total}
-              selectedLogId={selectedLog?.id}
-              onSelectLog={(log) => setSelectedLog(log)}
-              onPageChange={(page) => updateSearch({ page })}
-              onPageSizeChange={(nextPageSize) => updateSearch({ page: 1, pageSize: nextPageSize })}
-            />
+            currentMode === "patterns" ? (
+              patterns.length === 0 ? (
+                <Card>
+                  <div className="py-10 text-center text-sm text-muted">
+                    {patternsLoading ? "Loading patterns..." : "No patterns found for current scope."}
+                  </div>
+                </Card>
+              ) : (
+                <PatternTable
+                  patterns={patterns}
+                  onOpenPattern={(pattern) => {
+                    const next = [
+                      ...currentFacetSelections.filter((item) => item.field !== "__pattern"),
+                      { field: "__pattern", value: pattern.signature },
+                    ];
+                    updateSearch({ mode: "raw", page: 1, facets: next });
+                  }}
+                  onConvertToFilter={(pattern) => {
+                    const next = [
+                      ...currentFacetSelections.filter((item) => item.field !== "__pattern"),
+                      { field: "__pattern", value: pattern.signature },
+                    ];
+                    updateSearch({ page: 1, facets: next });
+                  }}
+                />
+              )
+            ) : (
+              <LogTable
+                logs={logs}
+                extraColumns={currentColumns}
+                page={currentPage}
+                pageSize={pageSize}
+                total={total}
+                selectedLogId={selectedLog?.id}
+                onSelectLog={(log) => setSelectedLog(log)}
+                onPageChange={(page) => updateSearch({ page })}
+                onPageSizeChange={(nextPageSize) => updateSearch({ page: 1, pageSize: nextPageSize })}
+              />
+            )
           ) : null}
         </div>
 
@@ -819,7 +901,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         />
       </div>
 
-      <LiveTail teamId={team.id} />
+      {currentMode === "raw" ? <LiveTail teamId={team.id} /> : null}
       <LogEventDrawer
         log={selectedLog}
         contextBefore={contextLoading ? [] : contextBefore}

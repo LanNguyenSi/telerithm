@@ -6,10 +6,14 @@ import type {
   LogFilter,
   LogHistogramQuery,
   LogHistogramResult,
+  LogPattern,
+  LogPatternsQuery,
+  LogPatternsResult,
   LogQuery,
   LogSearchResult,
 } from "../types/domain.js";
 import { createChildLogger } from "../logger.js";
+import { patternSignatureSqlExpression } from "../services/query/pattern-normalizer.js";
 
 const log = createChildLogger("log-repository");
 const SEARCHABLE_COLUMNS = new Set(["level", "service", "host", "message"]);
@@ -187,6 +191,72 @@ export class LogRepository {
     };
   }
 
+  async getPatterns(query: LogPatternsQuery): Promise<LogPatternsResult> {
+    const { where, params } = this.buildScopedWhere(query);
+    const limit = query.limit ?? 50;
+    const groupBy = query.groupBy ?? "service_level";
+    const signatureExpr = this.patternSignatureExpression();
+
+    const groupFields: string[] = ["signature"];
+    const selectFields: string[] = [
+      `${signatureExpr} as signature`,
+      "any(message) as sample_message",
+      "count() as count",
+      "max(timestamp) as latest_timestamp",
+      "any(host) as sample_host",
+    ];
+
+    if (groupBy === "service" || groupBy === "service_level") {
+      groupFields.push("service");
+      selectFields.push("service");
+    } else {
+      selectFields.push("'' as service");
+    }
+
+    if (groupBy === "level" || groupBy === "service_level") {
+      groupFields.push("level");
+      selectFields.push("level");
+    } else {
+      selectFields.push("'' as level");
+    }
+
+    const sql = `SELECT ${selectFields.join(", ")} FROM logs WHERE ${where} GROUP BY ${groupFields.join(", ")} ORDER BY count DESC, latest_timestamp DESC LIMIT {patternLimit:UInt32}`;
+    const result = await clickhouse.query({
+      query: sql,
+      query_params: { ...params, patternLimit: limit },
+      format: "JSONEachRow",
+    });
+
+    const rows = await result.json<{
+      signature: string;
+      sample_message: string;
+      count: string;
+      latest_timestamp: string;
+      service: string;
+      level: string;
+      sample_host: string;
+    }>();
+
+    const patterns: LogPattern[] = rows.map((row) => {
+      const keyParts = [row.signature];
+      if (row.service) keyParts.unshift(row.service);
+      if (row.level) keyParts.unshift(row.level);
+
+      return {
+        key: keyParts.join("|"),
+        signature: row.signature,
+        sampleMessage: row.sample_message,
+        count: Number(row.count),
+        latestTimestamp: this.toIsoTimestamp(row.latest_timestamp),
+        service: row.service || undefined,
+        level: row.level || undefined,
+        host: row.sample_host || undefined,
+      };
+    });
+
+    return { patterns };
+  }
+
   async getStats(teamId: string): Promise<{
     totalLogs: number;
     errorRate: number;
@@ -321,6 +391,19 @@ export class LogRepository {
     params: Record<string, string | number>,
   ): string | null {
     const paramName = `f${index}`;
+    if (filter.field === "__pattern") {
+      const signatureColumn = this.patternSignatureExpression();
+      if (filter.operator === "eq" || filter.operator === "neq") {
+        params[paramName] = String(filter.value).toLowerCase();
+        return `${signatureColumn} ${filter.operator === "eq" ? "=" : "!="} {${paramName}:String}`;
+      }
+      if (filter.operator === "contains") {
+        params[paramName] = `%${String(filter.value).toLowerCase()}%`;
+        return `${signatureColumn} ILIKE {${paramName}:String}`;
+      }
+      return null;
+    }
+
     const column = SEARCHABLE_COLUMNS.has(filter.field) ? filter.field : `fields['${filter.field}']`;
 
     params[paramName] = filter.value;
@@ -387,5 +470,9 @@ export class LogRepository {
   private toIsoTimestamp(value: string): string {
     const normalized = value.includes("T") ? value : value.replace(" ", "T");
     return new Date(normalized.endsWith("Z") ? normalized : `${normalized}Z`).toISOString();
+  }
+
+  private patternSignatureExpression(): string {
+    return patternSignatureSqlExpression("message");
   }
 }

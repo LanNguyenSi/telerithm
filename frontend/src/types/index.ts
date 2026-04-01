@@ -28,7 +28,19 @@ export interface LogHistogramBucket {
   count: number;
 }
 
+export interface LogPattern {
+  key: string;
+  signature: string;
+  sampleMessage: string;
+  count: number;
+  latestTimestamp: string;
+  service?: string;
+  level?: string;
+  host?: string;
+}
+
 export interface SavedLogViewDefinition {
+  mode?: "raw" | "patterns";
   startTime?: string;
   endTime?: string;
   relativeTime?: string;
