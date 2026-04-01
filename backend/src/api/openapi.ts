@@ -141,6 +141,38 @@ export const openApiSpec = {
         },
       },
     },
+    "/logs/facets": {
+      post: {
+        summary: "Fetch top-value facets for the current search scope",
+        tags: ["Logs"],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/FacetsRequest" } } },
+        },
+        responses: {
+          200: {
+            description: "Facet values and counts",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/FacetsResponse" } } },
+          },
+        },
+      },
+    },
+    "/logs/histogram": {
+      post: {
+        summary: "Fetch log volume histogram for the current search scope",
+        tags: ["Logs"],
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { $ref: "#/components/schemas/HistogramRequest" } } },
+        },
+        responses: {
+          200: {
+            description: "Histogram buckets",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/HistogramResponse" } } },
+          },
+        },
+      },
+    },
     "/logs": {
       get: {
         summary: "Query logs via GET",
@@ -321,6 +353,82 @@ export const openApiSpec = {
         properties: {
           before: { type: "array" },
           after: { type: "array" },
+        },
+      },
+      FacetsRequest: {
+        type: "object",
+        required: ["teamId"],
+        properties: {
+          teamId: { type: "string" },
+          sourceId: { type: "string" },
+          startTime: { type: "string", format: "date-time" },
+          endTime: { type: "string", format: "date-time" },
+          query: { type: "string" },
+          queryType: { type: "string", enum: ["sql", "natural"], default: "sql" },
+          filters: { type: "array" },
+          fields: {
+            type: "array",
+            items: {
+              type: "string",
+              enum: ["service", "level", "host", "sourceId", "env", "region", "status_code", "route"],
+            },
+          },
+          limit: { type: "integer", minimum: 1, maximum: 50, default: 10 },
+        },
+      },
+      FacetsResponse: {
+        type: "object",
+        properties: {
+          facets: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                field: { type: "string" },
+                buckets: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      value: { type: "string" },
+                      count: { type: "integer" },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      HistogramRequest: {
+        type: "object",
+        required: ["teamId"],
+        properties: {
+          teamId: { type: "string" },
+          sourceId: { type: "string" },
+          startTime: { type: "string", format: "date-time" },
+          endTime: { type: "string", format: "date-time" },
+          query: { type: "string" },
+          queryType: { type: "string", enum: ["sql", "natural"], default: "sql" },
+          filters: { type: "array" },
+          interval: { type: "string", enum: ["minute", "5m", "15m", "hour", "day"], default: "5m" },
+        },
+      },
+      HistogramResponse: {
+        type: "object",
+        properties: {
+          interval: { type: "string" },
+          buckets: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                start: { type: "string", format: "date-time" },
+                end: { type: "string", format: "date-time" },
+                count: { type: "integer" },
+              },
+            },
+          },
         },
       },
       SearchResponse: {

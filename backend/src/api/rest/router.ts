@@ -25,6 +25,8 @@ import {
   registerSchema,
   searchSchema,
   contextSchema,
+  facetsSchema,
+  histogramSchema,
   updateSubscriptionSchema,
   updateUserRoleSchema,
 } from "../../validation/schemas.js";
@@ -351,6 +353,32 @@ apiRouter.post(
       return;
     }
     const result = await queryService.getContext(parsed.data);
+    res.json(result);
+  }),
+);
+
+apiRouter.post(
+  "/logs/facets",
+  asyncHandler(async (req, res) => {
+    const parsed = facetsSchema.safeParse(withDefaultSearchRange(req.body));
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const result = await queryService.getFacets(parsed.data);
+    res.json(result);
+  }),
+);
+
+apiRouter.post(
+  "/logs/histogram",
+  asyncHandler(async (req, res) => {
+    const parsed = histogramSchema.safeParse(withDefaultSearchRange(req.body));
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const result = await queryService.getHistogram(parsed.data);
     res.json(result);
   }),
 );

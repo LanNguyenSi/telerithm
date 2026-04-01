@@ -552,6 +552,77 @@ describe("API Routes", () => {
     });
   });
 
+  describe("POST /api/v1/logs/facets", () => {
+    it("rejects missing teamId", async () => {
+      const res = await app.post("/api/v1/logs/facets").send({});
+      expect(res.status).toBe(400);
+    });
+
+    it("returns facet buckets for requested fields", async () => {
+      mockedClickhouse.query
+        .mockResolvedValueOnce(
+          makeClickhouseResult([
+            { value: "payment-api", count: "7" },
+            { value: "billing-api", count: "4" },
+          ]),
+        )
+        .mockResolvedValueOnce(
+          makeClickhouseResult([
+            { value: "error", count: "6" },
+            { value: "warn", count: "3" },
+          ]),
+        );
+
+      const res = await app.post("/api/v1/logs/facets").send({
+        teamId: "t1",
+        fields: ["service", "level"],
+        limit: 5,
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.facets).toHaveLength(2);
+      expect(res.body.facets[0].field).toBe("service");
+      expect(res.body.facets[0].buckets[0]).toEqual({ value: "payment-api", count: 7 });
+      expect(mockedClickhouse.query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: expect.stringContaining("GROUP BY value"),
+          query_params: expect.objectContaining({ facetLimit: 5 }),
+        }),
+      );
+    });
+  });
+
+  describe("POST /api/v1/logs/histogram", () => {
+    it("rejects missing teamId", async () => {
+      const res = await app.post("/api/v1/logs/histogram").send({});
+      expect(res.status).toBe(400);
+    });
+
+    it("returns histogram buckets", async () => {
+      mockedClickhouse.query.mockResolvedValueOnce(
+        makeClickhouseResult([
+          { bucket_start: "2026-03-23 10:00:00", count: "10" },
+          { bucket_start: "2026-03-23 10:05:00", count: "6" },
+        ]),
+      );
+
+      const res = await app.post("/api/v1/logs/histogram").send({
+        teamId: "t1",
+        interval: "5m",
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.interval).toBe("5m");
+      expect(res.body.buckets).toHaveLength(2);
+      expect(res.body.buckets[0].count).toBe(10);
+      expect(mockedClickhouse.query).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: expect.stringContaining("toStartOfInterval(timestamp, INTERVAL 5 MINUTE)"),
+        }),
+      );
+    });
+  });
+
   describe("GET /api/v1/alerts/rules", () => {
     it("rejects missing teamId", async () => {
       const res = await app.get("/api/v1/alerts/rules");

@@ -12,6 +12,22 @@ export interface LogEntry {
   fields: Record<string, string | number | boolean>;
 }
 
+export interface FacetBucket {
+  value: string;
+  count: number;
+}
+
+export interface LogFacet {
+  field: string;
+  buckets: FacetBucket[];
+}
+
+export interface LogHistogramBucket {
+  start: string;
+  end: string;
+  count: number;
+}
+
 export interface DashboardOverview {
   teamId: string;
   totalLogs: number;

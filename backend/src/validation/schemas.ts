@@ -47,6 +47,33 @@ export const searchSchema = z.object({
   offset: z.number().int().min(0).default(0),
 });
 
+const facetFieldSchema = z.enum([
+  "service",
+  "level",
+  "host",
+  "sourceId",
+  "env",
+  "region",
+  "status_code",
+  "route",
+]);
+
+const searchScopeSchema = searchSchema.omit({
+  sortBy: true,
+  sortDirection: true,
+  limit: true,
+  offset: true,
+});
+
+export const facetsSchema = searchScopeSchema.extend({
+  fields: z.array(facetFieldSchema).min(1).max(12).default(["service", "level", "host", "sourceId"]),
+  limit: z.number().int().min(1).max(50).default(10),
+});
+
+export const histogramSchema = searchScopeSchema.extend({
+  interval: z.enum(["minute", "5m", "15m", "hour", "day"]).default("5m"),
+});
+
 export const contextSchema = z.object({
   teamId: z.string().min(1),
   sourceId: z.string().min(1),

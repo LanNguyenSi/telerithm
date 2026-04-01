@@ -11,6 +11,7 @@ const MAX_MSG_LENGTH = 120;
 
 export function LogTable({
   logs,
+  extraColumns = [],
   page = 1,
   pageSize = 50,
   total = logs.length,
@@ -20,6 +21,7 @@ export function LogTable({
   onSelectLog,
 }: {
   logs: LogEntry[];
+  extraColumns?: string[];
   page?: number;
   pageSize?: number;
   total?: number;
@@ -52,6 +54,11 @@ export function LogTable({
                   <th className="px-3 py-2.5">Level</th>
                   <th className="px-3 py-2.5">Service</th>
                   <th className="px-3 py-2.5">Host</th>
+                  {extraColumns.map((column) => (
+                    <th key={column} className="px-3 py-2.5">
+                      {column}
+                    </th>
+                  ))}
                   <th className="px-3 py-2.5">Message</th>
                 </tr>
               </thead>
@@ -88,6 +95,14 @@ export function LogTable({
                       <td className="px-3 py-1.5 font-mono text-xs text-muted align-top">
                         {decodeHtml(log.host)}
                       </td>
+                      {extraColumns.map((column) => (
+                        <td
+                          key={`${log.id}:${column}`}
+                          className="px-3 py-1.5 font-mono text-xs text-muted align-top"
+                        >
+                          {String(log.fields[column] ?? "-")}
+                        </td>
+                      ))}
                       <td className="max-w-xl px-3 py-1.5 text-xs text-ink align-top">
                         {isLong && !isOpen ? (
                           <span>
@@ -157,6 +172,14 @@ export function LogTable({
                   {decodeHtml(log.service)}
                 </span>
                 <span className="font-mono">{decodeHtml(log.host)}</span>
+                {extraColumns.map((column) => (
+                  <span
+                    key={`${log.id}-mobile-${column}`}
+                    className="rounded bg-slate-900/5 px-1.5 py-0.5 font-mono dark:bg-white/5"
+                  >
+                    {column}={String(log.fields[column] ?? "-")}
+                  </span>
+                ))}
               </div>
               <div className="mt-2">
                 <button

@@ -42,6 +42,54 @@ export interface LogSearchResult {
   cached: boolean;
 }
 
+export interface FacetBucket {
+  value: string;
+  count: number;
+}
+
+export interface LogFacet {
+  field: string;
+  buckets: FacetBucket[];
+}
+
+export interface LogFacetQuery {
+  teamId: string;
+  sourceId?: string;
+  startTime?: string;
+  endTime?: string;
+  query?: string;
+  queryType: QueryType;
+  filters?: LogFilter[];
+  fields?: string[];
+  limit?: number;
+}
+
+export interface LogFacetResult {
+  facets: LogFacet[];
+}
+
+export interface HistogramBucket {
+  start: string;
+  end: string;
+  count: number;
+}
+
+export interface LogHistogramQuery {
+  teamId: string;
+  sourceId?: string;
+  startTime?: string;
+  endTime?: string;
+  query?: string;
+  queryType: QueryType;
+  filters?: LogFilter[];
+  interval: "minute" | "5m" | "15m" | "hour" | "day";
+}
+
+export interface LogHistogramResult {
+  interval: LogHistogramQuery["interval"];
+  buckets: HistogramBucket[];
+}
+
 export interface User {
   id: string;
   email: string;

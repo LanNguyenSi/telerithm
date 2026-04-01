@@ -10,7 +10,7 @@
 | 020 | Phase 1 | Query Foundation and Time Range | Planned |
 | 021 | Phase 1 | Event Detail Drawer and Context Navigation | Planned |
 | 022 | Phase 1 | Live Tail Separation and Stream Safety | Planned |
-| 023 | Phase 2 | Facets, Histogram, and Field Explorer | Planned |
+| 023 | Phase 2 | Facets, Histogram, and Field Explorer | Done |
 | 024 | Phase 2 | Saved Views and Shared Searches | Planned |
 | 025 | Phase 3 | Patterns, Grouping, and Noise Reduction | Planned |
 | 026 | Phase 3 | Query Engine Hardening, Cursors, and Async Search | Planned |

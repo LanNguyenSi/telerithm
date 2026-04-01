@@ -1,8 +1,44 @@
 import { clickhouse } from "./clickhouse.js";
-import type { LogEntry, LogFilter, LogQuery, LogSearchResult } from "../types/domain.js";
+import type {
+  LogEntry,
+  LogFacet,
+  LogFacetQuery,
+  LogFilter,
+  LogHistogramQuery,
+  LogHistogramResult,
+  LogQuery,
+  LogSearchResult,
+} from "../types/domain.js";
 import { createChildLogger } from "../logger.js";
 
 const log = createChildLogger("log-repository");
+const SEARCHABLE_COLUMNS = new Set(["level", "service", "host", "message"]);
+const FACET_FIELD_REGISTRY: Record<string, string> = {
+  service: "service",
+  level: "level",
+  host: "host",
+  sourceId: "source_id",
+  env: "fields['env']",
+  region: "fields['region']",
+  status_code: "fields['status_code']",
+  route: "fields['route']",
+};
+
+const HISTOGRAM_INTERVAL_SQL: Record<LogHistogramQuery["interval"], string> = {
+  minute: "INTERVAL 1 MINUTE",
+  "5m": "INTERVAL 5 MINUTE",
+  "15m": "INTERVAL 15 MINUTE",
+  hour: "INTERVAL 1 HOUR",
+  day: "INTERVAL 1 DAY",
+};
+
+const HISTOGRAM_INTERVAL_MS: Record<LogHistogramQuery["interval"], number> = {
+  minute: 60_000,
+  "5m": 5 * 60_000,
+  "15m": 15 * 60_000,
+  hour: 60 * 60_000,
+  day: 24 * 60 * 60_000,
+};
 
 export class LogRepository {
   async insert(entries: LogEntry[]): Promise<void> {
@@ -33,37 +69,7 @@ export class LogRepository {
 
   async search(query: LogQuery): Promise<LogSearchResult> {
     const startedAt = performance.now();
-    const conditions: string[] = [`team_id = {teamId:String}`];
-    const params: Record<string, string | number> = { teamId: query.teamId };
-
-    if (query.sourceId) {
-      conditions.push(`source_id = {sourceId:String}`);
-      params.sourceId = query.sourceId;
-    }
-    if (query.startTime) {
-      conditions.push(`timestamp >= {startTime:String}`);
-      params.startTime = query.startTime;
-    }
-    if (query.endTime) {
-      conditions.push(`timestamp <= {endTime:String}`);
-      params.endTime = query.endTime;
-    }
-
-    if (query.filters) {
-      query.filters.forEach((filter, i) => {
-        const cond = this.buildFilterCondition(filter, i, params);
-        if (cond) conditions.push(cond);
-      });
-    }
-
-    if (query.query && query.queryType === "sql") {
-      conditions.push(
-        `(message ILIKE {searchTerm:String} OR service ILIKE {searchTerm:String} OR host ILIKE {searchTerm:String})`,
-      );
-      params.searchTerm = `%${query.query}%`;
-    }
-
-    const where = conditions.join(" AND ");
+    const { where, params } = this.buildScopedWhere(query);
     const limit = query.limit ?? 100;
     const offset = query.offset ?? 0;
     const sortFieldMap: Record<NonNullable<LogQuery["sortBy"]>, string> = {
@@ -120,6 +126,64 @@ export class LogRepository {
       query: executedQuery,
       executionTimeMs: Math.round((performance.now() - startedAt) * 100) / 100,
       cached: false,
+    };
+  }
+
+  async getFacets(query: LogFacetQuery): Promise<{ facets: LogFacet[] }> {
+    const requestedFields = (query.fields ?? ["service", "level", "host", "sourceId"]).filter(
+      (field, index, allFields) => allFields.indexOf(field) === index && field in FACET_FIELD_REGISTRY,
+    );
+    if (requestedFields.length === 0) {
+      return { facets: [] };
+    }
+
+    const facetLimit = query.limit ?? 10;
+    const { where, params } = this.buildScopedWhere(query);
+
+    const facets = await Promise.all(
+      requestedFields.map(async (field) => {
+        const expression = FACET_FIELD_REGISTRY[field];
+        const sql = `SELECT toString(${expression}) as value, count() as count FROM logs WHERE ${where} AND lengthUTF8(toString(${expression})) > 0 GROUP BY value ORDER BY count DESC LIMIT {facetLimit:UInt32}`;
+        const result = await clickhouse.query({
+          query: sql,
+          query_params: { ...params, facetLimit },
+          format: "JSONEachRow",
+        });
+        const rows = await result.json<{ value: string; count: string }>();
+
+        return {
+          field,
+          buckets: rows.map((row) => ({ value: row.value, count: Number(row.count) })),
+        } satisfies LogFacet;
+      }),
+    );
+
+    return { facets };
+  }
+
+  async getHistogram(query: LogHistogramQuery): Promise<LogHistogramResult> {
+    const { where, params } = this.buildScopedWhere(query);
+    const intervalSql = HISTOGRAM_INTERVAL_SQL[query.interval];
+    const bucketMs = HISTOGRAM_INTERVAL_MS[query.interval];
+    const sql = `SELECT toStartOfInterval(timestamp, ${intervalSql}) as bucket_start, count() as count FROM logs WHERE ${where} GROUP BY bucket_start ORDER BY bucket_start ASC`;
+    const result = await clickhouse.query({
+      query: sql,
+      query_params: params,
+      format: "JSONEachRow",
+    });
+
+    const rows = await result.json<{ bucket_start: string; count: string }>();
+    return {
+      interval: query.interval,
+      buckets: rows.map((row) => {
+        const startIso = this.toIsoTimestamp(row.bucket_start);
+        const endIso = new Date(new Date(startIso).getTime() + bucketMs).toISOString();
+        return {
+          start: startIso,
+          end: endIso,
+          count: Number(row.count),
+        };
+      }),
     };
   }
 
@@ -257,8 +321,7 @@ export class LogRepository {
     params: Record<string, string | number>,
   ): string | null {
     const paramName = `f${index}`;
-    const columnFields = ["level", "service", "host", "message"];
-    const column = columnFields.includes(filter.field) ? filter.field : `fields['${filter.field}']`;
+    const column = SEARCHABLE_COLUMNS.has(filter.field) ? filter.field : `fields['${filter.field}']`;
 
     params[paramName] = filter.value;
 
@@ -277,5 +340,52 @@ export class LogRepository {
       default:
         return null;
     }
+  }
+
+  private buildScopedWhere(query: {
+    teamId: string;
+    sourceId?: string;
+    startTime?: string;
+    endTime?: string;
+    query?: string;
+    queryType: "sql" | "natural";
+    filters?: LogFilter[];
+  }): { where: string; params: Record<string, string | number> } {
+    const conditions: string[] = [`team_id = {teamId:String}`];
+    const params: Record<string, string | number> = { teamId: query.teamId };
+
+    if (query.sourceId) {
+      conditions.push(`source_id = {sourceId:String}`);
+      params.sourceId = query.sourceId;
+    }
+    if (query.startTime) {
+      conditions.push(`timestamp >= {startTime:String}`);
+      params.startTime = query.startTime;
+    }
+    if (query.endTime) {
+      conditions.push(`timestamp <= {endTime:String}`);
+      params.endTime = query.endTime;
+    }
+
+    if (query.filters) {
+      query.filters.forEach((filter, i) => {
+        const cond = this.buildFilterCondition(filter, i, params);
+        if (cond) conditions.push(cond);
+      });
+    }
+
+    if (query.query && query.queryType === "sql") {
+      conditions.push(
+        `(message ILIKE {searchTerm:String} OR service ILIKE {searchTerm:String} OR host ILIKE {searchTerm:String})`,
+      );
+      params.searchTerm = `%${query.query}%`;
+    }
+
+    return { where: conditions.join(" AND "), params };
+  }
+
+  private toIsoTimestamp(value: string): string {
+    const normalized = value.includes("T") ? value : value.replace(" ", "T");
+    return new Date(normalized.endsWith("Z") ? normalized : `${normalized}Z`).toISOString();
   }
 }

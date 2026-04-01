@@ -4,6 +4,8 @@ import type {
   AlertRule,
   AlertSubscription,
   DashboardOverview,
+  LogFacet,
+  LogHistogramBucket,
   Issue,
   LogEntry,
   SessionUser,
@@ -116,6 +118,71 @@ export async function getNaturalExplanation(teamId: string, query: string) {
   }>("/query/natural", {
     method: "POST",
     body: JSON.stringify({ teamId, query }),
+  });
+}
+
+export async function getLogFacets(
+  teamId: string,
+  options?: {
+    sourceId?: string;
+    startTime?: string;
+    endTime?: string;
+    query?: string;
+    filters?: Array<{
+      field: string;
+      operator: "eq" | "neq" | "gt" | "lt" | "contains";
+      value: string | number;
+    }>;
+    fields?: Array<"service" | "level" | "host" | "sourceId" | "env" | "region" | "status_code" | "route">;
+    limit?: number;
+  },
+) {
+  return request<{ facets: LogFacet[] }>("/logs/facets", {
+    method: "POST",
+    body: JSON.stringify({
+      teamId,
+      sourceId: options?.sourceId || undefined,
+      startTime: options?.startTime || undefined,
+      endTime: options?.endTime || undefined,
+      query: options?.query || undefined,
+      queryType: options?.query ? "natural" : "sql",
+      filters: options?.filters,
+      fields: options?.fields,
+      limit: options?.limit ?? 10,
+    }),
+  });
+}
+
+export async function getLogHistogram(
+  teamId: string,
+  options?: {
+    sourceId?: string;
+    startTime?: string;
+    endTime?: string;
+    query?: string;
+    filters?: Array<{
+      field: string;
+      operator: "eq" | "neq" | "gt" | "lt" | "contains";
+      value: string | number;
+    }>;
+    interval?: "minute" | "5m" | "15m" | "hour" | "day";
+  },
+) {
+  return request<{
+    interval: "minute" | "5m" | "15m" | "hour" | "day";
+    buckets: LogHistogramBucket[];
+  }>("/logs/histogram", {
+    method: "POST",
+    body: JSON.stringify({
+      teamId,
+      sourceId: options?.sourceId || undefined,
+      startTime: options?.startTime || undefined,
+      endTime: options?.endTime || undefined,
+      query: options?.query || undefined,
+      queryType: options?.query ? "natural" : "sql",
+      filters: options?.filters,
+      interval: options?.interval ?? "5m",
+    }),
   });
 }
 
