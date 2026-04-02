@@ -503,13 +503,16 @@ export class LogRepository {
 
   async findById(teamId: string, compositeId: string): Promise<LogEntry | null> {
     // Composite ID format: team_id:source_id:timestamp
+    // Note: timestamp contains colons (e.g. 2026-04-01 16:48:11.370)
+    // So we split on first two colons only
     const firstColon = compositeId.indexOf(":");
-    const lastColon = compositeId.lastIndexOf(":");
-    if (firstColon === -1 || lastColon === firstColon) return null;
+    if (firstColon === -1) return null;
+    const secondColon = compositeId.indexOf(":", firstColon + 1);
+    if (secondColon === -1) return null;
 
     const idTeamId = compositeId.slice(0, firstColon);
-    const sourceId = compositeId.slice(firstColon + 1, lastColon);
-    const timestamp = compositeId.slice(lastColon + 1);
+    const sourceId = compositeId.slice(firstColon + 1, secondColon);
+    const timestamp = compositeId.slice(secondColon + 1);
 
     if (idTeamId !== teamId) return null;
 
