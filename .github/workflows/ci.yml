@@ -76,9 +76,9 @@ jobs:
         working-directory: backend
         run: npx prettier --check src/
 
-      - name: Unit & Integration tests
+      - name: Unit & Integration tests with coverage
         working-directory: backend
-        run: npm test
+        run: npm run test:coverage -- --coverage.reporter=json-summary --coverage.thresholds.lines=80 --coverage.thresholds.statements=80 --coverage.thresholds.functions=80 --coverage.thresholds.branches=80
 
   frontend:
     name: Frontend
@@ -101,9 +101,9 @@ jobs:
         working-directory: frontend
         run: npx tsc --noEmit
 
-      - name: Tests
+      - name: Tests with coverage
         working-directory: frontend
-        run: npx vitest run
+        run: npx vitest run --coverage --coverage.reporter=json-summary --coverage.thresholds.lines=70 --coverage.thresholds.statements=70
 
       - name: Build
         working-directory: frontend
