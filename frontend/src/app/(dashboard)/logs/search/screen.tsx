@@ -64,6 +64,7 @@ export function SearchScreen() {
     currentTimeMode,
     currentRelativeDuration,
     currentRefresh,
+    currentShareAbsoluteTime,
     currentSort,
     currentDefinition,
     fallbackRange,
@@ -346,12 +347,23 @@ export function SearchScreen() {
     query: string,
     filters: { level: string; service: string; host: string; sourceId: string },
     timeRange: { startTime: string; endTime: string },
-    timeSelection: { mode: TimeMode; relativeDuration: RelativeDuration; refresh: RefreshInterval },
+    timeSelection: {
+      mode: TimeMode;
+      relativeDuration: RelativeDuration;
+      refresh: RefreshInterval;
+      shareAbsoluteTime: boolean;
+    },
     sort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" },
     nextPageSize: number,
   ) {
     const timeUpdate =
-      timeSelection.mode === "abs" ? { startTime: timeRange.startTime, endTime: timeRange.endTime } : {};
+      timeSelection.mode === "abs"
+        ? {
+            startTime: timeRange.startTime,
+            endTime: timeRange.endTime,
+            shareAbsoluteTime: timeSelection.shareAbsoluteTime,
+          }
+        : { shareAbsoluteTime: false };
     updateSearch({
       query: query.trim(),
       page: 1,
@@ -496,6 +508,7 @@ export function SearchScreen() {
         currentTimeMode={currentTimeMode}
         currentRelativeDuration={currentRelativeDuration}
         currentRefresh={currentRefresh}
+        currentShareAbsoluteTime={currentShareAbsoluteTime}
         currentSourceId={currentSourceId}
         currentExclusions={currentExclusions}
         currentSort={currentSort}

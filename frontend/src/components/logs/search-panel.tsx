@@ -57,6 +57,7 @@ export function SearchPanel({
   currentTimeMode,
   currentRelativeDuration,
   currentRefresh,
+  currentShareAbsoluteTime,
   currentSourceId,
   currentExclusions,
   currentSort,
@@ -70,7 +71,12 @@ export function SearchPanel({
     query: string,
     filters: { level: string; service: string; host: string; sourceId: string },
     timeRange: { startTime: string; endTime: string },
-    timeSelection: { mode: TimeMode; relativeDuration: RelativeDuration; refresh: RefreshInterval },
+    timeSelection: {
+      mode: TimeMode;
+      relativeDuration: RelativeDuration;
+      refresh: RefreshInterval;
+      shareAbsoluteTime: boolean;
+    },
     sort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" },
     pageSize: number,
   ) => Promise<void>;
@@ -81,6 +87,7 @@ export function SearchPanel({
   currentTimeMode: TimeMode;
   currentRelativeDuration: RelativeDuration;
   currentRefresh: RefreshInterval;
+  currentShareAbsoluteTime: boolean;
   currentSourceId: string;
   currentExclusions: Array<{ field: string; value: string }>;
   currentSort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" };
@@ -100,6 +107,7 @@ export function SearchPanel({
   const [timeMode, setTimeMode] = useState<TimeMode>("rel");
   const [relativeDuration, setRelativeDuration] = useState<RelativeDuration>("1h");
   const [refresh, setRefresh] = useState<RefreshInterval>("off");
+  const [shareAbsoluteTime, setShareAbsoluteTime] = useState(false);
   const [sortValue, setSortValue] = useState(`${currentSort.sortBy}:${currentSort.sortDirection}`);
   const [isPending, setIsPending] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
@@ -126,6 +134,7 @@ export function SearchPanel({
     setTimeMode(currentTimeMode);
     setRelativeDuration(currentRelativeDuration);
     setRefresh(currentRefresh);
+    setShareAbsoluteTime(currentShareAbsoluteTime);
     // Validate range on load
     const s = new Date(currentTimeRange.startTime).getTime();
     const e = new Date(currentTimeRange.endTime).getTime();
@@ -137,6 +146,7 @@ export function SearchPanel({
   }, [
     currentRefresh,
     currentRelativeDuration,
+    currentShareAbsoluteTime,
     currentTimeMode,
     currentTimeRange.endTime,
     currentTimeRange.startTime,
@@ -186,7 +196,7 @@ export function SearchPanel({
         trimmed,
         { level, service: service.trim(), host: host.trim(), sourceId: sourceId.trim() },
         { startTime: normalizedStart.toISOString(), endTime: fixedEnd.toISOString() },
-        { mode: timeMode, relativeDuration, refresh },
+        { mode: timeMode, relativeDuration, refresh, shareAbsoluteTime },
         { sortBy, sortDirection },
         pageSize,
       );
@@ -296,6 +306,20 @@ export function SearchPanel({
                 className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
               />
             </label>
+            <label className="col-span-full flex items-center gap-2 rounded-lg border border-line/70 bg-white/60 px-3 py-2 text-xs text-muted dark:bg-white/5">
+              <input
+                type="checkbox"
+                checked={shareAbsoluteTime}
+                onChange={(event) => setShareAbsoluteTime(event.target.checked)}
+                className="h-3.5 w-3.5 rounded border-line text-slate-900 focus:ring-slate-400"
+              />
+              <span>
+                Share exact timestamps in URL
+                <span className="ml-1 text-[11px] opacity-80">
+                  (otherwise stored locally in this browser)
+                </span>
+              </span>
+            </label>
           </>
         ) : null}
 
@@ -350,6 +374,7 @@ export function SearchPanel({
             setTimeMode("rel");
             setRelativeDuration("1h");
             setRefresh("off");
+            setShareAbsoluteTime(false);
             void onSearch(
               "",
               { level: "", service: "", host: "", sourceId: "" },
@@ -357,7 +382,7 @@ export function SearchPanel({
                 startTime: new Date(Date.now() - RELATIVE_MS["1h"]).toISOString(),
                 endTime: new Date().toISOString(),
               },
-              { mode: "rel", relativeDuration: "1h", refresh: "off" },
+              { mode: "rel", relativeDuration: "1h", refresh: "off", shareAbsoluteTime: false },
               { sortBy: "timestamp", sortDirection: "desc" },
               pageSize,
             );
