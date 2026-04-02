@@ -66,7 +66,7 @@ export class QueryService {
       const filterValues = new Set(
         [...(query.filters ?? []), ...validatedAiFilters]
           .map((f) => String(f.value).toLowerCase())
-          .flatMap((v) => v.split(/\s+/))
+          .flatMap((v) => v.split(/\s+/)),
       );
       const textTerms = (translation.textTerms ?? [])
         .filter((term) => !filterValues.has(term.toLowerCase()))
@@ -247,7 +247,10 @@ export class QueryService {
   private validateGeneratedFilters(
     filters: LogFilter[],
     facetHints: FacetHints,
-  ): { filters: LogFilter[]; pruned: Array<{ field: string; reason: "empty" | "unknown_value" | "redundant" }> } {
+  ): {
+    filters: LogFilter[];
+    pruned: Array<{ field: string; reason: "empty" | "unknown_value" | "redundant" }>;
+  } {
     const kept: LogFilter[] = [];
     const pruned: Array<{ field: string; reason: "empty" | "unknown_value" | "redundant" }> = [];
 
@@ -305,7 +308,6 @@ export class QueryService {
         }
         continue;
       }
-
 
       // Message filters are redundant with textTerms search — drop them to avoid over-filtering
       if (filter.field === "message") {
