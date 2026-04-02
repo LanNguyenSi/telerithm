@@ -26,9 +26,13 @@ import {
   updateSavedLogView,
 } from "@/lib/api/client";
 import {
+  DEFAULT_RELATIVE_DURATION,
   DEFAULT_PAGE_SIZE,
   DEFAULT_SORT,
   FACET_FIELDS,
+  type RefreshInterval,
+  type RelativeDuration,
+  type TimeMode,
   useLogSearch,
 } from "@/hooks/use-log-search";
 import type {
@@ -57,6 +61,9 @@ export function SearchScreen() {
     currentFacetSelections,
     currentColumns,
     currentTimeRange,
+    currentTimeMode,
+    currentRelativeDuration,
+    currentRefresh,
     currentSort,
     currentDefinition,
     fallbackRange,
@@ -124,14 +131,20 @@ export function SearchScreen() {
     setSavedViewsLoading(true);
     setSavedViewsError(null);
     void getSavedLogViews(team.id, token)
-      .then((response) => { if (active) setSavedViews(response.views); })
+      .then((response) => {
+        if (active) setSavedViews(response.views);
+      })
       .catch((loadError) => {
         if (!active) return;
         setSavedViews([]);
         setSavedViewsError(loadError instanceof Error ? loadError.message : "Could not load saved views");
       })
-      .finally(() => { if (active) setSavedViewsLoading(false); });
-    return () => { active = false; };
+      .finally(() => {
+        if (active) setSavedViewsLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [team.id, token]);
 
   // Main data loading
@@ -251,7 +264,9 @@ export function SearchScreen() {
     }
 
     void loadResults();
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [
     currentFilters.host,
     currentFilters.level,
@@ -272,6 +287,13 @@ export function SearchScreen() {
   ]);
 
   function applySavedView(view: SavedLogView) {
+    const isRelative = Boolean(view.definition.relativeTime);
+    const timeUpdate = isRelative
+      ? {}
+      : {
+          startTime: view.definition.startTime ?? fallbackRange.startTime,
+          endTime: view.definition.endTime ?? fallbackRange.endTime,
+        };
     updateSearch({
       query: view.definition.text ?? "",
       mode: view.definition.mode ?? "raw",
@@ -281,8 +303,11 @@ export function SearchScreen() {
       exclusions: view.definition.exclusions ?? [],
       facets: view.definition.facets ?? [],
       columns: view.definition.columns ?? [],
-      startTime: view.definition.startTime ?? fallbackRange.startTime,
-      endTime: view.definition.endTime ?? fallbackRange.endTime,
+      timeMode: isRelative ? "rel" : "abs",
+      relativeDuration:
+        (view.definition.relativeTime as RelativeDuration | undefined) ?? DEFAULT_RELATIVE_DURATION,
+      refresh: "off",
+      ...timeUpdate,
       level: String(
         view.definition.filters.find((item) => item.field === "level" && item.operator === "eq")?.value ?? "",
       ),
@@ -303,10 +328,16 @@ export function SearchScreen() {
   // Hydrate default saved view
   useEffect(() => {
     if (defaultHydrated) return;
-    if (currentViewId) { setDefaultHydrated(true); return; }
+    if (currentViewId) {
+      setDefaultHydrated(true);
+      return;
+    }
     if (savedViewsLoading) return;
     const defaultView = savedViews.find((view) => view.isDefault);
-    if (!defaultView) { setDefaultHydrated(true); return; }
+    if (!defaultView) {
+      setDefaultHydrated(true);
+      return;
+    }
     applySavedView(defaultView);
     setDefaultHydrated(true);
   }, [currentViewId, defaultHydrated, savedViews, savedViewsLoading]);
@@ -315,16 +346,21 @@ export function SearchScreen() {
     query: string,
     filters: { level: string; service: string; host: string; sourceId: string },
     timeRange: { startTime: string; endTime: string },
+    timeSelection: { mode: TimeMode; relativeDuration: RelativeDuration; refresh: RefreshInterval },
     sort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" },
     nextPageSize: number,
   ) {
+    const timeUpdate =
+      timeSelection.mode === "abs" ? { startTime: timeRange.startTime, endTime: timeRange.endTime } : {};
     updateSearch({
       query: query.trim(),
       page: 1,
       pageSize: nextPageSize,
       sourceId: filters.sourceId,
-      startTime: timeRange.startTime,
-      endTime: timeRange.endTime,
+      timeMode: timeSelection.mode,
+      relativeDuration: timeSelection.relativeDuration,
+      refresh: timeSelection.refresh,
+      ...timeUpdate,
       level: filters.level,
       service: filters.service,
       host: filters.host,
@@ -335,105 +371,120 @@ export function SearchScreen() {
 
   return (
     <div className="space-y-4 lg:space-y-6">
-      {savedViewsLoading ? null : <SavedViewBar
-        views={savedViews}
-        selectedId={currentViewId}
-        unsaved={hasUnsavedChanges}
-        loading={savedViewsLoading}
-        onSelect={(id) => {
-          if (!id) { updateSearch({ viewId: "", page: 1 }); return; }
-          const view = savedViews.find((item) => item.id === id);
-          if (view) applySavedView(view);
-        }}
-        onSave={async () => {
-          const defaultName = `View ${new Date().toLocaleString("de-DE")}`;
-          const result = await dialog.saveView("Ansicht speichern", defaultName);
-          if (!result) return;
-          void createSavedLogView(token, {
-            teamId: team.id,
-            name: result.name,
-            isShared: result.shared,
-            isDefault: result.isDefault,
-            definition: currentDefinition,
-          })
-            .then(async ({ view }) => {
-              const { views } = await getSavedLogViews(team.id, token);
-              setSavedViews(views);
-              applySavedView(view);
+      {savedViewsLoading ? null : (
+        <SavedViewBar
+          views={savedViews}
+          selectedId={currentViewId}
+          unsaved={hasUnsavedChanges}
+          loading={savedViewsLoading}
+          onSelect={(id) => {
+            if (!id) {
+              updateSearch({ viewId: "", page: 1 });
+              return;
+            }
+            const view = savedViews.find((item) => item.id === id);
+            if (view) applySavedView(view);
+          }}
+          onSave={async () => {
+            const defaultName = `View ${new Date().toLocaleString("de-DE")}`;
+            const result = await dialog.saveView("Ansicht speichern", defaultName);
+            if (!result) return;
+            void createSavedLogView(token, {
+              teamId: team.id,
+              name: result.name,
+              isShared: result.shared,
+              isDefault: result.isDefault,
+              definition: currentDefinition,
             })
-            .catch((saveError) =>
-              setSavedViewsError(saveError instanceof Error ? saveError.message : "Save failed"),
+              .then(async ({ view }) => {
+                const { views } = await getSavedLogViews(team.id, token);
+                setSavedViews(views);
+                applySavedView(view);
+              })
+              .catch((saveError) =>
+                setSavedViewsError(saveError instanceof Error ? saveError.message : "Save failed"),
+              );
+          }}
+          onOverwrite={async () => {
+            if (!selectedView) return;
+            const ok = await dialog.confirm(
+              `"${selectedView.name}" überschreiben?`,
+              "Die aktuelle Definition dieser Ansicht wird ersetzt.",
             );
-        }}
-        onOverwrite={async () => {
-          if (!selectedView) return;
-          const ok = await dialog.confirm(`"${selectedView.name}" überschreiben?`, "Die aktuelle Definition dieser Ansicht wird ersetzt.");
-          if (!ok) return;
-          void updateSavedLogView(selectedView.id, team.id, token, { definition: currentDefinition })
-            .then(async ({ view }) => {
-              const { views } = await getSavedLogViews(team.id, token);
-              setSavedViews(views);
-              applySavedView(view);
-            })
-            .catch((updateError) =>
-              setSavedViewsError(updateError instanceof Error ? updateError.message : "Update failed"),
+            if (!ok) return;
+            void updateSavedLogView(selectedView.id, team.id, token, { definition: currentDefinition })
+              .then(async ({ view }) => {
+                const { views } = await getSavedLogViews(team.id, token);
+                setSavedViews(views);
+                applySavedView(view);
+              })
+              .catch((updateError) =>
+                setSavedViewsError(updateError instanceof Error ? updateError.message : "Update failed"),
+              );
+          }}
+          onDuplicate={async () => {
+            if (!selectedView) return;
+            const name = await dialog.prompt("Name für Kopie", `${selectedView.name} (copy)`);
+            if (!name) return;
+            void duplicateSavedLogView(selectedView.id, token, { teamId: team.id, name })
+              .then(async ({ view }) => {
+                const { views } = await getSavedLogViews(team.id, token);
+                setSavedViews(views);
+                applySavedView(view);
+              })
+              .catch((duplicateError) =>
+                setSavedViewsError(
+                  duplicateError instanceof Error ? duplicateError.message : "Duplicate failed",
+                ),
+              );
+          }}
+          onRename={async () => {
+            if (!selectedView) return;
+            const name = await dialog.prompt("Neuer Name", selectedView.name);
+            if (!name) return;
+            void updateSavedLogView(selectedView.id, team.id, token, { name })
+              .then(async ({ view }) => {
+                const { views } = await getSavedLogViews(team.id, token);
+                setSavedViews(views);
+                applySavedView(view);
+              })
+              .catch((renameError) =>
+                setSavedViewsError(renameError instanceof Error ? renameError.message : "Rename failed"),
+              );
+          }}
+          onSetDefault={() => {
+            if (!selectedView) return;
+            void updateSavedLogView(selectedView.id, team.id, token, { isDefault: true })
+              .then(async ({ view }) => {
+                const { views } = await getSavedLogViews(team.id, token);
+                setSavedViews(views);
+                applySavedView(view);
+              })
+              .catch((defaultError) =>
+                setSavedViewsError(
+                  defaultError instanceof Error ? defaultError.message : "Set default failed",
+                ),
+              );
+          }}
+          onDelete={async () => {
+            if (!selectedView) return;
+            const ok = await dialog.confirm(
+              `"${selectedView.name}" löschen?`,
+              "Diese Ansicht wird unwiderruflich gelöscht.",
             );
-        }}
-        onDuplicate={async () => {
-          if (!selectedView) return;
-          const name = await dialog.prompt("Name für Kopie", `${selectedView.name} (copy)`);
-          if (!name) return;
-          void duplicateSavedLogView(selectedView.id, token, { teamId: team.id, name })
-            .then(async ({ view }) => {
-              const { views } = await getSavedLogViews(team.id, token);
-              setSavedViews(views);
-              applySavedView(view);
-            })
-            .catch((duplicateError) =>
-              setSavedViewsError(duplicateError instanceof Error ? duplicateError.message : "Duplicate failed"),
-            );
-        }}
-        onRename={async () => {
-          if (!selectedView) return;
-          const name = await dialog.prompt("Neuer Name", selectedView.name);
-          if (!name) return;
-          void updateSavedLogView(selectedView.id, team.id, token, { name })
-            .then(async ({ view }) => {
-              const { views } = await getSavedLogViews(team.id, token);
-              setSavedViews(views);
-              applySavedView(view);
-            })
-            .catch((renameError) =>
-              setSavedViewsError(renameError instanceof Error ? renameError.message : "Rename failed"),
-            );
-        }}
-        onSetDefault={() => {
-          if (!selectedView) return;
-          void updateSavedLogView(selectedView.id, team.id, token, { isDefault: true })
-            .then(async ({ view }) => {
-              const { views } = await getSavedLogViews(team.id, token);
-              setSavedViews(views);
-              applySavedView(view);
-            })
-            .catch((defaultError) =>
-              setSavedViewsError(defaultError instanceof Error ? defaultError.message : "Set default failed"),
-            );
-        }}
-        onDelete={async () => {
-          if (!selectedView) return;
-          const ok = await dialog.confirm(`"${selectedView.name}" löschen?`, "Diese Ansicht wird unwiderruflich gelöscht.");
-          if (!ok) return;
-          void deleteSavedLogView(selectedView.id, team.id, token)
-            .then(async () => {
-              const { views } = await getSavedLogViews(team.id, token);
-              setSavedViews(views);
-              updateSearch({ viewId: "" });
-            })
-            .catch((deleteError) =>
-              setSavedViewsError(deleteError instanceof Error ? deleteError.message : "Delete failed"),
-            );
-        }}
-      />}
+            if (!ok) return;
+            void deleteSavedLogView(selectedView.id, team.id, token)
+              .then(async () => {
+                const { views } = await getSavedLogViews(team.id, token);
+                setSavedViews(views);
+                updateSearch({ viewId: "" });
+              })
+              .catch((deleteError) =>
+                setSavedViewsError(deleteError instanceof Error ? deleteError.message : "Delete failed"),
+              );
+          }}
+        />
+      )}
       {savedViewsError ? <p className="text-xs text-rose-700">{savedViewsError}</p> : null}
 
       <SearchPanel
@@ -442,15 +493,30 @@ export function SearchScreen() {
         currentQuery={currentQuery}
         currentFilters={currentFilters}
         currentTimeRange={currentTimeRange}
+        currentTimeMode={currentTimeMode}
+        currentRelativeDuration={currentRelativeDuration}
+        currentRefresh={currentRefresh}
         currentSourceId={currentSourceId}
         currentExclusions={currentExclusions}
         currentSort={currentSort}
         pageSize={pageSize}
         onRemoveChip={(chip) => {
-          if (chip === "query") { updateSearch({ page: 1, query: "" }); return; }
-          if (chip === "level") { updateSearch({ page: 1, level: "" }); return; }
-          if (chip === "service") { updateSearch({ page: 1, service: "" }); return; }
-          if (chip === "host") { updateSearch({ page: 1, host: "" }); return; }
+          if (chip === "query") {
+            updateSearch({ page: 1, query: "" });
+            return;
+          }
+          if (chip === "level") {
+            updateSearch({ page: 1, level: "" });
+            return;
+          }
+          if (chip === "service") {
+            updateSearch({ page: 1, service: "" });
+            return;
+          }
+          if (chip === "host") {
+            updateSearch({ page: 1, host: "" });
+            return;
+          }
           if (chip === "source") updateSearch({ page: 1, sourceId: "" });
         }}
         onRemoveExclusion={(index) => {
@@ -512,8 +578,20 @@ export function SearchScreen() {
         </p>
         <p className="text-xs text-muted">
           Range{" "}
-          <span className="font-mono" suppressHydrationWarning>{new Date(currentTimeRange.startTime).toLocaleString("de-DE")}</span> to{" "}
-          <span className="font-mono" suppressHydrationWarning>{new Date(currentTimeRange.endTime).toLocaleString("de-DE")}</span>
+          {currentTimeMode === "rel" ? (
+            <span className="font-mono">Last {currentRelativeDuration}</span>
+          ) : (
+            <>
+              <span className="font-mono" suppressHydrationWarning>
+                {new Date(currentTimeRange.startTime).toLocaleString("de-DE")}
+              </span>{" "}
+              to{" "}
+              <span className="font-mono" suppressHydrationWarning>
+                {new Date(currentTimeRange.endTime).toLocaleString("de-DE")}
+              </span>
+            </>
+          )}
+          {currentRefresh !== "off" ? <span className="ml-2 font-mono">refresh {currentRefresh}</span> : null}
         </p>
         {currentFacetSelections.length > 0 ? (
           <div className="w-full border-t border-line/70 pt-3">

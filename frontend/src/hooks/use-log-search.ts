@@ -10,7 +10,18 @@ export const DEFAULT_PAGE_SIZE = 50;
 export const ALLOWED_PAGE_SIZES = [25, 50, 100];
 export const DEFAULT_SORT = { sortBy: "timestamp" as const, sortDirection: "desc" as const };
 export const DEFAULT_LOOKBACK_MS = 60 * 60 * 1000;
+export const DEFAULT_RELATIVE_DURATION = "1h";
 const EXCLUDE_PARAM_SEPARATOR = "::";
+const RELATIVE_DURATION_MS: Record<RelativeDuration, number> = {
+  "5m": 5 * 60 * 1000,
+  "15m": 15 * 60 * 1000,
+  "1h": 60 * 60 * 1000,
+  "6h": 6 * 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+};
+const REFRESH_VALUES = new Set(["off", "10s", "30s", "1m"]);
+const TIME_MODES = new Set(["rel", "abs"]);
 
 export const FACET_FIELDS: Array<
   "service" | "level" | "host" | "sourceId" | "env" | "region" | "status_code" | "route"
@@ -41,6 +52,9 @@ export interface SearchUpdate {
   columns?: string[];
   startTime?: string;
   endTime?: string;
+  timeMode?: TimeMode;
+  relativeDuration?: RelativeDuration;
+  refresh?: RefreshInterval;
   level?: string;
   service?: string;
   host?: string;
@@ -48,12 +62,35 @@ export interface SearchUpdate {
   sortDirection?: "asc" | "desc";
 }
 
+export type TimeMode = "rel" | "abs";
+export type RelativeDuration = "5m" | "15m" | "1h" | "6h" | "24h" | "7d";
+export type RefreshInterval = "off" | "10s" | "30s" | "1m";
+
 /* ── Helpers ── */
 
 function defaultTimeRange(): { startTime: string; endTime: string } {
   const end = new Date();
   const start = new Date(end.getTime() - DEFAULT_LOOKBACK_MS);
   return { startTime: start.toISOString(), endTime: end.toISOString() };
+}
+
+function isRelativeDuration(value: string | null): value is RelativeDuration {
+  return value !== null && value in RELATIVE_DURATION_MS;
+}
+
+function computeRelativeRange(
+  duration: RelativeDuration,
+  endAnchorIso: string,
+): { startTime: string; endTime: string } {
+  const end = new Date(endAnchorIso);
+  const safeEnd = Number.isNaN(end.getTime()) ? new Date() : end;
+  const start = new Date(safeEnd.getTime() - RELATIVE_DURATION_MS[duration]);
+  return { startTime: start.toISOString(), endTime: safeEnd.toISOString() };
+}
+
+function isValidIso(value: string | null): value is string {
+  if (!value) return false;
+  return !Number.isNaN(new Date(value).getTime());
 }
 
 function parseExclusions(params: URLSearchParams): ExclusionChip[] {
@@ -121,10 +158,21 @@ export function useLogSearch() {
     () => parseColumns(new URLSearchParams(searchParamString)),
     [searchParamString],
   );
-  const currentTimeRange = {
-    startTime: searchParams.get("startTime") ?? fallbackRange.startTime,
-    endTime: searchParams.get("endTime") ?? fallbackRange.endTime,
-  };
+  const currentTimeMode = TIME_MODES.has(searchParams.get("tr") ?? "") // new semantic params
+    ? (searchParams.get("tr") as TimeMode)
+    : "rel";
+  const currentRelativeDuration = isRelativeDuration(searchParams.get("dur"))
+    ? (searchParams.get("dur") as RelativeDuration)
+    : DEFAULT_RELATIVE_DURATION;
+  const currentRefresh = REFRESH_VALUES.has(searchParams.get("refresh") ?? "")
+    ? (searchParams.get("refresh") as RefreshInterval)
+    : "off";
+  const absoluteFrom = searchParams.get("from") ?? searchParams.get("startTime"); // backward compatible
+  const absoluteTo = searchParams.get("to") ?? searchParams.get("endTime"); // backward compatible
+  const currentTimeRange =
+    currentTimeMode === "abs" && isValidIso(absoluteFrom) && isValidIso(absoluteTo)
+      ? { startTime: absoluteFrom, endTime: absoluteTo }
+      : computeRelativeRange(currentRelativeDuration, fallbackRange.endTime);
   const currentSort = {
     sortBy:
       (searchParams.get("sortBy") as "timestamp" | "level" | "service" | "host" | null) ??
@@ -137,6 +185,7 @@ export function useLogSearch() {
       mode: currentMode,
       startTime: currentTimeRange.startTime,
       endTime: currentTimeRange.endTime,
+      relativeTime: currentTimeMode === "rel" ? currentRelativeDuration : undefined,
       text: currentQuery || undefined,
       sourceId: currentSourceId || undefined,
       filters: [
@@ -166,6 +215,8 @@ export function useLogSearch() {
       currentFilters.service,
       currentMode,
       currentQuery,
+      currentRelativeDuration,
+      currentTimeMode,
       currentSort.sortBy,
       currentSort.sortDirection,
       currentSourceId,
@@ -188,8 +239,13 @@ export function useLogSearch() {
     const exclusions = next.exclusions ?? currentExclusions;
     const facets = next.facets ?? currentFacetSelections;
     const columns = next.columns ?? currentColumns;
+    const requestedTimeMode = next.timeMode ?? currentTimeMode;
+    const requestedRelativeDuration = next.relativeDuration ?? currentRelativeDuration;
+    const requestedRefresh = next.refresh ?? currentRefresh;
+    const hasAbsoluteOverride = Boolean(next.startTime || next.endTime);
     const startTime = next.startTime ?? currentTimeRange.startTime;
     const endTime = next.endTime ?? currentTimeRange.endTime;
+    const nextTimeMode: TimeMode = hasAbsoluteOverride ? "abs" : requestedTimeMode;
     const level = next.level ?? currentFilters.level;
     const service = next.service ?? currentFilters.service;
     const host = next.host ?? currentFilters.host;
@@ -228,10 +284,27 @@ export function useLogSearch() {
     for (const column of columns) {
       params.append("col", encodeURIComponent(column));
     }
-    if (startTime) params.set("startTime", startTime);
-    else params.delete("startTime");
-    if (endTime) params.set("endTime", endTime);
-    else params.delete("endTime");
+    if (nextTimeMode === "rel") {
+      params.set("tr", "rel");
+      params.set("dur", requestedRelativeDuration);
+      if (requestedRefresh !== "off") params.set("refresh", requestedRefresh);
+      else params.delete("refresh");
+      params.delete("from");
+      params.delete("to");
+      params.delete("startTime");
+      params.delete("endTime");
+    } else {
+      params.set("tr", "abs");
+      if (startTime) params.set("from", startTime);
+      else params.delete("from");
+      if (endTime) params.set("to", endTime);
+      else params.delete("to");
+      params.delete("dur");
+      if (requestedRefresh !== "off") params.set("refresh", requestedRefresh);
+      else params.delete("refresh");
+      params.delete("startTime");
+      params.delete("endTime");
+    }
     if (level) params.set("level", level);
     else params.delete("level");
     if (service) params.set("service", service);
@@ -260,6 +333,9 @@ export function useLogSearch() {
     currentFacetSelections,
     currentColumns,
     currentTimeRange,
+    currentTimeMode,
+    currentRelativeDuration,
+    currentRefresh,
     currentSort,
     currentDefinition,
     fallbackRange,
