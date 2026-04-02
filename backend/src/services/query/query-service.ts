@@ -83,9 +83,7 @@ export class QueryService {
 
     // Strip textTerms already covered by AI filters to avoid redundant AND conditions
     const filterValues = new Set(
-      aiFilters
-        .map((f) => String(f.value).toLowerCase())
-        .flatMap((v) => v.split(/\s+/)),
+      aiFilters.map((f) => String(f.value).toLowerCase()).flatMap((v) => v.split(/\s+/)),
     );
     const textTerms = (translation.textTerms ?? [])
       .filter((term) => !DOMAIN_STOPWORDS.has(term.toLowerCase()))
