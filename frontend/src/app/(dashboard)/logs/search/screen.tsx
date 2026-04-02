@@ -1,31 +1,36 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
+import { useLogAuth } from "@/components/logs/log-auth-context";
 import { FacetSidebar } from "@/components/logs/facet-sidebar";
 import { FieldExplorer } from "@/components/logs/field-explorer";
 import { HistogramStrip } from "@/components/logs/histogram-strip";
-import { LiveTail } from "@/components/logs/live-tail";
-import { LogEventDrawer } from "@/components/logs/log-event-drawer";
 import { PatternTable } from "@/components/logs/pattern-table";
 import { SavedViewBar } from "@/components/logs/saved-view-bar";
 import { LogTable } from "@/components/logs/log-table";
 import { SearchPanel } from "@/components/logs/search-panel";
 import { Card } from "@/components/ui/card";
+import { Dialog, useDialog } from "@/components/ui/dialog";
 import { SkeletonTable } from "@/components/ui/skeleton";
 import {
   createSavedLogView,
   deleteSavedLogView,
   duplicateSavedLogView,
-  getLogContext,
+  getLogs,
   getLogFacets,
   getLogHistogram,
   getLogPatterns,
-  getLogs,
   getNaturalExplanation,
   getSavedLogViews,
   updateSavedLogView,
 } from "@/lib/api/client";
+import {
+  DEFAULT_PAGE_SIZE,
+  DEFAULT_SORT,
+  FACET_FIELDS,
+  useLogSearch,
+} from "@/hooks/use-log-search";
 import type {
   LogEntry,
   LogFacet,
@@ -33,74 +38,31 @@ import type {
   LogPattern,
   NaturalQueryPlan,
   SavedLogView,
-  SavedLogViewDefinition,
-  Team,
 } from "@/types";
 
-const DEFAULT_PAGE_SIZE = 50;
-const ALLOWED_PAGE_SIZES = [25, 50, 100];
-const DEFAULT_SORT = { sortBy: "timestamp" as const, sortDirection: "desc" as const };
-const DEFAULT_LOOKBACK_MS = 60 * 60 * 1000;
-const EXCLUDE_PARAM_SEPARATOR = "::";
-const FACET_FIELDS: Array<
-  "service" | "level" | "host" | "sourceId" | "env" | "region" | "status_code" | "route"
-> = ["service", "level", "host", "sourceId", "env", "region", "status_code", "route"];
-
-function defaultTimeRange(): { startTime: string; endTime: string } {
-  const end = new Date();
-  const start = new Date(end.getTime() - DEFAULT_LOOKBACK_MS);
-  return { startTime: start.toISOString(), endTime: end.toISOString() };
-}
-
-interface ExclusionChip {
-  field: string;
-  value: string;
-}
-
-interface FacetSelection {
-  field: string;
-  value: string;
-}
-
-function parseExclusions(params: URLSearchParams): ExclusionChip[] {
-  return params
-    .getAll("exclude")
-    .map((token) => {
-      const [field, value] = token.split(EXCLUDE_PARAM_SEPARATOR);
-      if (!field || !value) return null;
-      return {
-        field: decodeURIComponent(field),
-        value: decodeURIComponent(value),
-      };
-    })
-    .filter((item): item is ExclusionChip => item !== null);
-}
-
-function parseFacetSelections(params: URLSearchParams): FacetSelection[] {
-  return params
-    .getAll("facet")
-    .map((token) => {
-      const [field, value] = token.split(EXCLUDE_PARAM_SEPARATOR);
-      if (!field || !value) return null;
-      return {
-        field: decodeURIComponent(field),
-        value: decodeURIComponent(value),
-      };
-    })
-    .filter((item): item is FacetSelection => item !== null);
-}
-
-function parseColumns(params: URLSearchParams): string[] {
-  return params
-    .getAll("col")
-    .map((value) => decodeURIComponent(value))
-    .filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
-}
-
-export function LogExplorer({ team, token }: { team: Team; token: string }) {
+export function SearchScreen() {
+  const { team, token } = useLogAuth();
   const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
+  const search = useLogSearch();
+  const {
+    currentQuery,
+    currentMode,
+    currentPageToken,
+    currentViewId,
+    currentPage,
+    pageSize,
+    currentFilters,
+    currentSourceId,
+    currentExclusions,
+    currentFacetSelections,
+    currentColumns,
+    currentTimeRange,
+    currentSort,
+    currentDefinition,
+    fallbackRange,
+    updateSearch,
+  } = search;
+
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [aiPlan, setAiPlan] = useState<NaturalQueryPlan | null>(null);
   const [execution, setExecution] = useState("");
@@ -111,11 +73,6 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
-  const [selectedLog, setSelectedLog] = useState<LogEntry | null>(null);
-  const [contextBefore, setContextBefore] = useState<LogEntry[]>([]);
-  const [contextAfter, setContextAfter] = useState<LogEntry[]>([]);
-  const [contextLoading, setContextLoading] = useState(false);
-  const [contextScope, setContextScope] = useState<"source" | "service" | "host">("source");
   const [facets, setFacets] = useState<LogFacet[]>([]);
   const [facetLoading, setFacetLoading] = useState(false);
   const [histogram, setHistogram] = useState<LogHistogramBucket[]>([]);
@@ -126,48 +83,10 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
   const [savedViewsLoading, setSavedViewsLoading] = useState(false);
   const [savedViewsError, setSavedViewsError] = useState<string | null>(null);
   const [defaultHydrated, setDefaultHydrated] = useState(false);
-  const [fallbackRange] = useState(() => defaultTimeRange());
+  const dialog = useDialog();
 
-  const currentQuery = searchParams.get("q")?.trim() ?? "";
-  const currentMode = searchParams.get("mode") === "patterns" ? "patterns" : "raw";
-  const currentPageToken = searchParams.get("pageToken") ?? "";
-  const currentViewId = searchParams.get("viewId") ?? "";
-  const searchParamString = searchParams.toString();
-  const currentPage = Math.max(1, Number.parseInt(searchParams.get("page") ?? "1", 10) || 1);
-  const rawPageSize =
-    Number.parseInt(searchParams.get("pageSize") ?? `${DEFAULT_PAGE_SIZE}`, 10) || DEFAULT_PAGE_SIZE;
-  const pageSize = ALLOWED_PAGE_SIZES.includes(rawPageSize) ? rawPageSize : DEFAULT_PAGE_SIZE;
-  const currentFilters = {
-    level: searchParams.get("level") ?? "",
-    service: searchParams.get("service") ?? "",
-    host: searchParams.get("host") ?? "",
-  };
-  const currentSourceId = searchParams.get("sourceId") ?? "";
-  const currentExclusions = useMemo(
-    () => parseExclusions(new URLSearchParams(searchParamString)),
-    [searchParamString],
-  );
-  const currentFacetSelections = useMemo(
-    () => parseFacetSelections(new URLSearchParams(searchParamString)),
-    [searchParamString],
-  );
-  const currentColumns = useMemo(
-    () => parseColumns(new URLSearchParams(searchParamString)),
-    [searchParamString],
-  );
-  const currentTimeRange = {
-    startTime: searchParams.get("startTime") ?? fallbackRange.startTime,
-    endTime: searchParams.get("endTime") ?? fallbackRange.endTime,
-  };
-  const currentSort = {
-    sortBy:
-      (searchParams.get("sortBy") as "timestamp" | "level" | "service" | "host" | null) ??
-      DEFAULT_SORT.sortBy,
-    sortDirection: (searchParams.get("sortDirection") as "asc" | "desc" | null) ?? DEFAULT_SORT.sortDirection,
-  };
   const discoveredFields = useMemo(() => {
     const summary = new Map<string, { hits: number; counts: Map<string, number> }>();
-
     for (const log of logs) {
       for (const [key, value] of Object.entries(log.fields ?? {})) {
         const entry = summary.get(key) ?? { hits: 0, counts: new Map<string, number>() };
@@ -177,7 +96,6 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         summary.set(key, entry);
       }
     }
-
     return Array.from(summary.entries())
       .map(([key, value]) => ({
         key,
@@ -190,48 +108,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
       .sort((left, right) => right.hits - left.hits)
       .slice(0, 20);
   }, [logs]);
-  const currentDefinition = useMemo<SavedLogViewDefinition>(
-    () => ({
-      mode: currentMode,
-      startTime: currentTimeRange.startTime,
-      endTime: currentTimeRange.endTime,
-      text: currentQuery || undefined,
-      sourceId: currentSourceId || undefined,
-      filters: [
-        ...(currentFilters.level
-          ? [{ field: "level", operator: "eq" as const, value: currentFilters.level }]
-          : []),
-        ...(currentFilters.service
-          ? [{ field: "service", operator: "contains" as const, value: currentFilters.service }]
-          : []),
-        ...(currentFilters.host
-          ? [{ field: "host", operator: "contains" as const, value: currentFilters.host }]
-          : []),
-      ],
-      columns: currentColumns,
-      sortBy: currentSort.sortBy,
-      sortDirection: currentSort.sortDirection,
-      facets: currentFacetSelections,
-      exclusions: currentExclusions,
-      pageSize,
-    }),
-    [
-      currentColumns,
-      currentExclusions,
-      currentFacetSelections,
-      currentFilters.host,
-      currentFilters.level,
-      currentFilters.service,
-      currentMode,
-      currentQuery,
-      currentSort.sortBy,
-      currentSort.sortDirection,
-      currentSourceId,
-      currentTimeRange.endTime,
-      currentTimeRange.startTime,
-      pageSize,
-    ],
-  );
+
   const selectedView = useMemo(
     () => savedViews.find((view) => view.id === currentViewId) ?? null,
     [currentViewId, savedViews],
@@ -241,31 +118,23 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
     return JSON.stringify(selectedView.definition) !== JSON.stringify(currentDefinition);
   }, [currentDefinition, selectedView]);
 
+  // Load saved views
   useEffect(() => {
     let active = true;
     setSavedViewsLoading(true);
     setSavedViewsError(null);
-
     void getSavedLogViews(team.id, token)
-      .then((response) => {
-        if (!active) return;
-        setSavedViews(response.views);
-      })
+      .then((response) => { if (active) setSavedViews(response.views); })
       .catch((loadError) => {
         if (!active) return;
         setSavedViews([]);
         setSavedViewsError(loadError instanceof Error ? loadError.message : "Could not load saved views");
       })
-      .finally(() => {
-        if (!active) return;
-        setSavedViewsLoading(false);
-      });
-
-    return () => {
-      active = false;
-    };
+      .finally(() => { if (active) setSavedViewsLoading(false); });
+    return () => { active = false; };
   }, [team.id, token]);
 
+  // Main data loading
   useEffect(() => {
     let active = true;
 
@@ -351,7 +220,6 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         ]);
 
         if (!active) return;
-
         setLogs(result.logs);
         setTotal(result.total);
         setExecution(`${result.total} logs in ${result.executionTimeMs}ms`);
@@ -383,10 +251,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
     }
 
     void loadResults();
-
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, [
     currentFilters.host,
     currentFilters.level,
@@ -435,111 +300,16 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
     });
   }
 
+  // Hydrate default saved view
   useEffect(() => {
     if (defaultHydrated) return;
-    if (currentViewId) {
-      setDefaultHydrated(true);
-      return;
-    }
+    if (currentViewId) { setDefaultHydrated(true); return; }
     if (savedViewsLoading) return;
     const defaultView = savedViews.find((view) => view.isDefault);
-    if (!defaultView) {
-      setDefaultHydrated(true);
-      return;
-    }
+    if (!defaultView) { setDefaultHydrated(true); return; }
     applySavedView(defaultView);
     setDefaultHydrated(true);
   }, [currentViewId, defaultHydrated, savedViews, savedViewsLoading]);
-
-  function updateSearch(next: {
-    query?: string;
-    mode?: "raw" | "patterns";
-    pageToken?: string;
-    viewId?: string;
-    page?: number;
-    pageSize?: number;
-    sourceId?: string;
-    exclusions?: ExclusionChip[];
-    facets?: FacetSelection[];
-    columns?: string[];
-    startTime?: string;
-    endTime?: string;
-    level?: string;
-    service?: string;
-    host?: string;
-    sortBy?: "timestamp" | "level" | "service" | "host";
-    sortDirection?: "asc" | "desc";
-  }) {
-    const params = new URLSearchParams(searchParams.toString());
-    const query = next.query ?? currentQuery;
-    const mode = next.mode ?? currentMode;
-    const pageToken =
-      next.pageToken ?? (next.page !== undefined && next.page !== currentPage ? "" : currentPageToken);
-    const viewId = next.viewId ?? currentViewId;
-    const page = next.page ?? currentPage;
-    const nextPageSize = next.pageSize ?? pageSize;
-    const sourceId = next.sourceId ?? currentSourceId;
-    const exclusions = next.exclusions ?? currentExclusions;
-    const facets = next.facets ?? currentFacetSelections;
-    const columns = next.columns ?? currentColumns;
-    const startTime = next.startTime ?? currentTimeRange.startTime;
-    const endTime = next.endTime ?? currentTimeRange.endTime;
-    const level = next.level ?? currentFilters.level;
-    const service = next.service ?? currentFilters.service;
-    const host = next.host ?? currentFilters.host;
-    const sortBy = next.sortBy ?? currentSort.sortBy;
-    const sortDirection = next.sortDirection ?? currentSort.sortDirection;
-
-    if (query) params.set("q", query);
-    else params.delete("q");
-    if (mode === "patterns") params.set("mode", "patterns");
-    else params.delete("mode");
-    if (pageToken) params.set("pageToken", pageToken);
-    else params.delete("pageToken");
-    if (viewId) params.set("viewId", viewId);
-    else params.delete("viewId");
-    if (page > 1) params.set("page", String(page));
-    else params.delete("page");
-    if (nextPageSize !== DEFAULT_PAGE_SIZE) params.set("pageSize", String(nextPageSize));
-    else params.delete("pageSize");
-    if (sourceId) params.set("sourceId", sourceId);
-    else params.delete("sourceId");
-    params.delete("exclude");
-    for (const exclusion of exclusions) {
-      params.append(
-        "exclude",
-        `${encodeURIComponent(exclusion.field)}${EXCLUDE_PARAM_SEPARATOR}${encodeURIComponent(exclusion.value)}`,
-      );
-    }
-    params.delete("facet");
-    for (const facet of facets) {
-      params.append(
-        "facet",
-        `${encodeURIComponent(facet.field)}${EXCLUDE_PARAM_SEPARATOR}${encodeURIComponent(facet.value)}`,
-      );
-    }
-    params.delete("col");
-    for (const column of columns) {
-      params.append("col", encodeURIComponent(column));
-    }
-    if (startTime) params.set("startTime", startTime);
-    else params.delete("startTime");
-    if (endTime) params.set("endTime", endTime);
-    else params.delete("endTime");
-    if (level) params.set("level", level);
-    else params.delete("level");
-    if (service) params.set("service", service);
-    else params.delete("service");
-    if (host) params.set("host", host);
-    else params.delete("host");
-    if (sortBy !== DEFAULT_SORT.sortBy) params.set("sortBy", sortBy);
-    else params.delete("sortBy");
-    if (sortDirection !== DEFAULT_SORT.sortDirection) params.set("sortDirection", sortDirection);
-    else params.delete("sortDirection");
-
-    const queryString = params.toString();
-    router.push(queryString ? `${pathname}?${queryString}` : pathname, { scroll: false });
-  }
 
   async function handleSearch(
     query: string,
@@ -563,28 +333,6 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
     });
   }
 
-  useEffect(() => {
-    if (!selectedLog) return;
-    setContextLoading(true);
-    void getLogContext({
-      teamId: team.id,
-      sourceId: selectedLog.sourceId,
-      timestamp: selectedLog.timestamp,
-      service: selectedLog.service,
-      host: selectedLog.host,
-      scope: contextScope,
-    })
-      .then((context) => {
-        setContextBefore(context.before);
-        setContextAfter(context.after);
-      })
-      .catch(() => {
-        setContextBefore([]);
-        setContextAfter([]);
-      })
-      .finally(() => setContextLoading(false));
-  }, [contextScope, selectedLog, team.id]);
-
   return (
     <div className="space-y-4 lg:space-y-6">
       {savedViewsLoading ? null : <SavedViewBar
@@ -593,26 +341,19 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         unsaved={hasUnsavedChanges}
         loading={savedViewsLoading}
         onSelect={(id) => {
-          if (!id) {
-            updateSearch({ viewId: "", page: 1 });
-            return;
-          }
+          if (!id) { updateSearch({ viewId: "", page: 1 }); return; }
           const view = savedViews.find((item) => item.id === id);
-          if (view) {
-            applySavedView(view);
-          }
+          if (view) applySavedView(view);
         }}
-        onSave={() => {
+        onSave={async () => {
           const defaultName = `View ${new Date().toLocaleString("de-DE")}`;
-          const name = window.prompt("Name der gespeicherten Ansicht", defaultName);
-          if (!name) return;
-          const isShared = window.confirm("Team-weit teilen?");
-          const isDefault = window.confirm("Als Standardansicht setzen?");
+          const result = await dialog.saveView("Ansicht speichern", defaultName);
+          if (!result) return;
           void createSavedLogView(token, {
             teamId: team.id,
-            name,
-            isShared,
-            isDefault,
+            name: result.name,
+            isShared: result.shared,
+            isDefault: result.isDefault,
             definition: currentDefinition,
           })
             .then(async ({ view }) => {
@@ -624,9 +365,10 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
               setSavedViewsError(saveError instanceof Error ? saveError.message : "Save failed"),
             );
         }}
-        onOverwrite={() => {
+        onOverwrite={async () => {
           if (!selectedView) return;
-          if (!window.confirm(`Ansicht "${selectedView.name}" überschreiben?`)) return;
+          const ok = await dialog.confirm(`"${selectedView.name}" überschreiben?`, "Die aktuelle Definition dieser Ansicht wird ersetzt.");
+          if (!ok) return;
           void updateSavedLogView(selectedView.id, team.id, token, { definition: currentDefinition })
             .then(async ({ view }) => {
               const { views } = await getSavedLogViews(team.id, token);
@@ -637,9 +379,9 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
               setSavedViewsError(updateError instanceof Error ? updateError.message : "Update failed"),
             );
         }}
-        onDuplicate={() => {
+        onDuplicate={async () => {
           if (!selectedView) return;
-          const name = window.prompt("Name für Kopie", `${selectedView.name} (copy)`);
+          const name = await dialog.prompt("Name für Kopie", `${selectedView.name} (copy)`);
           if (!name) return;
           void duplicateSavedLogView(selectedView.id, token, { teamId: team.id, name })
             .then(async ({ view }) => {
@@ -648,14 +390,12 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
               applySavedView(view);
             })
             .catch((duplicateError) =>
-              setSavedViewsError(
-                duplicateError instanceof Error ? duplicateError.message : "Duplicate failed",
-              ),
+              setSavedViewsError(duplicateError instanceof Error ? duplicateError.message : "Duplicate failed"),
             );
         }}
-        onRename={() => {
+        onRename={async () => {
           if (!selectedView) return;
-          const name = window.prompt("Neuer Name", selectedView.name);
+          const name = await dialog.prompt("Neuer Name", selectedView.name);
           if (!name) return;
           void updateSavedLogView(selectedView.id, team.id, token, { name })
             .then(async ({ view }) => {
@@ -679,9 +419,10 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
               setSavedViewsError(defaultError instanceof Error ? defaultError.message : "Set default failed"),
             );
         }}
-        onDelete={() => {
+        onDelete={async () => {
           if (!selectedView) return;
-          if (!window.confirm(`Ansicht "${selectedView.name}" löschen?`)) return;
+          const ok = await dialog.confirm(`"${selectedView.name}" löschen?`, "Diese Ansicht wird unwiderruflich gelöscht.");
+          if (!ok) return;
           void deleteSavedLogView(selectedView.id, team.id, token)
             .then(async () => {
               const { views } = await getSavedLogViews(team.id, token);
@@ -706,25 +447,11 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         currentSort={currentSort}
         pageSize={pageSize}
         onRemoveChip={(chip) => {
-          if (chip === "query") {
-            updateSearch({ page: 1, query: "" });
-            return;
-          }
-          if (chip === "level") {
-            updateSearch({ page: 1, level: "" });
-            return;
-          }
-          if (chip === "service") {
-            updateSearch({ page: 1, service: "" });
-            return;
-          }
-          if (chip === "host") {
-            updateSearch({ page: 1, host: "" });
-            return;
-          }
-          if (chip === "source") {
-            updateSearch({ page: 1, sourceId: "" });
-          }
+          if (chip === "query") { updateSearch({ page: 1, query: "" }); return; }
+          if (chip === "level") { updateSearch({ page: 1, level: "" }); return; }
+          if (chip === "service") { updateSearch({ page: 1, service: "" }); return; }
+          if (chip === "host") { updateSearch({ page: 1, host: "" }); return; }
+          if (chip === "source") updateSearch({ page: 1, sourceId: "" });
         }}
         onRemoveExclusion={(index) => {
           const next = currentExclusions.filter((_, idx) => idx !== index);
@@ -741,7 +468,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
           const host = String(
             plan.filtersApplied.find((item) => item.field === "host")?.value ?? currentFilters.host,
           );
-          const facets = [
+          const facetFilters = [
             ...currentFacetSelections,
             ...plan.filtersApplied
               .filter(
@@ -756,13 +483,12 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
                 (candidate) => candidate.field === item.field && candidate.value === item.value,
               ) === index,
           );
-
           updateSearch({
             page: 1,
             level,
             service,
             host,
-            facets,
+            facets: facetFilters,
             startTime: plan.inferredTimeRange?.startTime ?? currentTimeRange.startTime,
             endTime: plan.inferredTimeRange?.endTime ?? currentTimeRange.endTime,
           });
@@ -872,7 +598,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
                 <button
                   type="button"
                   onClick={() => setReloadToken((value) => value + 1)}
-                  className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+                  className="rounded-lg bg-slate-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
                 >
                   Retry
                 </button>
@@ -938,8 +664,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
                 page={currentPage}
                 pageSize={pageSize}
                 total={total}
-                selectedLogId={selectedLog?.id}
-                onSelectLog={(log) => setSelectedLog(log)}
+                onSelectLog={(log) => router.push(`/logs/${encodeURIComponent(log.id)}`)}
                 onPageChange={(page) => {
                   if (page > currentPage && nextPageToken) {
                     updateSearch({ page, pageToken: nextPageToken });
@@ -969,40 +694,7 @@ export function LogExplorer({ team, token }: { team: Team; token: string }) {
         />
       </div>
 
-      {currentMode === "raw" ? <LiveTail teamId={team.id} /> : null}
-      <LogEventDrawer
-        log={selectedLog}
-        contextBefore={contextLoading ? [] : contextBefore}
-        contextAfter={contextLoading ? [] : contextAfter}
-        contextScope={contextScope}
-        onScopeChange={setContextScope}
-        onClose={() => setSelectedLog(null)}
-        onFilter={(field, value) => {
-          setSelectedLog(null);
-          void handleSearch(
-            currentQuery,
-            {
-              level: field === "level" ? value : currentFilters.level,
-              service: field === "service" ? value : currentFilters.service,
-              host: field === "host" ? value : currentFilters.host,
-              sourceId: currentSourceId,
-            },
-            currentTimeRange,
-            currentSort,
-            pageSize,
-          );
-        }}
-        onExclude={(_field, _value) => {
-          const next = [...currentExclusions, { field: _field, value: _value }].filter(
-            (item, index, arr) =>
-              arr.findIndex(
-                (candidate) => candidate.field === item.field && candidate.value === item.value,
-              ) === index,
-          );
-          updateSearch({ page: 1, exclusions: next });
-          setSelectedLog(null);
-        }}
-      />
+      <Dialog {...dialog.dialogProps} />
     </div>
   );
 }

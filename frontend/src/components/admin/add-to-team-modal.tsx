@@ -36,7 +36,7 @@ export function AddToTeamModal({
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 px-4">
-      <div className="w-full max-w-md rounded-[28px] border border-line bg-white p-6 shadow-panel dark:bg-slate-900">
+      <div className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-panel dark:bg-slate-900">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h3 className="text-lg font-semibold text-ink">Add user to team</h3>
@@ -61,7 +61,7 @@ export function AddToTeamModal({
               value={teamId}
               onChange={setTeamId}
               className="mt-1"
-              buttonClassName="rounded-xl px-4 py-2.5"
+              buttonClassName="rounded-lg px-3 py-2"
               options={teams.map((team) => ({
                 value: team.id,
                 label: `${team.name} (${team.memberCount})`,
@@ -78,7 +78,7 @@ export function AddToTeamModal({
               value={role}
               onChange={(value) => setRole(value as (typeof TEAM_ROLES)[number])}
               className="mt-1"
-              buttonClassName="rounded-xl px-4 py-2.5"
+              buttonClassName="rounded-lg px-3 py-2"
               options={ROLE_OPTIONS}
             />
           </div>
@@ -88,7 +88,7 @@ export function AddToTeamModal({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-xl border border-line px-4 py-2 text-sm text-ink transition hover:border-slate-400"
+            className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink transition hover:border-slate-400"
           >
             Cancel
           </button>
@@ -104,7 +104,7 @@ export function AddToTeamModal({
                 setPending(false);
               }
             }}
-            className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
+            className="rounded-lg bg-slate-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
           >
             {pending ? "Saving..." : "Add to team"}
           </button>

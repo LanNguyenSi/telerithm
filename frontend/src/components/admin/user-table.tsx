@@ -114,7 +114,7 @@ export function UserTable({
             {users.map((user) => (
               <article
                 key={user.id}
-                className="rounded-[24px] border border-line bg-white/75 p-4 dark:bg-white/5"
+                className="rounded-2xl border border-line bg-white/75 p-4 dark:bg-white/5"
               >
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                   <div className="space-y-2">
@@ -133,7 +133,7 @@ export function UserTable({
                         type="button"
                         disabled={pendingId === user.id}
                         onClick={() => void approve(user.id)}
-                        className="rounded-xl bg-cyan-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-cyan-500 disabled:opacity-50"
+                        className="rounded-lg bg-signal px-3 py-1.5 text-sm font-medium text-white transition hover:brightness-110 disabled:opacity-50"
                       >
                         {pendingId === user.id ? "Approving..." : "Approve"}
                       </button>
@@ -142,7 +142,7 @@ export function UserTable({
                       type="button"
                       disabled={pendingId === user.id || teams.length === 0}
                       onClick={() => setModalUser(user)}
-                      className="rounded-xl border border-line px-4 py-2 text-sm text-ink transition hover:border-slate-400 disabled:opacity-50"
+                      className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink transition hover:border-slate-400 disabled:opacity-50"
                     >
                       Add to team
                     </button>
