@@ -52,7 +52,7 @@ describe("QueryService natural search", () => {
     vi.clearAllMocks();
   });
 
-  it("drops hallucinated host filters, downgrades service eq to contains, and retries with relaxed filters", async () => {
+  it("validates both user and AI filters, then retries with validated user filters", async () => {
     getFacetsMock.mockResolvedValue({
       facets: [
         { field: "service", buckets: [{ value: "payment-service", count: 10 }] },
@@ -66,7 +66,6 @@ describe("QueryService natural search", () => {
       filtersApplied: [
         { field: "message", operator: "contains", value: "payment failure" },
         { field: "service", operator: "eq", value: "payment" },
-        { field: "host", operator: "eq", value: "api-1" },
       ],
       textTerms: ["payment", "failures", "fail", "failed"],
       warnings: [],
@@ -97,6 +96,10 @@ describe("QueryService natural search", () => {
       teamId: "t1",
       queryType: "natural",
       query: "show me payment failures",
+      filters: [
+        { field: "message", operator: "eq", value: "payment failure" },
+        { field: "host", operator: "eq", value: "api-1" },
+      ],
     });
 
     expect(result.total).toBe(10);
@@ -106,8 +109,10 @@ describe("QueryService natural search", () => {
     expect(firstQuery.filters).toEqual(
       expect.arrayContaining([
         { field: "service", operator: "contains", value: "payment" },
-        { field: "message", operator: "contains", value: "payment failure" },
       ]),
+    );
+    expect(firstQuery.filters).not.toEqual(
+      expect.arrayContaining([{ field: "message", operator: "eq", value: "payment failure" }]),
     );
     expect(firstQuery.filters).not.toEqual(
       expect.arrayContaining([{ field: "host", operator: "eq", value: "api-1" }]),
@@ -116,6 +121,7 @@ describe("QueryService natural search", () => {
     const secondQuery = searchMock.mock.calls[1]?.[0];
     expect(secondQuery.filters).toEqual([]);
     expect(nlqFilterPrunedTotalIncMock).toHaveBeenCalledWith({ field: "host", reason: "unknown_value" });
+    expect(nlqFilterPrunedTotalIncMock).toHaveBeenCalledWith({ field: "message", reason: "redundant" });
     expect(nlqRelaxedFallbackUsedTotalIncMock).toHaveBeenCalledWith({ result: "triggered" });
     expect(nlqRelaxedFallbackUsedTotalIncMock).toHaveBeenCalledWith({ result: "recovered" });
   });

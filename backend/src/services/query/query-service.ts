@@ -42,7 +42,19 @@ export class QueryService {
     const requestId = randomUUID();
     if (query.queryType === "natural" && query.query) {
       const originalQuery = query.query;
-      const facetHints = await this.loadFacetHints(query);
+      const initialUserFilters = query.filters ?? [];
+      // Phase 1: prune structurally unsafe/redundant user filters before facet lookup.
+      const preFacetValidatedUser = this.validateGeneratedFilters(initialUserFilters, {});
+      for (const pruned of preFacetValidatedUser.pruned) {
+        nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
+      }
+      const facetHints = await this.loadFacetHints({ ...query, filters: preFacetValidatedUser.filters });
+      // Phase 2: validate user filters against real facet values (service/host/level).
+      const userValidation = this.validateGeneratedFilters(preFacetValidatedUser.filters, facetHints);
+      for (const pruned of userValidation.pruned) {
+        nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
+      }
+      const validatedUserFilters = userValidation.filters;
       const translation = await this.aiService.translateQuery(originalQuery, query.teamId, {
         facetHints: this.facetHintsToArrays(facetHints),
       });
@@ -52,8 +64,7 @@ export class QueryService {
         nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
       }
 
-      const userFilters = query.filters ?? [];
-      const mergedFilters = [...userFilters, ...validatedAiFilters].filter(
+      const mergedFilters = [...validatedUserFilters, ...validatedAiFilters].filter(
         (filter, index, allFilters) =>
           allFilters.findIndex(
             (candidate) =>
@@ -64,7 +75,7 @@ export class QueryService {
       );
       // Remove textTerms already covered by filters to avoid redundant AND conditions
       const filterValues = new Set(
-        [...(query.filters ?? []), ...validatedAiFilters]
+        [...validatedUserFilters, ...validatedAiFilters]
           .map((f) => String(f.value).toLowerCase())
           .flatMap((v) => v.split(/\s+/)),
       );
@@ -89,7 +100,7 @@ export class QueryService {
         nlqRelaxedFallbackUsedTotal.inc({ result: "triggered" });
         const relaxedResult = await this.logRepo.search({
           ...plannedQuery,
-          filters: userFilters,
+          filters: validatedUserFilters,
         });
         if (relaxedResult.total > 0) {
           nlqRelaxedFallbackUsedTotal.inc({ result: "recovered" });
@@ -309,7 +320,7 @@ export class QueryService {
         continue;
       }
 
-      // Message filters are redundant with textTerms search — drop them to avoid over-filtering
+      // NLQ text intent should flow through textTerms search, not strict message filters.
       if (filter.field === "message") {
         pruned.push({ field: filter.field, reason: "redundant" });
         continue;

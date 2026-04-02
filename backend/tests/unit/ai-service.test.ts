@@ -63,9 +63,10 @@ describe("AIService", () => {
     expect(result.textTerms?.length).toBeGreaterThan(0);
   });
 
-  it("expands failure terms for broader matching", async () => {
+  it("keeps failure terms unexpanded in ai-service output", async () => {
     const result = await service.translateQuery("show me payment failures", "team-abc");
-    expect(result.textTerms).toEqual(expect.arrayContaining(["payment", "failures", "failure", "fail", "failed"]));
+    expect(result.textTerms).toEqual(expect.arrayContaining(["payment", "failures"]));
+    expect(result.textTerms).not.toEqual(expect.arrayContaining(["failure", "fail", "failed"]));
   });
 
   it("returns explanation string", async () => {
