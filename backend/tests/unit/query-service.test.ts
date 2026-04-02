@@ -160,7 +160,8 @@ describe("QueryService natural search", () => {
     expect(searchMock).toHaveBeenCalledTimes(1);
     const plannedQuery = searchMock.mock.calls[0]?.[0];
     expect(plannedQuery.query).toContain("payment");
-    expect(plannedQuery.query).toContain("logs");
+    // 'logs' is a domain stopword — it should be filtered out of textTerms
+    expect(plannedQuery.query).not.toContain("logs");
     expect(plannedQuery.filters).not.toEqual(
       expect.arrayContaining([{ field: "message", operator: "contains", value: "payment" }]),
     );
