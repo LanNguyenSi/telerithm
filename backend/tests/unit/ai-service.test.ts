@@ -101,3 +101,91 @@ describe("AIService", () => {
     });
   });
 });
+
+describe("AIService — heuristic: service extraction edge cases", () => {
+  const service = new AIService();
+
+  it("falls back to token-based service detection when no 'from' pattern", async () => {
+    const result = await service.translateQuery("checkout errors", "team-1");
+    // 'checkout' should be picked up as a service candidate
+    const serviceFilter = result.filtersApplied.find((f) => f.field === "service");
+    expect(serviceFilter).toBeDefined();
+  });
+
+  it("does not treat time words as service names", async () => {
+    const result = await service.translateQuery("errors from the last hour", "team-1");
+    const serviceFilter = result.filtersApplied.find((f) => f.field === "service");
+    // 'the', 'last', 'hour' are time words — should not become service filters
+    if (serviceFilter) {
+      expect(serviceFilter.value).not.toMatch(/^(the|last|hour|past|next|this)$/);
+    }
+  });
+
+  it("returns warning in heuristic mode", async () => {
+    const result = await service.translateQuery("show errors", "team-1");
+    expect(result.warnings).toBeDefined();
+    expect(result.warnings!.length).toBeGreaterThan(0);
+    expect(result.warnings![0]).toContain("heuristic");
+  });
+
+  it("textTerms limited to 5 items", async () => {
+    const result = await service.translateQuery(
+      "show payment checkout billing invoice order errors",
+      "team-1",
+    );
+    expect((result.textTerms ?? []).length).toBeLessThanOrEqual(5);
+  });
+
+  it("translateQueryHeuristicPublic is callable directly", () => {
+    const result = service.translateQueryHeuristicPublic("show errors", "team-1");
+    expect(result.filtersApplied).toBeDefined();
+    expect(Array.isArray(result.filtersApplied)).toBe(true);
+    expect(result.explanation).toBeTruthy();
+  });
+
+  it("heuristic handles warn level correctly", async () => {
+    const result = await service.translateQuery("show warnings from api", "team-1");
+    expect(result.filtersApplied).toContainEqual({
+      field: "level",
+      operator: "eq",
+      value: "warn",
+    });
+  });
+
+  it("facetHints passed to heuristic are accepted without error", async () => {
+    const result = await service.translateQuery("payment errors", "team-1", {
+      facetHints: {
+        service: ["payment-service", "api-gateway"],
+        level: ["error", "warn"],
+      },
+    });
+    expect(result.filtersApplied).toBeDefined();
+  });
+});
+
+describe("AIService — translateQueryHeuristicPublic direct", () => {
+  it("returns a valid NLQTranslation with all required fields", () => {
+    const service = new AIService();
+    const result = service.translateQueryHeuristicPublic("show payment failures from api", "team-xyz");
+    expect(result.filtersApplied).toBeDefined();
+    expect(Array.isArray(result.filtersApplied)).toBe(true);
+    expect(result.explanation).toBeTruthy();
+    expect(Array.isArray(result.textTerms)).toBe(true);
+    expect(Array.isArray(result.warnings)).toBe(true);
+  });
+
+  it("includes team ID in explanation", () => {
+    const service = new AIService();
+    const result = service.translateQueryHeuristicPublic("errors", "my-team");
+    expect(result.explanation).toContain("my-team");
+  });
+
+  it("does not emit more than 5 textTerms", () => {
+    const service = new AIService();
+    const result = service.translateQueryHeuristicPublic(
+      "alpha beta gamma delta epsilon zeta eta theta",
+      "t1",
+    );
+    expect((result.textTerms ?? []).length).toBeLessThanOrEqual(5);
+  });
+});
