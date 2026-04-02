@@ -15,6 +15,8 @@
 | 025 | Phase 3 | Patterns, Grouping, and Noise Reduction | Done |
 | 026 | Phase 3 | Query Engine Hardening, Cursors, and Async Search | Done |
 | 027 | Phase 3 | NLQ Reframing and Structured Query DSL | Done |
+| 028 | Phase 4 | NLQ Search Mode Separation | Planned |
+| 029 | Phase 4 | NLQ Stopword and Intent Extraction | Planned |
 
 ## Completed
 
@@ -31,6 +33,7 @@
 
 - `019` is the design anchor for `020` through `027`.
 - The phase split is intentional:
+  - Phase 4 addresses NLQ reliability and search mode architecture.
   - Phase 1 makes the existing logs page operationally safe.
   - Phase 2 adds core exploration workflows expected from production log tools.
   - Phase 3 addresses scale, noise reduction, and the long-term query model.
