@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   DashboardSummary,
+  LogFilter,
   LogFacetQuery,
   LogFacetResult,
   LogHistogramQuery,
@@ -15,10 +16,12 @@ import { AIService } from "../ai/ai-service.js";
 import { AlertService } from "../alert/alert-service.js";
 import { cache } from "../../cache/cache-service.js";
 import { config } from "../../config/index.js";
+import { nlqFilterPrunedTotal, nlqRelaxedFallbackUsedTotal } from "../../metrics/index.js";
 
 const DASHBOARD_CACHE_TTL = 30; // seconds
 
 type AsyncStatus = "pending" | "completed" | "failed";
+type FacetHints = Partial<Record<"service" | "host" | "level", Set<string>>>;
 type AsyncJobRecord = {
   requestId: string;
   status: AsyncStatus;
@@ -39,9 +42,18 @@ export class QueryService {
     const requestId = randomUUID();
     if (query.queryType === "natural" && query.query) {
       const originalQuery = query.query;
-      const translation = await this.aiService.translateQuery(originalQuery, query.teamId);
+      const facetHints = await this.loadFacetHints(query);
+      const translation = await this.aiService.translateQuery(originalQuery, query.teamId, {
+        facetHints: this.facetHintsToArrays(facetHints),
+      });
+      const validated = this.validateGeneratedFilters(translation.filtersApplied, facetHints);
+      const validatedAiFilters = validated.filters;
+      for (const pruned of validated.pruned) {
+        nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
+      }
 
-      const mergedFilters = [...(query.filters ?? []), ...translation.filtersApplied].filter(
+      const userFilters = query.filters ?? [];
+      const mergedFilters = [...userFilters, ...validatedAiFilters].filter(
         (filter, index, allFilters) =>
           allFilters.findIndex(
             (candidate) =>
@@ -64,6 +76,18 @@ export class QueryService {
       };
 
       const plannedResult = await this.logRepo.search(plannedQuery);
+      if (plannedResult.total === 0 && validatedAiFilters.length > 0) {
+        nlqRelaxedFallbackUsedTotal.inc({ result: "triggered" });
+        const relaxedResult = await this.logRepo.search({
+          ...plannedQuery,
+          filters: userFilters,
+        });
+        if (relaxedResult.total > 0) {
+          nlqRelaxedFallbackUsedTotal.inc({ result: "recovered" });
+          return { ...relaxedResult, requestId };
+        }
+        nlqRelaxedFallbackUsedTotal.inc({ result: "still_zero" });
+      }
       return { ...plannedResult, requestId };
     }
 
@@ -179,5 +203,103 @@ export class QueryService {
         this.asyncJobs.delete(id);
       }
     }
+  }
+
+  private async loadFacetHints(query: LogQuery): Promise<FacetHints> {
+    const facetQuery: LogFacetQuery = {
+      teamId: query.teamId,
+      sourceId: query.sourceId,
+      startTime: query.startTime,
+      endTime: query.endTime,
+      queryType: "sql",
+      filters: query.filters,
+      fields: ["service", "host", "level"],
+      limit: 100,
+    };
+    const facets = await this.logRepo.getFacets(facetQuery);
+    const hints: FacetHints = {};
+    for (const facet of facets.facets) {
+      if (facet.field !== "service" && facet.field !== "host" && facet.field !== "level") continue;
+      hints[facet.field] = new Set(
+        facet.buckets.map((bucket) => bucket.value.trim().toLowerCase()).filter((value) => value.length > 0),
+      );
+    }
+    return hints;
+  }
+
+  private facetHintsToArrays(hints: FacetHints): Partial<Record<"service" | "host" | "level", string[]>> {
+    return {
+      service: hints.service ? [...hints.service] : undefined,
+      host: hints.host ? [...hints.host] : undefined,
+      level: hints.level ? [...hints.level] : undefined,
+    };
+  }
+
+  private validateGeneratedFilters(
+    filters: LogFilter[],
+    facetHints: FacetHints,
+  ): { filters: LogFilter[]; pruned: Array<{ field: string; reason: "empty" | "unknown_value" }> } {
+    const kept: LogFilter[] = [];
+    const pruned: Array<{ field: string; reason: "empty" | "unknown_value" }> = [];
+
+    for (const filter of filters) {
+      if (typeof filter.value !== "string") {
+        kept.push(filter);
+        continue;
+      }
+
+      const value = filter.value.trim().toLowerCase();
+      if (value.length === 0) {
+        pruned.push({ field: filter.field, reason: "empty" });
+        continue;
+      }
+
+      if (filter.field === "service") {
+        const knownServices = facetHints.service;
+        if (!knownServices || knownServices.size === 0) {
+          kept.push(filter);
+          continue;
+        }
+        const operator = filter.operator === "eq" ? "contains" : filter.operator;
+        if ([...knownServices].some((service) => service.includes(value))) {
+          kept.push({ ...filter, operator });
+        } else {
+          pruned.push({ field: filter.field, reason: "unknown_value" });
+        }
+        continue;
+      }
+
+      if (filter.field === "host") {
+        const knownHosts = facetHints.host;
+        if (!knownHosts || knownHosts.size === 0) {
+          kept.push(filter);
+          continue;
+        }
+        const isValid =
+          filter.operator === "contains"
+            ? [...knownHosts].some((host) => host.includes(value))
+            : knownHosts.has(value);
+        if (isValid) {
+          kept.push(filter);
+        } else {
+          pruned.push({ field: filter.field, reason: "unknown_value" });
+        }
+        continue;
+      }
+
+      if (filter.field === "level") {
+        const knownLevels = facetHints.level;
+        if (!knownLevels || knownLevels.size === 0 || knownLevels.has(value)) {
+          kept.push(filter);
+        } else {
+          pruned.push({ field: filter.field, reason: "unknown_value" });
+        }
+        continue;
+      }
+
+      kept.push(filter);
+    }
+
+    return { filters: kept, pruned };
   }
 }

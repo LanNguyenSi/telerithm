@@ -50,3 +50,17 @@ export const alertIncidentsCreatedTotal = new Counter({
   help: "Total number of alert incidents created by evaluation worker",
   registers: [registry],
 });
+
+export const nlqFilterPrunedTotal = new Counter({
+  name: "telerithm_nlq_filter_pruned_total",
+  help: "Total number of AI-generated NLQ filters dropped after facet validation",
+  labelNames: ["field", "reason"] as const,
+  registers: [registry],
+});
+
+export const nlqRelaxedFallbackUsedTotal = new Counter({
+  name: "telerithm_nlq_relaxed_fallback_used_total",
+  help: "Total number of NLQ searches that retried with relaxed AI filters after zero-result plan",
+  labelNames: ["result"] as const,
+  registers: [registry],
+});
