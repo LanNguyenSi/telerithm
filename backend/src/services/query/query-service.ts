@@ -98,7 +98,9 @@ export class QueryService {
       startTime,
       endTime,
       queryType: "sql",
-      query: textTerms.length > 0 ? textTerms : query.query,
+      // If all textTerms were covered by AI filters, use undefined (no freetext search).
+      // Falling back to the raw NL query would trigger heuristic parsing of the full phrase.
+      query: textTerms.length > 0 ? textTerms : undefined,
     };
 
     const plannedResult = await this.logRepo.search(plannedQuery);
