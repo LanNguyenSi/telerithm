@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { SavedLogViewDefinition } from "@/types";
 
@@ -22,6 +22,7 @@ const RELATIVE_DURATION_MS: Record<RelativeDuration, number> = {
 };
 const REFRESH_VALUES = new Set(["off", "10s", "30s", "1m"]);
 const TIME_MODES = new Set(["rel", "abs"]);
+const ABSOLUTE_RANGE_STORAGE_KEY = "telerithm.logs.search.absoluteRange.v1";
 
 export const FACET_FIELDS: Array<
   "service" | "level" | "host" | "sourceId" | "env" | "region" | "status_code" | "route"
@@ -55,6 +56,7 @@ export interface SearchUpdate {
   timeMode?: TimeMode;
   relativeDuration?: RelativeDuration;
   refresh?: RefreshInterval;
+  shareAbsoluteTime?: boolean;
   level?: string;
   service?: string;
   host?: string;
@@ -122,6 +124,29 @@ function parseColumns(params: URLSearchParams): string[] {
     .filter((value, index, values) => value.length > 0 && values.indexOf(value) === index);
 }
 
+function readStoredAbsoluteRange(): { startTime: string; endTime: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(ABSOLUTE_RANGE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { startTime?: string; endTime?: string };
+    const { startTime, endTime } = parsed;
+    if (!isValidIso(startTime ?? null) || !isValidIso(endTime ?? null)) return null;
+    return { startTime: startTime as string, endTime: endTime as string };
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredAbsoluteRange(range: { startTime: string; endTime: string }): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(ABSOLUTE_RANGE_STORAGE_KEY, JSON.stringify(range));
+  } catch {
+    // Ignore storage failures and keep URL-driven behavior.
+  }
+}
+
 /* ── Hook ── */
 
 export function useLogSearch() {
@@ -129,6 +154,7 @@ export function useLogSearch() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [fallbackRange] = useState(() => defaultTimeRange());
+  const [localAbsoluteRange, setLocalAbsoluteRange] = useState(() => defaultTimeRange());
 
   const searchParamString = searchParams.toString();
 
@@ -167,11 +193,14 @@ export function useLogSearch() {
   const currentRefresh = REFRESH_VALUES.has(searchParams.get("refresh") ?? "")
     ? (searchParams.get("refresh") as RefreshInterval)
     : "off";
+  const currentShareAbsoluteTime = searchParams.get("shareAbs") === "1";
   const absoluteFrom = searchParams.get("from") ?? searchParams.get("startTime"); // backward compatible
   const absoluteTo = searchParams.get("to") ?? searchParams.get("endTime"); // backward compatible
   const currentTimeRange =
-    currentTimeMode === "abs" && isValidIso(absoluteFrom) && isValidIso(absoluteTo)
-      ? { startTime: absoluteFrom, endTime: absoluteTo }
+    currentTimeMode === "abs"
+      ? isValidIso(absoluteFrom) && isValidIso(absoluteTo)
+        ? { startTime: absoluteFrom, endTime: absoluteTo }
+        : localAbsoluteRange
       : computeRelativeRange(currentRelativeDuration, fallbackRange.endTime);
   const currentSort = {
     sortBy:
@@ -179,6 +208,18 @@ export function useLogSearch() {
       DEFAULT_SORT.sortBy,
     sortDirection: (searchParams.get("sortDirection") as "asc" | "desc" | null) ?? DEFAULT_SORT.sortDirection,
   };
+
+  useEffect(() => {
+    if (currentTimeMode !== "abs") return;
+    if (isValidIso(absoluteFrom) && isValidIso(absoluteTo)) {
+      const next = { startTime: absoluteFrom, endTime: absoluteTo };
+      setLocalAbsoluteRange(next);
+      writeStoredAbsoluteRange(next);
+      return;
+    }
+    const stored = readStoredAbsoluteRange();
+    if (stored) setLocalAbsoluteRange(stored);
+  }, [absoluteFrom, absoluteTo, currentTimeMode]);
 
   const currentDefinition = useMemo<SavedLogViewDefinition>(
     () => ({
@@ -242,6 +283,7 @@ export function useLogSearch() {
     const requestedTimeMode = next.timeMode ?? currentTimeMode;
     const requestedRelativeDuration = next.relativeDuration ?? currentRelativeDuration;
     const requestedRefresh = next.refresh ?? currentRefresh;
+    const requestedShareAbsoluteTime = next.shareAbsoluteTime ?? currentShareAbsoluteTime;
     const hasAbsoluteOverride = Boolean(next.startTime || next.endTime);
     const startTime = next.startTime ?? currentTimeRange.startTime;
     const endTime = next.endTime ?? currentTimeRange.endTime;
@@ -291,19 +333,32 @@ export function useLogSearch() {
       else params.delete("refresh");
       params.delete("from");
       params.delete("to");
+      params.delete("shareAbs");
       params.delete("startTime");
       params.delete("endTime");
     } else {
       params.set("tr", "abs");
-      if (startTime) params.set("from", startTime);
-      else params.delete("from");
-      if (endTime) params.set("to", endTime);
-      else params.delete("to");
+      if (requestedShareAbsoluteTime) {
+        params.set("shareAbs", "1");
+        if (startTime) params.set("from", startTime);
+        else params.delete("from");
+        if (endTime) params.set("to", endTime);
+        else params.delete("to");
+      } else {
+        params.delete("shareAbs");
+        params.delete("from");
+        params.delete("to");
+      }
       params.delete("dur");
       if (requestedRefresh !== "off") params.set("refresh", requestedRefresh);
       else params.delete("refresh");
       params.delete("startTime");
       params.delete("endTime");
+      if (startTime && endTime) {
+        const nextAbsoluteRange = { startTime, endTime };
+        setLocalAbsoluteRange(nextAbsoluteRange);
+        writeStoredAbsoluteRange(nextAbsoluteRange);
+      }
     }
     if (level) params.set("level", level);
     else params.delete("level");
@@ -336,6 +391,7 @@ export function useLogSearch() {
     currentTimeMode,
     currentRelativeDuration,
     currentRefresh,
+    currentShareAbsoluteTime,
     currentSort,
     currentDefinition,
     fallbackRange,
