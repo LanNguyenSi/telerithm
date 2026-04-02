@@ -83,6 +83,7 @@ services:
       REGISTRATION_MODE: ${REGISTRATION_MODE:-approval}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_BASE_URL: https://api.groq.com/openai/v1
     depends_on:
       postgres:
         condition: service_healthy

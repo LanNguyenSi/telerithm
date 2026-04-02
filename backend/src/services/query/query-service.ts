@@ -297,6 +297,12 @@ export class QueryService {
         continue;
       }
 
+
+      // Message field: always use contains instead of eq
+      if (filter.field === "message" && filter.operator === "eq") {
+        kept.push({ ...filter, operator: "contains" });
+        continue;
+      }
       kept.push(filter);
     }
 
