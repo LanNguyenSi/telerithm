@@ -501,10 +501,7 @@ export class LogRepository {
     return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url");
   }
 
-  async findById(
-    teamId: string,
-    compositeId: string,
-  ): Promise<LogEntry | null> {
+  async findById(teamId: string, compositeId: string): Promise<LogEntry | null> {
     // Composite ID format: team_id:source_id:timestamp
     const firstColon = compositeId.indexOf(":");
     const lastColon = compositeId.lastIndexOf(":");

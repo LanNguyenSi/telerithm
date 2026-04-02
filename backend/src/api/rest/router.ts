@@ -390,7 +390,7 @@ apiRouter.get(
 apiRouter.get(
   "/logs/:id",
   asyncHandler(async (req, res) => {
-    const teamId = String(Array.isArray(req.query.teamId) ? req.query.teamId[0] : req.query.teamId ?? "");
+    const teamId = String(Array.isArray(req.query.teamId) ? req.query.teamId[0] : (req.query.teamId ?? ""));
     const compositeId = decodeURIComponent(String(req.params.id ?? ""));
     if (!teamId || !compositeId) {
       res.status(400).json({ error: "teamId and id are required" });
