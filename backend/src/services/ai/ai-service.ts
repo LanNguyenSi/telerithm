@@ -119,11 +119,10 @@ ${facetHintText}`;
       filtersApplied: filters,
       inferredTimeRange,
       textTerms: Array.isArray(parsed.textTerms)
-        ? this.expandTextTerms(
-            parsed.textTerms.filter(
-              (term): term is string => typeof term === "string" && term.trim().length > 0,
-            ),
-          )
+        ? parsed.textTerms
+            .flatMap((term: string) => typeof term === "string" ? term.split(/\s+/) : [])
+            .map((t: string) => t.trim())
+            .filter((t: string) => t.length > 1)
         : undefined,
       warnings: Array.isArray(parsed.warnings)
         ? parsed.warnings.filter(
@@ -204,13 +203,11 @@ ${facetHintText}`;
     return {
       explanation: `Heuristic interpretation for team ${teamId} using level/service intent extracted from natural language.`,
       filtersApplied: filters,
-      textTerms: this.expandTextTerms(
-        naturalQuery
+      textTerms: naturalQuery
           .split(/\s+/)
           .map((term) => term.trim())
           .filter((term) => term.length > 2 && !stopWords.has(term.toLowerCase()))
           .slice(0, 5),
-      ),
       warnings: ["AI fallback mode active: heuristic interpretation was used."],
     };
   }

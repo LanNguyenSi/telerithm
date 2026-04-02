@@ -62,7 +62,16 @@ export class QueryService {
               String(candidate.value) === String(filter.value),
           ) === index,
       );
-      const textTerms = (translation.textTerms ?? []).join(" ").trim();
+      // Remove textTerms already covered by filters to avoid redundant AND conditions
+      const filterValues = new Set(
+        [...(query.filters ?? []), ...validatedAiFilters]
+          .map((f) => String(f.value).toLowerCase())
+          .flatMap((v) => v.split(/\s+/))
+      );
+      const textTerms = (translation.textTerms ?? [])
+        .filter((term) => !filterValues.has(term.toLowerCase()))
+        .join(" ")
+        .trim();
       const inferredStart = translation.inferredTimeRange?.startTime;
       const inferredEnd = translation.inferredTimeRange?.endTime;
 
@@ -238,9 +247,9 @@ export class QueryService {
   private validateGeneratedFilters(
     filters: LogFilter[],
     facetHints: FacetHints,
-  ): { filters: LogFilter[]; pruned: Array<{ field: string; reason: "empty" | "unknown_value" }> } {
+  ): { filters: LogFilter[]; pruned: Array<{ field: string; reason: "empty" | "unknown_value" | "redundant" }> } {
     const kept: LogFilter[] = [];
-    const pruned: Array<{ field: string; reason: "empty" | "unknown_value" }> = [];
+    const pruned: Array<{ field: string; reason: "empty" | "unknown_value" | "redundant" }> = [];
 
     for (const filter of filters) {
       if (typeof filter.value !== "string") {
@@ -298,9 +307,9 @@ export class QueryService {
       }
 
 
-      // Message field: always use contains instead of eq
-      if (filter.field === "message" && filter.operator === "eq") {
-        kept.push({ ...filter, operator: "contains" });
+      // Message filters are redundant with textTerms search — drop them to avoid over-filtering
+      if (filter.field === "message") {
+        pruned.push({ field: filter.field, reason: "redundant" });
         continue;
       }
       kept.push(filter);
