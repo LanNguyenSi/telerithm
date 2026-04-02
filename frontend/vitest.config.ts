@@ -13,5 +13,16 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/**/*.test.{ts,tsx}"],
+    coverage: {
+      exclude: [
+        "**/*.config.*",
+        "**/types/**",
+        "**/app/**",
+        "**/select.tsx", // Complex UI state, heavily depends on DOM
+        "**/multi-select.tsx",
+        "**/hooks/**", // URL router hooks require Next.js context
+        "**/lib/api/**", // API client (integration tested via backend)
+      ],
+    },
   },
 });
