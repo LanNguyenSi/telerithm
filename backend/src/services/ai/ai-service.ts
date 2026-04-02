@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import type { LogFilter, NLQTranslation } from "../../types/domain.js";
 import { config } from "../../config/index.js";
 import { logger } from "../../logger.js";
+import { DOMAIN_STOPWORDS, NLQ_STOPWORD_PROMPT_HINT } from "../../constants/nlq.js";
 
 const ALLOWED_OPERATORS: LogFilter["operator"][] = ["eq", "neq", "gt", "lt", "contains"];
 type FacetHints = Partial<Record<"service" | "host" | "level", string[]>>;
@@ -80,7 +81,8 @@ Rules:
 - inferredTimeRange is optional. If user asks "last hour", use startTime="${oneHourAgo}" and endTime="${now.toISOString()}".
 - If uncertain, add a warning and leave ambiguous items in textTerms.
 Known facet values (ground truth from current search scope):
-${facetHintText}`;
+${facetHintText}
+${NLQ_STOPWORD_PROMPT_HINT}`;
 
     const response = await this.openai!.chat.completions.create({
       model: process.env.OPENAI_MODEL || "llama-3.3-70b-versatile",
@@ -136,18 +138,13 @@ ${facetHintText}`;
     const lower = naturalQuery.toLowerCase();
     const filters: LogFilter[] = [];
     const stopWords = new Set([
-      "show",
-      "me",
-      "all",
-      "the",
+      ...DOMAIN_STOPWORDS,
+      // Heuristic-specific extras (temporal + structural)
       "from",
       "last",
       "hour",
       "hours",
       "service",
-      "logs",
-      "log",
-      "find",
       "count",
       "with",
     ]);

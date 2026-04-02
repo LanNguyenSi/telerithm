@@ -74,4 +74,31 @@ describe("AIService", () => {
     expect(result.explanation).toBeTruthy();
     expect(typeof result.explanation).toBe("string");
   });
-});
+
+  describe("domain stopword filtering (heuristic mode)", () => {
+    it("strips 'logs' from textTerms — 'show payment logs'", async () => {
+      const result = await service.translateQuery("show payment logs", "team-1");
+      expect(result.textTerms).not.toContain("logs");
+    });
+
+    it("strips 'show' and 'me' from textTerms — 'show me all entries'", async () => {
+      const result = await service.translateQuery("show me all entries", "team-1");
+      expect(result.textTerms).not.toContain("show");
+      expect(result.textTerms).not.toContain("me");
+    });
+
+    it("does NOT strip content words — 'connection timeout logs'", async () => {
+      const result = await service.translateQuery("connection timeout logs", "team-1");
+      expect(result.textTerms).toContain("connection");
+      expect(result.textTerms).toContain("timeout");
+    });
+
+    it("does NOT strip 'failures' — content word, not meta-word", async () => {
+      const result = await service.translateQuery("show payment failures", "team-1");
+      expect(result.textTerms).not.toContain("show");
+      const hasFailure = (result.textTerms ?? []).some(t => t.includes("failure"));
+      expect(hasFailure).toBe(true);
+    });
+  });
+
+})

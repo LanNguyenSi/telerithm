@@ -17,6 +17,7 @@ import { AlertService } from "../alert/alert-service.js";
 import { cache } from "../../cache/cache-service.js";
 import { config } from "../../config/index.js";
 import { nlqFilterPrunedTotal, nlqRelaxedFallbackUsedTotal } from "../../metrics/index.js";
+import { DOMAIN_STOPWORDS } from "../../constants/nlq.js";
 
 const DASHBOARD_CACHE_TTL = 30; // seconds
 
@@ -99,6 +100,8 @@ export class QueryService {
       );
       const textTerms = [...(translation.textTerms ?? []), ...recoveredMessageTerms]
         .filter((term) => !filterValues.has(term.toLowerCase()))
+        // Safety net: strip domain meta-words regardless of AI/heuristic source
+        .filter((term) => !DOMAIN_STOPWORDS.has(term.toLowerCase()))
         .filter((term, index, allTerms) => allTerms.indexOf(term) === index)
         .join(" ")
         .trim();
