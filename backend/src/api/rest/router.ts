@@ -387,24 +387,6 @@ apiRouter.get(
   }),
 );
 
-apiRouter.get(
-  "/logs/:id",
-  asyncHandler(async (req, res) => {
-    const teamId = String(Array.isArray(req.query.teamId) ? req.query.teamId[0] : (req.query.teamId ?? ""));
-    const compositeId = decodeURIComponent(String(req.params.id ?? ""));
-    if (!teamId || !compositeId) {
-      res.status(400).json({ error: "teamId and id are required" });
-      return;
-    }
-    const log = await logRepository.findById(teamId, compositeId);
-    if (!log) {
-      res.status(404).json({ error: "Log not found" });
-      return;
-    }
-    res.json({ log });
-  }),
-);
-
 apiRouter.post(
   "/logs/context",
   asyncHandler(async (req, res) => {
@@ -648,6 +630,24 @@ apiRouter.delete(
     } catch (error) {
       res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
+  }),
+);
+
+apiRouter.get(
+  "/logs/:id",
+  asyncHandler(async (req, res) => {
+    const teamId = String(Array.isArray(req.query.teamId) ? req.query.teamId[0] : (req.query.teamId ?? ""));
+    const compositeId = decodeURIComponent(String(req.params.id ?? ""));
+    if (!teamId || !compositeId) {
+      res.status(400).json({ error: "teamId and id are required" });
+      return;
+    }
+    const log = await logRepository.findById(teamId, compositeId);
+    if (!log) {
+      res.status(404).json({ error: "Log not found" });
+      return;
+    }
+    res.json({ log });
   }),
 );
 
