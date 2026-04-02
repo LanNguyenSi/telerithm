@@ -4,36 +4,43 @@
 
 Telerithm helps you understand what's happening in your systems. Instead of grepping through millions of log lines, ask questions in plain language and let AI surface the signal from the noise.
 
+🌐 **Live Demo:** [demo.telerithm.cloud](https://demo.telerithm.cloud)
+📄 **Landing Page:** [telerithm.cloud](https://telerithm.cloud)
+
 ---
 
 ## Features
 
 **Available now:**
 
-- **Natural Language Search** - ask _"show me payment failures from the last hour"_ instead of writing SQL
-- **Real-time Log Streaming** - SSE-based live tail for newly ingested logs
-- **Multi-Source Ingestion** - HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
-- **Alert Rules & Incidents** - threshold-based alerts with severity levels and incident lifecycle
-- **Notification Channels** - Email, Webhook, Slack, Microsoft Teams
-- **Error Grouping** - automatic issue fingerprinting with assignment workflow
-- **Escalation Policies** - timed escalation steps with configurable notification channels
-- **Maintenance Windows** - suppress alerts during scheduled downtime
-- **Team Management** - multi-tenant with role-based access (Owner, Admin, Member, Viewer)
-- **Invite System** - token-based team invites with optional email restriction
-- **Admin API** - user management, team overview, system statistics
-- **Self-Hosted First** - single-tenant default, optional multi-tenancy via config flag
+- **Natural Language Search** — ask _"show me payment failures from the last hour"_ instead of writing SQL
+- **Real-time Log Streaming** — SSE-based live tail for newly ingested logs
+- **Today View** — last hour at a glance with auto-refresh and level filtering
+- **Log Detail View** — single log inspection with surrounding context, field filtering, and raw JSON
+- **Saved Views** — persist search configurations, share team-wide, set as default
+- **Multi-Source Ingestion** — HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
+- **Alert Rules & Incidents** — threshold-based alerts with severity levels and incident lifecycle
+- **Notification Channels** — Email, Webhook, Slack, Microsoft Teams
+- **Error Grouping** — automatic issue fingerprinting with assignment workflow
+- **Escalation Policies** — timed escalation steps with configurable notification channels
+- **Maintenance Windows** — suppress alerts during scheduled downtime
+- **Histogram & Patterns** — visual log distribution and automatic pattern clustering
+- **Faceted Search** — filter by service, level, host, and custom fields
+- **Team Management** — multi-tenant with role-based access (Owner, Admin, Member, Viewer)
+- **Invite System** — token-based team invites with optional email restriction
+- **Admin API** — user management, team overview, system statistics
+- **Self-Hosted First** — single-tenant default, optional multi-tenancy via config flag
 
 **Planned:**
 
-- **AI Root Cause Analysis** - automatic incident summarization with fix suggestions
-- **AI Anomaly Detection** - pattern deviation alerts without manual threshold config
-- **Log Pattern Clustering** - group similar log lines to reduce noise
-- **Saved Queries & Dashboards** - custom dashboard builder with persistent views
-- **RBAC for Sources** - per-source access control within teams
-- **SSO / OIDC** - enterprise authentication providers
-- **Retention Policies** - per-source configurable log retention
-- **Metrics Export** - Prometheus endpoint for operational monitoring
-- **CLI Tool** - `telerithm` command for local debugging and log tailing
+- **AI Root Cause Analysis** — automatic incident summarization with fix suggestions
+- **AI Anomaly Detection** — pattern deviation alerts without manual threshold config
+- **Saved Queries & Dashboards** — custom dashboard builder with persistent views
+- **RBAC for Sources** — per-source access control within teams
+- **SSO / OIDC** — enterprise authentication providers
+- **Retention Policies** — per-source configurable log retention
+- **Metrics Export** — Prometheus endpoint for operational monitoring
+- **CLI Tool** — `telerithm` command for local debugging and log tailing
 
 ---
 
@@ -49,11 +56,11 @@ This starts the full stack:
 
 | Service    | URL                   |
 | ---------- | --------------------- |
-| Frontend   | http://localhost:3000 |
-| Backend    | http://localhost:4000 |
-| PostgreSQL | localhost:5432        |
-| ClickHouse | localhost:8123        |
-| Redis      | localhost:6379        |
+| Frontend   | http://localhost:3000  |
+| Backend    | http://localhost:4000  |
+| PostgreSQL | localhost:5432         |
+| ClickHouse | localhost:8123         |
+| Redis      | localhost:6379         |
 
 ```bash
 make logs    # follow container logs
@@ -169,11 +176,14 @@ All endpoints are under `/api/v1`. Auth endpoints use Bearer tokens.
 | `POST` | `/invites/:token/accept` | Accept invite          |
 | `POST` | `/ingest/:sourceId`      | Ingest logs (API key)  |
 | `POST` | `/logs/search`           | Search logs            |
+| `GET`  | `/logs/:id`              | Get single log by ID   |
 | `POST` | `/query/natural`         | Natural language query |
 | `GET`  | `/stream/logs`           | SSE live tail          |
 | `GET`  | `/alerts/rules`          | List alert rules       |
 | `GET`  | `/alerts/incidents`      | List incidents         |
 | `GET`  | `/issues`                | List grouped errors    |
+| `GET`  | `/logs/views`            | List saved views       |
+| `POST` | `/logs/views`            | Create saved view      |
 | `GET`  | `/admin/users`           | Admin: list users      |
 | `GET`  | `/admin/stats`           | Admin: system stats    |
 | `GET`  | `/health`                | Health check           |
