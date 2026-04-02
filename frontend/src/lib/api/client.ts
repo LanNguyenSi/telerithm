@@ -155,6 +155,10 @@ export async function getLogs(
   });
 }
 
+export async function getLogById(teamId: string, logId: string) {
+  return request<{ log: LogEntry }>(`/logs/${encodeURIComponent(logId)}?teamId=${teamId}`);
+}
+
 export async function getNaturalExplanation(teamId: string, query: string) {
   return request<NaturalQueryPlan>("/query/natural", {
     method: "POST",

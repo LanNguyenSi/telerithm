@@ -31,7 +31,7 @@ export function LogEventDrawer({
   const pretty = JSON.stringify(log, null, 2);
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/35 backdrop-blur-sm">
+    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/40 backdrop-blur-sm">
       <aside className="h-full w-full max-w-2xl overflow-y-auto border-l border-line bg-panel p-4 shadow-panel dark:shadow-panel-dark">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>

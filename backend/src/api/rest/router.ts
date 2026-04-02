@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { type Request, type Response, type NextFunction, Router } from "express";
 import rateLimit from "express-rate-limit";
 import { IngestionService } from "../../ingestion/ingestion-service.js";
+import { LogRepository } from "../../repositories/log-repository.js";
 import { AlertService } from "../../services/alert/alert-service.js";
 import { DashboardService } from "../../services/dashboard/dashboard-service.js";
 import { QueryService } from "../../services/query/query-service.js";
@@ -49,6 +50,7 @@ const DEFAULT_SEARCH_LOOKBACK_MS = 60 * 60 * 1000;
 
 const teamService = new TeamService();
 const queryService = new QueryService();
+const logRepository = new LogRepository();
 const alertService = new AlertService();
 const dashboardService = new DashboardService();
 const ingestionService = new IngestionService();
@@ -628,6 +630,24 @@ apiRouter.delete(
     } catch (error) {
       res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
+  }),
+);
+
+apiRouter.get(
+  "/logs/:id",
+  asyncHandler(async (req, res) => {
+    const teamId = String(Array.isArray(req.query.teamId) ? req.query.teamId[0] : (req.query.teamId ?? ""));
+    const compositeId = decodeURIComponent(String(req.params.id ?? ""));
+    if (!teamId || !compositeId) {
+      res.status(400).json({ error: "teamId and id are required" });
+      return;
+    }
+    const log = await logRepository.findById(teamId, compositeId);
+    if (!log) {
+      res.status(404).json({ error: "Log not found" });
+      return;
+    }
+    res.json({ log });
   }),
 );
 

@@ -500,4 +500,54 @@ export class LogRepository {
   private encodePageToken(offset: number): string {
     return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url");
   }
+
+  async findById(teamId: string, compositeId: string): Promise<LogEntry | null> {
+    // Composite ID format: team_id:source_id:timestamp
+    const firstColon = compositeId.indexOf(":");
+    const lastColon = compositeId.lastIndexOf(":");
+    if (firstColon === -1 || lastColon === firstColon) return null;
+
+    const idTeamId = compositeId.slice(0, firstColon);
+    const sourceId = compositeId.slice(firstColon + 1, lastColon);
+    const timestamp = compositeId.slice(lastColon + 1);
+
+    if (idTeamId !== teamId) return null;
+
+    const resultSet = await clickhouse.query({
+      query: `SELECT team_id, source_id, timestamp, level, service, host, message, fields
+              FROM logs
+              WHERE team_id = {teamId:String}
+                AND source_id = {sourceId:String}
+                AND timestamp = {timestamp:String}
+              LIMIT 1`,
+      query_params: { teamId, sourceId, timestamp },
+      format: "JSONEachRow",
+    });
+
+    const rows = await resultSet.json<{
+      team_id: string;
+      source_id: string;
+      timestamp: string;
+      level: string;
+      service: string;
+      host: string;
+      message: string;
+      fields: Record<string, string>;
+    }>();
+
+    if (rows.length === 0) return null;
+
+    const row = rows[0]!;
+    return {
+      id: compositeId,
+      teamId: row.team_id,
+      sourceId: row.source_id,
+      timestamp: row.timestamp,
+      level: row.level as LogEntry["level"],
+      service: row.service,
+      host: row.host,
+      message: row.message,
+      fields: row.fields ?? {},
+    };
+  }
 }

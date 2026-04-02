@@ -25,7 +25,7 @@ export function RegisterForm({
         </div>
 
         {state?.pendingApproval ? (
-          <div className="rounded-[28px] border border-line bg-white/80 p-6 shadow-panel dark:bg-white/5">
+          <div className="rounded-2xl border border-line bg-white/80 p-6 shadow-panel dark:bg-white/5">
             <h2 className="text-lg font-semibold text-ink">Request submitted</h2>
             <p className="mt-2 text-sm text-muted">
               {state.success ?? "Your account is waiting for admin approval."}

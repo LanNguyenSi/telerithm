@@ -141,7 +141,7 @@ export function Select({
                 option.disabled && "cursor-not-allowed text-muted/60",
                 !option.disabled && "text-ink",
                 isFocused && !option.disabled && "bg-slate-100 dark:bg-white/10",
-                isSelected && !option.disabled && "bg-sky-50 text-sky-700 dark:bg-cyan-400/10 dark:text-cyan-300",
+                isSelected && !option.disabled && "bg-cyan-50 text-cyan-700 dark:bg-cyan-400/10 dark:text-cyan-300",
               )}
             >
               <span className={clsx("truncate", isSelected && "font-medium")}>{option.label}</span>
