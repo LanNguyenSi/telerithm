@@ -81,8 +81,13 @@ export class QueryService {
     const endTime =
       translation.inferredTimeRange?.endTime ?? query.context?.currentTimeRange?.endTime ?? query.endTime;
 
+    // Strip textTerms already covered by AI filters to avoid redundant AND conditions
+    const filterValues = new Set(
+      aiFilters.map((f) => String(f.value).toLowerCase()).flatMap((v) => v.split(/\s+/)),
+    );
     const textTerms = (translation.textTerms ?? [])
       .filter((term) => !DOMAIN_STOPWORDS.has(term.toLowerCase()))
+      .filter((term) => !filterValues.has(term.toLowerCase()))
       .filter((term, index, all) => all.indexOf(term) === index)
       .join(" ")
       .trim();
