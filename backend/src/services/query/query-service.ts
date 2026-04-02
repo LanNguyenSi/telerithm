@@ -319,7 +319,6 @@ export class QueryService {
         pruned.push({ field: filter.field, reason: "redundant" });
         continue;
       }
-
       kept.push(filter);
     }
 
