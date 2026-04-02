@@ -27,6 +27,13 @@ const FACET_FIELD_REGISTRY: Record<string, string> = {
   status_code: "fields['status_code']",
   route: "fields['route']",
 };
+const SEARCH_TERM_VARIANTS: Record<string, string[]> = {
+  fail: ["failed", "failure", "failures", "failing"],
+  failed: ["fail", "failure", "failures", "failing"],
+  failure: ["fail", "failed", "failures", "failing"],
+  failures: ["fail", "failed", "failure", "failing"],
+  failing: ["fail", "failed", "failure", "failures"],
+};
 
 const HISTOGRAM_INTERVAL_SQL: Record<LogHistogramQuery["interval"], string> = {
   minute: "INTERVAL 1 MINUTE",
@@ -467,10 +474,10 @@ export class LogRepository {
     }
 
     if (query.query && query.queryType === "sql") {
-      conditions.push(
-        `(message ILIKE {searchTerm:String} OR service ILIKE {searchTerm:String} OR host ILIKE {searchTerm:String})`,
-      );
-      params.searchTerm = `%${query.query}%`;
+      const searchCondition = this.buildSearchCondition(query.query, params);
+      if (searchCondition) {
+        conditions.push(searchCondition);
+      }
     }
 
     return { where: conditions.join(" AND "), params };
@@ -479,6 +486,43 @@ export class LogRepository {
   private toIsoTimestamp(value: string): string {
     const normalized = value.includes("T") ? value : value.replace(" ", "T");
     return new Date(normalized.endsWith("Z") ? normalized : `${normalized}Z`).toISOString();
+  }
+
+  private buildSearchCondition(query: string, params: Record<string, string | number>): string | null {
+    const rawTokens = query
+      .split(/\s+/)
+      .map((token) => token.toLowerCase().replace(/[^a-z0-9_-]/g, "").trim())
+      .filter((token) => token.length > 1);
+
+    if (rawTokens.length === 0) {
+      return null;
+    }
+
+    const tokenConditions = rawTokens.map((token, tokenIndex) => {
+      const tokenVariants = this.expandSearchTokenVariants(token);
+      const variantConditions = tokenVariants.map((variant, variantIndex) => {
+        const paramName = `search_${tokenIndex}_${variantIndex}`;
+        params[paramName] = `%${variant}%`;
+        return `(message ILIKE {${paramName}:String} OR service ILIKE {${paramName}:String} OR host ILIKE {${paramName}:String})`;
+      });
+      return `(${variantConditions.join(" OR ")})`;
+    });
+
+    return tokenConditions.join(" AND ");
+  }
+
+  private expandSearchTokenVariants(token: string): string[] {
+    const variants = new Set<string>([token]);
+
+    const mappedVariants = SEARCH_TERM_VARIANTS[token];
+    if (mappedVariants) {
+      for (const variant of mappedVariants) variants.add(variant);
+    }
+    if (token.endsWith("s") && token.length > 4) variants.add(token.slice(0, -1));
+    if (token.endsWith("ed") && token.length > 4) variants.add(token.slice(0, -2));
+    if (token.endsWith("ing") && token.length > 5) variants.add(token.slice(0, -3));
+
+    return [...variants];
   }
 
   private patternSignatureExpression(): string {

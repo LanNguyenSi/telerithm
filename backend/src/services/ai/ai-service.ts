@@ -4,6 +4,14 @@ import { config } from "../../config/index.js";
 import { logger } from "../../logger.js";
 
 const ALLOWED_OPERATORS: LogFilter["operator"][] = ["eq", "neq", "gt", "lt", "contains"];
+type FacetHints = Partial<Record<"service" | "host" | "level", string[]>>;
+const TERM_VARIANTS: Record<string, string[]> = {
+  fail: ["failed", "failure", "failures", "failing"],
+  failed: ["fail", "failure", "failures", "failing"],
+  failure: ["fail", "failed", "failures", "failing"],
+  failures: ["fail", "failed", "failure", "failing"],
+  failing: ["fail", "failed", "failure", "failures"],
+};
 
 export class AIService {
   private openai: OpenAI | null = null;
@@ -22,10 +30,14 @@ export class AIService {
     }
   }
 
-  async translateQuery(naturalQuery: string, teamId: string): Promise<NLQTranslation> {
+  async translateQuery(
+    naturalQuery: string,
+    teamId: string,
+    options?: { facetHints?: FacetHints },
+  ): Promise<NLQTranslation> {
     if (this.useLLM && this.openai) {
       try {
-        return await this.translateQueryWithLLM(naturalQuery, teamId);
+        return await this.translateQueryWithLLM(naturalQuery, teamId, options);
       } catch (error) {
         logger.error({ error }, "LLM translation failed, falling back to heuristic");
         return this.translateQueryHeuristicPublic(naturalQuery, teamId);
@@ -36,9 +48,19 @@ export class AIService {
     return this.translateQueryHeuristicPublic(naturalQuery, teamId);
   }
 
-  private async translateQueryWithLLM(naturalQuery: string, teamId: string): Promise<NLQTranslation> {
+  private async translateQueryWithLLM(
+    naturalQuery: string,
+    teamId: string,
+    options?: { facetHints?: FacetHints },
+  ): Promise<NLQTranslation> {
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
+    const facetHints = options?.facetHints ?? {};
+    const facetHintText = [
+      `Known services in current scope: ${this.formatFacetHintValues(facetHints.service)}`,
+      `Known hosts in current scope: ${this.formatFacetHintValues(facetHints.host)}`,
+      `Known levels in current scope: ${this.formatFacetHintValues(facetHints.level)}`,
+    ].join("\n");
     const systemPrompt = `You convert natural log queries into a structured explorer plan.
 Team ID is "${teamId}".
 Do not output SQL.
@@ -54,8 +76,11 @@ Rules:
 - Keep filters deterministic and minimal.
 - Use known fields where possible: level, service, host, message, sourceId, env, region, status_code, route.
 - For service intent use operator "contains".
+- If a candidate service/host/level is not present in known facet values, do not emit that filter. Put that intent into textTerms instead.
 - inferredTimeRange is optional. If user asks "last hour", use startTime="${oneHourAgo}" and endTime="${now.toISOString()}".
-- If uncertain, add a warning and leave ambiguous items in textTerms.`;
+- If uncertain, add a warning and leave ambiguous items in textTerms.
+Known facet values (ground truth from current search scope):
+${facetHintText}`;
 
     const response = await this.openai!.chat.completions.create({
       model: process.env.OPENAI_MODEL || "llama-3.3-70b-versatile",
@@ -94,8 +119,10 @@ Rules:
       filtersApplied: filters,
       inferredTimeRange,
       textTerms: Array.isArray(parsed.textTerms)
-        ? parsed.textTerms.filter(
-            (term): term is string => typeof term === "string" && term.trim().length > 0,
+        ? this.expandTextTerms(
+            parsed.textTerms.filter(
+              (term): term is string => typeof term === "string" && term.trim().length > 0,
+            ),
           )
         : undefined,
       warnings: Array.isArray(parsed.warnings)
@@ -177,11 +204,13 @@ Rules:
     return {
       explanation: `Heuristic interpretation for team ${teamId} using level/service intent extracted from natural language.`,
       filtersApplied: filters,
-      textTerms: naturalQuery
-        .split(/\s+/)
-        .map((term) => term.trim())
-        .filter((term) => term.length > 2 && !stopWords.has(term.toLowerCase()))
-        .slice(0, 5),
+      textTerms: this.expandTextTerms(
+        naturalQuery
+          .split(/\s+/)
+          .map((term) => term.trim())
+          .filter((term) => term.length > 2 && !stopWords.has(term.toLowerCase()))
+          .slice(0, 5),
+      ),
       warnings: ["AI fallback mode active: heuristic interpretation was used."],
     };
   }
@@ -211,5 +240,28 @@ Rules:
 
   private isIsoDate(value: unknown): value is string {
     return typeof value === "string" && !Number.isNaN(new Date(value).getTime());
+  }
+
+  private formatFacetHintValues(values: string[] | undefined): string {
+    if (!values || values.length === 0) {
+      return "(none)";
+    }
+    return values.slice(0, 20).join(", ");
+  }
+
+  private expandTextTerms(terms: string[]): string[] {
+    const normalized = terms
+      .map((term) => term.toLowerCase().replace(/[^a-z0-9_-]/g, ""))
+      .filter((term) => term.length > 1);
+    const expanded = new Set<string>();
+    for (const term of normalized) {
+      expanded.add(term);
+      if (TERM_VARIANTS[term]) {
+        for (const variant of TERM_VARIANTS[term]) expanded.add(variant);
+      }
+      if (term.endsWith("s") && term.length > 4) expanded.add(term.slice(0, -1));
+      if (term.endsWith("ed") && term.length > 4) expanded.add(term.slice(0, -2));
+    }
+    return [...expanded];
   }
 }
