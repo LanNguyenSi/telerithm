@@ -47,94 +47,69 @@ export class QueryService {
   async search(query: LogQuery): Promise<LogSearchResult> {
     const requestId = randomUUID();
     if (query.queryType === "natural" && query.query) {
-      const originalQuery = query.query;
-      const initialUserFilters = query.filters ?? [];
-      // Phase 1: prune structurally unsafe/redundant user filters before facet lookup.
-      const preFacetValidatedUser = this.validateGeneratedFilters(initialUserFilters, {});
-      for (const pruned of preFacetValidatedUser.pruned) {
-        nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
-      }
-      const facetHints = await this.loadFacetHints({ ...query, filters: preFacetValidatedUser.filters });
-      // Phase 2: validate user filters against real facet values (service/host/level).
-      const userValidation = this.validateGeneratedFilters(preFacetValidatedUser.filters, facetHints);
-      for (const pruned of userValidation.pruned) {
-        nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
-      }
-      const validatedUserFilters = userValidation.filters;
-      const translation = await this.aiService.translateQuery(originalQuery, query.teamId, {
-        facetHints: this.facetHintsToArrays(facetHints),
-      });
-      const validated = this.validateGeneratedFilters(translation.filtersApplied, facetHints);
-      const validatedAiFilters = validated.filters;
-      for (const pruned of validated.pruned) {
-        nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
-      }
-
-      const recoveredMessageTerms = [
-        ...preFacetValidatedUser.pruned,
-        ...userValidation.pruned,
-        ...validated.pruned,
-      ]
-        .filter((item) => item.field === "message")
-        .flatMap((item) =>
-          item.value
-            .split(/\s+/)
-            .map((token) => token.trim())
-            .filter((token) => token.length > 0),
-        );
-
-      const mergedFilters = [...validatedUserFilters, ...validatedAiFilters].filter(
-        (filter, index, allFilters) =>
-          allFilters.findIndex(
-            (candidate) =>
-              candidate.field === filter.field &&
-              candidate.operator === filter.operator &&
-              String(candidate.value) === String(filter.value),
-          ) === index,
-      );
-      // Remove textTerms already covered by filters to avoid redundant AND conditions
-      const filterValues = new Set(
-        [...validatedUserFilters, ...validatedAiFilters]
-          .map((f) => String(f.value).toLowerCase())
-          .flatMap((v) => v.split(/\s+/)),
-      );
-      const textTerms = [...(translation.textTerms ?? []), ...recoveredMessageTerms]
-        .filter((term) => !filterValues.has(term.toLowerCase()))
-        // Safety net: strip domain meta-words regardless of AI/heuristic source
-        .filter((term) => !DOMAIN_STOPWORDS.has(term.toLowerCase()))
-        .filter((term, index, allTerms) => allTerms.indexOf(term) === index)
-        .join(" ")
-        .trim();
-      const inferredStart = translation.inferredTimeRange?.startTime;
-      const inferredEnd = translation.inferredTimeRange?.endTime;
-
-      const plannedQuery: LogQuery = {
-        ...query,
-        filters: mergedFilters,
-        startTime: query.startTime ?? inferredStart,
-        endTime: query.endTime ?? inferredEnd,
-        queryType: "sql",
-        query: textTerms.length > 0 ? textTerms : query.query,
-      };
-
-      const plannedResult = await this.logRepo.search(plannedQuery);
-      if (plannedResult.total === 0 && validatedAiFilters.length > 0) {
-        nlqRelaxedFallbackUsedTotal.inc({ result: "triggered" });
-        const relaxedResult = await this.logRepo.search({
-          ...plannedQuery,
-          filters: validatedUserFilters,
-        });
-        if (relaxedResult.total > 0) {
-          nlqRelaxedFallbackUsedTotal.inc({ result: "recovered" });
-          return { ...relaxedResult, requestId };
-        }
-        nlqRelaxedFallbackUsedTotal.inc({ result: "still_zero" });
-      }
-      return { ...plannedResult, requestId };
+      return this.searchNatural(query, requestId);
     }
+    return this.searchManual(query, requestId);
+  }
 
+  private async searchManual(query: LogQuery, requestId: string): Promise<LogSearchResult> {
     const result = await this.logRepo.search(query);
     return { ...result, requestId };
+  }
+
+  private async searchNatural(query: LogQuery, requestId: string): Promise<LogSearchResult> {
+    // Load facet hints without user-provided filters (AI decides its own)
+    const facetHints = await this.loadFacetHints({ ...query, filters: [] });
+
+    const translation = await this.aiService.translateQuery(query.query!, query.teamId, {
+      facetHints: this.facetHintsToArrays(facetHints),
+      formContext: query.context,
+    });
+
+    // Validate only AI-generated filters — no user filters mixed in
+    const validated = this.validateGeneratedFilters(translation.filtersApplied, facetHints);
+    for (const pruned of validated.pruned) {
+      nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
+    }
+    const aiFilters = validated.filters;
+
+    // AI time range > form context > query-level fallback
+    const startTime =
+      translation.inferredTimeRange?.startTime ??
+      query.context?.currentTimeRange?.startTime ??
+      query.startTime;
+    const endTime =
+      translation.inferredTimeRange?.endTime ?? query.context?.currentTimeRange?.endTime ?? query.endTime;
+
+    const textTerms = (translation.textTerms ?? [])
+      .filter((term) => !DOMAIN_STOPWORDS.has(term.toLowerCase()))
+      .filter((term, index, all) => all.indexOf(term) === index)
+      .join(" ")
+      .trim();
+
+    const plannedQuery: LogQuery = {
+      ...query,
+      filters: aiFilters,
+      startTime,
+      endTime,
+      queryType: "sql",
+      query: textTerms.length > 0 ? textTerms : query.query,
+    };
+
+    const plannedResult = await this.logRepo.search(plannedQuery);
+
+    // Relaxed fallback: if AI filters give 0 results, retry without any filters
+    if (plannedResult.total === 0 && aiFilters.length > 0) {
+      nlqRelaxedFallbackUsedTotal.inc({ result: "triggered" });
+      const relaxedResult = await this.logRepo.search({ ...plannedQuery, filters: [] });
+      if (relaxedResult.total > 0) {
+        nlqRelaxedFallbackUsedTotal.inc({ result: "recovered" });
+        return { ...relaxedResult, requestId };
+      }
+      nlqRelaxedFallbackUsedTotal.inc({ result: "still_zero" });
+    }
+
+    return { ...plannedResult, requestId };
   }
 
   async explainNaturalQuery(teamId: string, naturalQuery: string) {

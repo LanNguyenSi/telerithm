@@ -1,11 +1,12 @@
 import OpenAI from "openai";
-import type { LogFilter, NLQTranslation } from "../../types/domain.js";
+import type { LogFilter, LogQueryContext, NLQTranslation } from "../../types/domain.js";
 import { config } from "../../config/index.js";
 import { logger } from "../../logger.js";
 import { DOMAIN_STOPWORDS, NLQ_STOPWORD_PROMPT_HINT } from "../../constants/nlq.js";
 
 const ALLOWED_OPERATORS: LogFilter["operator"][] = ["eq", "neq", "gt", "lt", "contains"];
 type FacetHints = Partial<Record<"service" | "host" | "level", string[]>>;
+type FormContext = LogQueryContext;
 const TERM_VARIANTS: Record<string, string[]> = {
   fail: ["failed", "failure", "failures", "failing"],
   failed: ["fail", "failure", "failures", "failing"],
@@ -34,7 +35,7 @@ export class AIService {
   async translateQuery(
     naturalQuery: string,
     teamId: string,
-    options?: { facetHints?: FacetHints },
+    options?: { facetHints?: FacetHints; formContext?: FormContext },
   ): Promise<NLQTranslation> {
     if (this.useLLM && this.openai) {
       try {
@@ -52,7 +53,7 @@ export class AIService {
   private async translateQueryWithLLM(
     naturalQuery: string,
     teamId: string,
-    options?: { facetHints?: FacetHints },
+    options?: { facetHints?: FacetHints; formContext?: FormContext },
   ): Promise<NLQTranslation> {
     const now = new Date();
     const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000).toISOString();
@@ -62,6 +63,22 @@ export class AIService {
       `Known hosts in current scope: ${this.formatFacetHintValues(facetHints.host)}`,
       `Known levels in current scope: ${this.formatFacetHintValues(facetHints.level)}`,
     ].join("\n");
+
+    let contextSection = "";
+    if (options?.formContext) {
+      const ctx = options.formContext;
+      contextSection = `\nCurrent UI state (override if the query implies different values):`;
+      if (ctx.currentTimeRange) {
+        contextSection += `\n  Time range: ${ctx.currentRelativeDuration ?? "custom"} (${ctx.currentTimeRange.startTime} to ${ctx.currentTimeRange.endTime})`;
+      }
+      if (ctx.currentFilters) {
+        const active = Object.entries(ctx.currentFilters).filter(([, v]) => v);
+        if (active.length > 0) {
+          contextSection += `\n  Active filters: ${active.map(([k, v]) => `${k}=${v}`).join(", ")}`;
+        }
+      }
+    }
+
     const systemPrompt = `You convert natural log queries into a structured explorer plan.
 Team ID is "${teamId}".
 Do not output SQL.
@@ -81,7 +98,7 @@ Rules:
 - inferredTimeRange is optional. If user asks "last hour", use startTime="${oneHourAgo}" and endTime="${now.toISOString()}".
 - If uncertain, add a warning and leave ambiguous items in textTerms.
 Known facet values (ground truth from current search scope):
-${facetHintText}
+${facetHintText}${contextSection}
 ${NLQ_STOPWORD_PROMPT_HINT}`;
 
     const response = await this.openai!.chat.completions.create({

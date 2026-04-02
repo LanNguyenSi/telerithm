@@ -18,9 +18,9 @@ describe("LogParser", () => {
     });
 
     it("detects RFC5424 syslog", () => {
-      expect(
-        parser.detectFormat("<165>1 2003-10-11T22:14:15.003Z mymachine evntslog - ID47 - msg"),
-      ).toBe("syslog_rfc5424");
+      expect(parser.detectFormat("<165>1 2003-10-11T22:14:15.003Z mymachine evntslog - ID47 - msg")).toBe(
+        "syslog_rfc5424",
+      );
     });
 
     it("falls back to plain", () => {
