@@ -1,5 +1,5 @@
 import type { LogEntry, LogFormat, LogLevel } from "../types/domain.js";
-import { generateId } from "../utils/id.js";
+import { generateLogId } from "../utils/id.js";
 
 const RFC3164_PATTERN = /^<\d+>([A-Z][a-z]{2}\s+\d+\s[\d:]+)\s(\S+)\s([^:]+):\s?(.*)$/;
 const RFC5424_PATTERN = /^<\d+>1\s([^\s]+)\s([^\s]+)\s([^\s]+)\s([^\s]+)\s([^\s]+)\s-?\s?(.*)$/;
@@ -52,7 +52,7 @@ export class LogParser {
     return items.map((entry) => {
       const record = entry as Record<string, unknown>;
       return {
-        id: generateId(),
+        id: generateLogId(),
         teamId,
         sourceId,
         timestamp: new Date(
@@ -77,7 +77,7 @@ export class LogParser {
     }
     const [, timestamp, host, service, message] = match;
     return {
-      id: generateId(),
+      id: generateLogId(),
       teamId,
       sourceId,
       timestamp: new Date(`${new Date().getFullYear()} ${timestamp} UTC`).toISOString(),
@@ -96,7 +96,7 @@ export class LogParser {
     }
     const [, timestamp, host, appName, , , message] = match;
     return {
-      id: generateId(),
+      id: generateLogId(),
       teamId,
       sourceId,
       timestamp: new Date(timestamp).toISOString(),
@@ -110,7 +110,7 @@ export class LogParser {
 
   private parsePlain(raw: string, teamId: string, sourceId: string): LogEntry {
     return {
-      id: generateId(),
+      id: generateLogId(),
       teamId,
       sourceId,
       timestamp: new Date().toISOString(),

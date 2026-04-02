@@ -1,4 +1,5 @@
 CREATE TABLE IF NOT EXISTS logs (
+    id String,
     team_id String,
     source_id String,
     timestamp DateTime64(3),

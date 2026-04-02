@@ -103,7 +103,7 @@ export function TodayScreen() {
         <LogTable
           logs={logs}
           total={total}
-          onSelectLog={(log) => router.push(`/logs/${encodeURIComponent(log.id)}`)}
+          onSelectLog={(log) => router.push(`/logs/${log.id}`)}
         />
       )}
     </div>

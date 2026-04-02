@@ -4,7 +4,7 @@ import { LogRepository } from "../repositories/log-repository.js";
 import { TeamService } from "../services/team/team-service.js";
 import { LogParser } from "../parser/log-parser.js";
 import { IssueService } from "../services/issue/issue-service.js";
-import { generateId } from "../utils/id.js";
+import { generateId, generateLogId } from "../utils/id.js";
 import { createChildLogger } from "../logger.js";
 import { cache } from "../cache/cache-service.js";
 import { ingestBatchTotal, ingestLogsTotal } from "../metrics/index.js";
@@ -37,7 +37,7 @@ export class IngestionService {
         }
 
         accepted.push({
-          id: generateId(),
+          id: generateLogId(),
           teamId: source.teamId,
           sourceId,
           timestamp: item.timestamp ?? new Date().toISOString(),

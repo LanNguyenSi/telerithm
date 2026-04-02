@@ -53,6 +53,7 @@ export class LogRepository {
     await clickhouse.insert({
       table: "logs",
       values: entries.map((e) => ({
+        id: e.id,
         team_id: e.teamId,
         source_id: e.sourceId,
         timestamp: toChTimestamp(e.timestamp),
@@ -97,6 +98,7 @@ export class LogRepository {
     const total = Number(countRows[0]?.total ?? 0);
 
     const rows = await dataResult.json<{
+      id: string;
       team_id: string;
       source_id: string;
       timestamp: string;
@@ -108,7 +110,7 @@ export class LogRepository {
     }>();
 
     const logs: LogEntry[] = rows.map((row) => ({
-      id: `${row.team_id}:${row.source_id}:${row.timestamp}`,
+      id: row.id,
       teamId: row.team_id,
       sourceId: row.source_id,
       timestamp: row.timestamp,
@@ -338,6 +340,7 @@ export class LogRepository {
     ]);
 
     const beforeRows = await beforeResult.json<{
+      id: string;
       team_id: string;
       source_id: string;
       timestamp: string;
@@ -348,6 +351,7 @@ export class LogRepository {
       fields: Record<string, string>;
     }>();
     const afterRows = await afterResult.json<{
+      id: string;
       team_id: string;
       source_id: string;
       timestamp: string;
@@ -359,6 +363,7 @@ export class LogRepository {
     }>();
 
     const mapRow = (row: {
+      id: string;
       team_id: string;
       source_id: string;
       timestamp: string;
@@ -368,7 +373,7 @@ export class LogRepository {
       message: string;
       fields: Record<string, string>;
     }): LogEntry => ({
-      id: `${row.team_id}:${row.source_id}:${row.timestamp}`,
+      id: row.id,
       teamId: row.team_id,
       sourceId: row.source_id,
       timestamp: row.timestamp,
@@ -501,33 +506,19 @@ export class LogRepository {
     return Buffer.from(JSON.stringify({ offset }), "utf8").toString("base64url");
   }
 
-  async findById(teamId: string, compositeId: string): Promise<LogEntry | null> {
-    // Composite ID format: team_id:source_id:timestamp
-    // Note: timestamp contains colons (e.g. 2026-04-01 16:48:11.370)
-    // So we split on first two colons only
-    const firstColon = compositeId.indexOf(":");
-    if (firstColon === -1) return null;
-    const secondColon = compositeId.indexOf(":", firstColon + 1);
-    if (secondColon === -1) return null;
-
-    const idTeamId = compositeId.slice(0, firstColon);
-    const sourceId = compositeId.slice(firstColon + 1, secondColon);
-    const timestamp = compositeId.slice(secondColon + 1);
-
-    if (idTeamId !== teamId) return null;
-
+  async findById(teamId: string, logId: string): Promise<LogEntry | null> {
     const resultSet = await clickhouse.query({
-      query: `SELECT team_id, source_id, timestamp, level, service, host, message, fields
+      query: `SELECT id, team_id, source_id, timestamp, level, service, host, message, fields
               FROM logs
               WHERE team_id = {teamId:String}
-                AND source_id = {sourceId:String}
-                AND timestamp = {timestamp:String}
+                AND id = {logId:String}
               LIMIT 1`,
-      query_params: { teamId, sourceId, timestamp },
+      query_params: { teamId, logId },
       format: "JSONEachRow",
     });
 
     const rows = await resultSet.json<{
+      id: string;
       team_id: string;
       source_id: string;
       timestamp: string;
@@ -542,7 +533,7 @@ export class LogRepository {
 
     const row = rows[0]!;
     return {
-      id: compositeId,
+      id: row.id,
       teamId: row.team_id,
       sourceId: row.source_id,
       timestamp: row.timestamp,
