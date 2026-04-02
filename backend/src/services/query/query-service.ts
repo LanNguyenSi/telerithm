@@ -221,9 +221,7 @@ export class QueryService {
     for (const facet of facets.facets) {
       if (facet.field !== "service" && facet.field !== "host" && facet.field !== "level") continue;
       hints[facet.field] = new Set(
-        facet.buckets
-          .map((bucket) => bucket.value.trim().toLowerCase())
-          .filter((value) => value.length > 0),
+        facet.buckets.map((bucket) => bucket.value.trim().toLowerCase()).filter((value) => value.length > 0),
       );
     }
     return hints;
@@ -278,7 +276,9 @@ export class QueryService {
           continue;
         }
         const isValid =
-          filter.operator === "contains" ? [...knownHosts].some((host) => host.includes(value)) : knownHosts.has(value);
+          filter.operator === "contains"
+            ? [...knownHosts].some((host) => host.includes(value))
+            : knownHosts.has(value);
         if (isValid) {
           kept.push(filter);
         } else {

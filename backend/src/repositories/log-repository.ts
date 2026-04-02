@@ -491,7 +491,12 @@ export class LogRepository {
   private buildSearchCondition(query: string, params: Record<string, string | number>): string | null {
     const rawTokens = query
       .split(/\s+/)
-      .map((token) => token.toLowerCase().replace(/[^a-z0-9_-]/g, "").trim())
+      .map((token) =>
+        token
+          .toLowerCase()
+          .replace(/[^a-z0-9_-]/g, "")
+          .trim(),
+      )
       .filter((token) => token.length > 1);
 
     if (rawTokens.length === 0) {
