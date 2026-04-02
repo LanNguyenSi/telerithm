@@ -14,8 +14,7 @@ export function LogDetailScreen({
 }: {
   paramsPromise: Promise<{ id: string }>;
 }) {
-  const { id } = use(paramsPromise);
-  const logId = decodeURIComponent(id);
+  const { id: logId } = use(paramsPromise);
   const { team } = useLogAuth();
 
   const [log, setLog] = useState<LogEntry | null>(null);
@@ -183,7 +182,7 @@ export function LogDetailScreen({
             [...contextBefore, ...contextAfter].map((entry) => (
               <Link
                 key={entry.id}
-                href={`/logs/${encodeURIComponent(entry.id)}`}
+                href={`/logs/${entry.id}`}
                 className="block rounded-lg border border-line bg-white/60 p-2 transition hover:border-slate-300 dark:bg-white/5 dark:hover:border-white/20"
               >
                 <div className="flex flex-wrap items-center gap-2 text-[11px] font-mono text-muted">

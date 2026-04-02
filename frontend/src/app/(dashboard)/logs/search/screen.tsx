@@ -664,7 +664,7 @@ export function SearchScreen() {
                 page={currentPage}
                 pageSize={pageSize}
                 total={total}
-                onSelectLog={(log) => router.push(`/logs/${encodeURIComponent(log.id)}`)}
+                onSelectLog={(log) => router.push(`/logs/${log.id}`)}
                 onPageChange={(page) => {
                   if (page > currentPage && nextPageToken) {
                     updateSearch({ page, pageToken: nextPageToken });
