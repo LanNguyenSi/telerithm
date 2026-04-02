@@ -22,6 +22,11 @@ const DASHBOARD_CACHE_TTL = 30; // seconds
 
 type AsyncStatus = "pending" | "completed" | "failed";
 type FacetHints = Partial<Record<"service" | "host" | "level", Set<string>>>;
+type PrunedFilter = {
+  field: string;
+  value: string;
+  reason: "empty" | "unknown_value" | "redundant";
+};
 type AsyncJobRecord = {
   requestId: string;
   status: AsyncStatus;
@@ -64,6 +69,19 @@ export class QueryService {
         nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
       }
 
+      const recoveredMessageTerms = [
+        ...preFacetValidatedUser.pruned,
+        ...userValidation.pruned,
+        ...validated.pruned,
+      ]
+        .filter((item) => item.field === "message")
+        .flatMap((item) =>
+          item.value
+            .split(/\s+/)
+            .map((token) => token.trim())
+            .filter((token) => token.length > 0),
+        );
+
       const mergedFilters = [...validatedUserFilters, ...validatedAiFilters].filter(
         (filter, index, allFilters) =>
           allFilters.findIndex(
@@ -79,8 +97,9 @@ export class QueryService {
           .map((f) => String(f.value).toLowerCase())
           .flatMap((v) => v.split(/\s+/)),
       );
-      const textTerms = (translation.textTerms ?? [])
+      const textTerms = [...(translation.textTerms ?? []), ...recoveredMessageTerms]
         .filter((term) => !filterValues.has(term.toLowerCase()))
+        .filter((term, index, allTerms) => allTerms.indexOf(term) === index)
         .join(" ")
         .trim();
       const inferredStart = translation.inferredTimeRange?.startTime;
@@ -258,12 +277,9 @@ export class QueryService {
   private validateGeneratedFilters(
     filters: LogFilter[],
     facetHints: FacetHints,
-  ): {
-    filters: LogFilter[];
-    pruned: Array<{ field: string; reason: "empty" | "unknown_value" | "redundant" }>;
-  } {
+  ): { filters: LogFilter[]; pruned: PrunedFilter[] } {
     const kept: LogFilter[] = [];
-    const pruned: Array<{ field: string; reason: "empty" | "unknown_value" | "redundant" }> = [];
+    const pruned: PrunedFilter[] = [];
 
     for (const filter of filters) {
       if (typeof filter.value !== "string") {
@@ -271,9 +287,10 @@ export class QueryService {
         continue;
       }
 
+      const originalValue = filter.value.trim();
       const value = filter.value.trim().toLowerCase();
       if (value.length === 0) {
-        pruned.push({ field: filter.field, reason: "empty" });
+        pruned.push({ field: filter.field, value: originalValue, reason: "empty" });
         continue;
       }
 
@@ -287,7 +304,7 @@ export class QueryService {
         if ([...knownServices].some((service) => service.includes(value))) {
           kept.push({ ...filter, operator });
         } else {
-          pruned.push({ field: filter.field, reason: "unknown_value" });
+          pruned.push({ field: filter.field, value: originalValue, reason: "unknown_value" });
         }
         continue;
       }
@@ -305,7 +322,7 @@ export class QueryService {
         if (isValid) {
           kept.push(filter);
         } else {
-          pruned.push({ field: filter.field, reason: "unknown_value" });
+          pruned.push({ field: filter.field, value: originalValue, reason: "unknown_value" });
         }
         continue;
       }
@@ -315,14 +332,14 @@ export class QueryService {
         if (!knownLevels || knownLevels.size === 0 || knownLevels.has(value)) {
           kept.push(filter);
         } else {
-          pruned.push({ field: filter.field, reason: "unknown_value" });
+          pruned.push({ field: filter.field, value: originalValue, reason: "unknown_value" });
         }
         continue;
       }
 
       // NLQ text intent should flow through textTerms search, not strict message filters.
       if (filter.field === "message") {
-        pruned.push({ field: filter.field, reason: "redundant" });
+        pruned.push({ field: filter.field, value: originalValue, reason: "redundant" });
         continue;
       }
       kept.push(filter);

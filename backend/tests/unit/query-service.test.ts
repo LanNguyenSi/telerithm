@@ -107,9 +107,7 @@ describe("QueryService natural search", () => {
 
     const firstQuery = searchMock.mock.calls[0]?.[0];
     expect(firstQuery.filters).toEqual(
-      expect.arrayContaining([
-        { field: "service", operator: "contains", value: "payment" },
-      ]),
+      expect.arrayContaining([{ field: "service", operator: "contains", value: "payment" }]),
     );
     expect(firstQuery.filters).not.toEqual(
       expect.arrayContaining([{ field: "message", operator: "eq", value: "payment failure" }]),
@@ -124,5 +122,48 @@ describe("QueryService natural search", () => {
     expect(nlqFilterPrunedTotalIncMock).toHaveBeenCalledWith({ field: "message", reason: "redundant" });
     expect(nlqRelaxedFallbackUsedTotalIncMock).toHaveBeenCalledWith({ result: "triggered" });
     expect(nlqRelaxedFallbackUsedTotalIncMock).toHaveBeenCalledWith({ result: "recovered" });
+  });
+
+  it("recovers pruned message filter values into text terms", async () => {
+    getFacetsMock.mockResolvedValue({
+      facets: [
+        { field: "service", buckets: [{ value: "payment-service", count: 10 }] },
+        { field: "host", buckets: [{ value: "play.telerithm.cloud", count: 10 }] },
+        { field: "level", buckets: [{ value: "error", count: 10 }] },
+      ],
+    });
+
+    translateQueryMock.mockResolvedValue({
+      explanation: "test",
+      filtersApplied: [{ field: "message", operator: "contains", value: "payment" }],
+      textTerms: ["logs"],
+      warnings: [],
+    });
+
+    searchMock.mockResolvedValueOnce({
+      logs: [{ id: "1" }],
+      total: 1,
+      requestId: "",
+      partial: false,
+      query: "first",
+      executionTimeMs: 1,
+      cached: false,
+    });
+
+    const service = new QueryService();
+    await service.search({
+      teamId: "t1",
+      queryType: "natural",
+      query: "show payment logs",
+    });
+
+    expect(searchMock).toHaveBeenCalledTimes(1);
+    const plannedQuery = searchMock.mock.calls[0]?.[0];
+    expect(plannedQuery.query).toContain("payment");
+    expect(plannedQuery.query).toContain("logs");
+    expect(plannedQuery.filters).not.toEqual(
+      expect.arrayContaining([{ field: "message", operator: "contains", value: "payment" }]),
+    );
+    expect(nlqFilterPrunedTotalIncMock).toHaveBeenCalledWith({ field: "message", reason: "redundant" });
   });
 });
