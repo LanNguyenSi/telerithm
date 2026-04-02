@@ -43,12 +43,18 @@ export class QueryService {
     if (query.queryType === "natural" && query.query) {
       const originalQuery = query.query;
       const initialUserFilters = query.filters ?? [];
-      const preValidatedUser = this.validateGeneratedFilters(initialUserFilters, {});
-      for (const pruned of preValidatedUser.pruned) {
+      // Phase 1: prune structurally unsafe/redundant user filters before facet lookup.
+      const preFacetValidatedUser = this.validateGeneratedFilters(initialUserFilters, {});
+      for (const pruned of preFacetValidatedUser.pruned) {
         nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
       }
-      const validatedUserFilters = preValidatedUser.filters;
-      const facetHints = await this.loadFacetHints({ ...query, filters: validatedUserFilters });
+      const facetHints = await this.loadFacetHints({ ...query, filters: preFacetValidatedUser.filters });
+      // Phase 2: validate user filters against real facet values (service/host/level).
+      const userValidation = this.validateGeneratedFilters(preFacetValidatedUser.filters, facetHints);
+      for (const pruned of userValidation.pruned) {
+        nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
+      }
+      const validatedUserFilters = userValidation.filters;
       const translation = await this.aiService.translateQuery(originalQuery, query.teamId, {
         facetHints: this.facetHintsToArrays(facetHints),
       });

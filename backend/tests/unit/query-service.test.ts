@@ -66,7 +66,6 @@ describe("QueryService natural search", () => {
       filtersApplied: [
         { field: "message", operator: "contains", value: "payment failure" },
         { field: "service", operator: "eq", value: "payment" },
-        { field: "host", operator: "eq", value: "api-1" },
       ],
       textTerms: ["payment", "failures", "fail", "failed"],
       warnings: [],
@@ -97,7 +96,10 @@ describe("QueryService natural search", () => {
       teamId: "t1",
       queryType: "natural",
       query: "show me payment failures",
-      filters: [{ field: "message", operator: "eq", value: "payment failure" }],
+      filters: [
+        { field: "message", operator: "eq", value: "payment failure" },
+        { field: "host", operator: "eq", value: "api-1" },
+      ],
     });
 
     expect(result.total).toBe(10);
