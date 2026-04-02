@@ -96,9 +96,8 @@ describe("AIService", () => {
     it("does NOT strip 'failures' — content word, not meta-word", async () => {
       const result = await service.translateQuery("show payment failures", "team-1");
       expect(result.textTerms).not.toContain("show");
-      const hasFailure = (result.textTerms ?? []).some(t => t.includes("failure"));
+      const hasFailure = (result.textTerms ?? []).some((t) => t.includes("failure"));
       expect(hasFailure).toBe(true);
     });
   });
-
-})
+});

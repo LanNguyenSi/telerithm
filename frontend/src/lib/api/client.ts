@@ -108,6 +108,12 @@ export async function getSources(teamId: string) {
   return request<{ sources: Source[] }>(`/sources?teamId=${teamId}`);
 }
 
+export interface LogQueryContext {
+  currentTimeRange?: { startTime: string; endTime: string };
+  currentFilters?: Record<string, string>;
+  currentRelativeDuration?: string;
+}
+
 export async function getLogs(
   teamId: string,
   options?: {
@@ -125,8 +131,11 @@ export async function getLogs(
     limit?: number;
     offset?: number;
     pageToken?: string;
+    /** Form state context hints — only used in natural mode */
+    context?: LogQueryContext;
   },
 ) {
+  const isNatural = Boolean(options?.query);
   return request<{
     logs: LogEntry[];
     total: number;
@@ -141,11 +150,14 @@ export async function getLogs(
     body: JSON.stringify({
       teamId,
       sourceId: options?.sourceId || undefined,
-      startTime: options?.startTime || undefined,
-      endTime: options?.endTime || undefined,
+      startTime: isNatural ? undefined : options?.startTime || undefined,
+      endTime: isNatural ? undefined : options?.endTime || undefined,
       query: options?.query || undefined,
-      queryType: options?.query ? "natural" : "sql",
-      filters: options?.filters,
+      queryType: isNatural ? "natural" : "sql",
+      // Natural mode: no user filters — AI decides; Manual mode: pass filters directly
+      filters: isNatural ? undefined : options?.filters,
+      // Natural mode: pass form state as context hints
+      context: isNatural ? options?.context : undefined,
       sortBy: options?.sortBy ?? "timestamp",
       sortDirection: options?.sortDirection ?? "desc",
       limit: options?.limit ?? 50,

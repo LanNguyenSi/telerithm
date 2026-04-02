@@ -204,6 +204,21 @@ export function SearchScreen() {
             limit: pageSize,
             offset,
             pageToken: currentPageToken || undefined,
+            // Natural mode: pass form state as context hints so AI can use or override
+            context: currentQuery
+              ? {
+                  currentTimeRange: {
+                    startTime: currentTimeRange.startTime,
+                    endTime: currentTimeRange.endTime,
+                  },
+                  currentFilters: {
+                    ...(currentFilters.level ? { level: currentFilters.level } : {}),
+                    ...(currentFilters.service ? { service: currentFilters.service } : {}),
+                    ...(currentFilters.host ? { host: currentFilters.host } : {}),
+                  },
+                  currentRelativeDuration: currentRelativeDuration,
+                }
+              : undefined,
           }),
           getLogFacets(team.id, {
             sourceId: currentSourceId || undefined,

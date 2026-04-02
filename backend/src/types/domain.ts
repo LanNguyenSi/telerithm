@@ -20,6 +20,12 @@ export interface LogFilter {
   value: string | number;
 }
 
+export interface LogQueryContext {
+  currentTimeRange?: { startTime: string; endTime: string };
+  currentFilters?: Record<string, string>;
+  currentRelativeDuration?: string;
+}
+
 export interface LogQuery {
   teamId: string;
   sourceId?: string;
@@ -33,6 +39,8 @@ export interface LogQuery {
   limit?: number;
   offset?: number;
   pageToken?: string;
+  /** Form state hints for natural mode — AI may use or override */
+  context?: LogQueryContext;
 }
 
 export interface LogSearchResult {
