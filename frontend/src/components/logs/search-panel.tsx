@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
+import type { RefreshInterval, RelativeDuration, TimeMode } from "@/hooks/use-log-search";
 import type { NaturalQueryPlan } from "@/types";
 
 const HISTORY_LIMIT = 5;
@@ -23,6 +24,29 @@ const LEVEL_OPTIONS = [
   { value: "info", label: "info" },
   { value: "debug", label: "debug" },
 ] as const;
+const TIME_RANGE_OPTIONS: ReadonlyArray<{ value: RelativeDuration | "custom"; label: string }> = [
+  { value: "5m", label: "Last 5m" },
+  { value: "15m", label: "Last 15m" },
+  { value: "1h", label: "Last 1h" },
+  { value: "6h", label: "Last 6h" },
+  { value: "24h", label: "Last 24h" },
+  { value: "7d", label: "Last 7d" },
+  { value: "custom", label: "Custom range" },
+];
+const REFRESH_OPTIONS: ReadonlyArray<{ value: RefreshInterval; label: string }> = [
+  { value: "off", label: "Refresh off" },
+  { value: "10s", label: "Refresh 10s" },
+  { value: "30s", label: "Refresh 30s" },
+  { value: "1m", label: "Refresh 1m" },
+];
+const RELATIVE_MS: Record<RelativeDuration, number> = {
+  "5m": 5 * 60 * 1000,
+  "15m": 15 * 60 * 1000,
+  "1h": 60 * 60 * 1000,
+  "6h": 6 * 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+};
 
 export function SearchPanel({
   onSearch,
@@ -30,6 +54,9 @@ export function SearchPanel({
   currentQuery,
   currentFilters,
   currentTimeRange,
+  currentTimeMode,
+  currentRelativeDuration,
+  currentRefresh,
   currentSourceId,
   currentExclusions,
   currentSort,
@@ -43,6 +70,7 @@ export function SearchPanel({
     query: string,
     filters: { level: string; service: string; host: string; sourceId: string },
     timeRange: { startTime: string; endTime: string },
+    timeSelection: { mode: TimeMode; relativeDuration: RelativeDuration; refresh: RefreshInterval },
     sort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" },
     pageSize: number,
   ) => Promise<void>;
@@ -50,6 +78,9 @@ export function SearchPanel({
   currentQuery?: string;
   currentFilters: { level: string; service: string; host: string };
   currentTimeRange: { startTime: string; endTime: string };
+  currentTimeMode: TimeMode;
+  currentRelativeDuration: RelativeDuration;
+  currentRefresh: RefreshInterval;
   currentSourceId: string;
   currentExclusions: Array<{ field: string; value: string }>;
   currentSort: { sortBy: "timestamp" | "level" | "service" | "host"; sortDirection: "asc" | "desc" };
@@ -66,6 +97,9 @@ export function SearchPanel({
   const [sourceId, setSourceId] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
+  const [timeMode, setTimeMode] = useState<TimeMode>("rel");
+  const [relativeDuration, setRelativeDuration] = useState<RelativeDuration>("1h");
+  const [refresh, setRefresh] = useState<RefreshInterval>("off");
   const [sortValue, setSortValue] = useState(`${currentSort.sortBy}:${currentSort.sortDirection}`);
   const [isPending, setIsPending] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
@@ -89,6 +123,9 @@ export function SearchPanel({
   useEffect(() => {
     setStartTime(currentTimeRange.startTime.slice(0, 16));
     setEndTime(currentTimeRange.endTime.slice(0, 16));
+    setTimeMode(currentTimeMode);
+    setRelativeDuration(currentRelativeDuration);
+    setRefresh(currentRefresh);
     // Validate range on load
     const s = new Date(currentTimeRange.startTime).getTime();
     const e = new Date(currentTimeRange.endTime).getTime();
@@ -97,7 +134,13 @@ export function SearchPanel({
     } else {
       setTimeRangeError(null);
     }
-  }, [currentTimeRange.endTime, currentTimeRange.startTime]);
+  }, [
+    currentRefresh,
+    currentRelativeDuration,
+    currentTimeMode,
+    currentTimeRange.endTime,
+    currentTimeRange.startTime,
+  ]);
 
   useEffect(() => {
     setSortValue(`${currentSort.sortBy}:${currentSort.sortDirection}`);
@@ -111,16 +154,23 @@ export function SearchPanel({
     ];
 
     const now = new Date();
-    const safeStart = startTime ? new Date(startTime) : new Date(now.getTime() - 60 * 60 * 1000);
-    const safeEnd = endTime ? new Date(endTime) : now;
-    const normalizedStart = Number.isNaN(safeStart.getTime())
-      ? new Date(now.getTime() - 60 * 60 * 1000)
-      : safeStart;
-    const normalizedEnd = Number.isNaN(safeEnd.getTime()) ? now : safeEnd;
-    const fixedEnd =
-      normalizedEnd.getTime() < normalizedStart.getTime()
-        ? new Date(normalizedStart.getTime() + 60 * 1000)
-        : normalizedEnd;
+    let normalizedStart: Date;
+    let fixedEnd: Date;
+    if (timeMode === "rel") {
+      fixedEnd = now;
+      normalizedStart = new Date(fixedEnd.getTime() - RELATIVE_MS[relativeDuration]);
+    } else {
+      const safeStart = startTime ? new Date(startTime) : new Date(now.getTime() - 60 * 60 * 1000);
+      const safeEnd = endTime ? new Date(endTime) : now;
+      normalizedStart = Number.isNaN(safeStart.getTime())
+        ? new Date(now.getTime() - 60 * 60 * 1000)
+        : safeStart;
+      const normalizedEnd = Number.isNaN(safeEnd.getTime()) ? now : safeEnd;
+      fixedEnd =
+        normalizedEnd.getTime() < normalizedStart.getTime()
+          ? new Date(normalizedStart.getTime() + 60 * 1000)
+          : normalizedEnd;
+    }
 
     const MAX_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
     if (fixedEnd.getTime() - normalizedStart.getTime() > MAX_LOOKBACK_MS) {
@@ -136,6 +186,7 @@ export function SearchPanel({
         trimmed,
         { level, service: service.trim(), host: host.trim(), sourceId: sourceId.trim() },
         { startTime: normalizedStart.toISOString(), endTime: fixedEnd.toISOString() },
+        { mode: timeMode, relativeDuration, refresh },
         { sortBy, sortDirection },
         pageSize,
       );
@@ -190,30 +241,29 @@ export function SearchPanel({
 
       <div className="mt-3 grid gap-2 md:grid-cols-3">
         <label className="text-xs text-muted">
-          <span className="mb-0.5 block">Start</span>
-          <input
-            type="datetime-local"
-            value={startTime}
-            onChange={(event) => setStartTime(event.target.value)}
-            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+          <span className="mb-0.5 block">Time range</span>
+          <Select
+            value={timeMode === "rel" ? relativeDuration : "custom"}
+            onChange={(value) => {
+              if (value === "custom") {
+                setTimeMode("abs");
+                return;
+              }
+              setTimeMode("rel");
+              setRelativeDuration(value as RelativeDuration);
+            }}
+            options={[...TIME_RANGE_OPTIONS]}
           />
         </label>
 
         <label className="text-xs text-muted">
-          <span className="mb-0.5 block">End</span>
-          <input
-            type="datetime-local"
-            value={endTime}
-            onChange={(event) => setEndTime(event.target.value)}
-            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+          <span className="mb-0.5 block">Refresh</span>
+          <Select
+            value={refresh}
+            onChange={(value) => setRefresh(value as RefreshInterval)}
+            options={[...REFRESH_OPTIONS]}
           />
         </label>
-
-        {timeRangeError ? (
-          <p className="col-span-full text-xs font-medium text-amber-700 dark:text-amber-400">
-            ⚠ {timeRangeError}
-          </p>
-        ) : null}
 
         <label className="text-xs text-muted">
           <span className="mb-0.5 block">Source</span>
@@ -224,6 +274,36 @@ export function SearchPanel({
             className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
           />
         </label>
+
+        {timeMode === "abs" ? (
+          <>
+            <label className="text-xs text-muted">
+              <span className="mb-0.5 block">Start</span>
+              <input
+                type="datetime-local"
+                value={startTime}
+                onChange={(event) => setStartTime(event.target.value)}
+                className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              />
+            </label>
+
+            <label className="text-xs text-muted">
+              <span className="mb-0.5 block">End</span>
+              <input
+                type="datetime-local"
+                value={endTime}
+                onChange={(event) => setEndTime(event.target.value)}
+                className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              />
+            </label>
+          </>
+        ) : null}
+
+        {timeRangeError ? (
+          <p className="col-span-full text-xs font-medium text-amber-700 dark:text-amber-400">
+            ⚠ {timeRangeError}
+          </p>
+        ) : null}
       </div>
 
       <div className="mt-2 grid gap-2 md:grid-cols-4">
@@ -267,16 +347,17 @@ export function SearchPanel({
             setHost("");
             setSourceId("");
             setSortValue("timestamp:desc");
-            const now = new Date();
-            const start = new Date(now.getTime() - 60 * 60 * 1000);
-            const nextStart = start.toISOString().slice(0, 16);
-            const nextEnd = now.toISOString().slice(0, 16);
-            setStartTime(nextStart);
-            setEndTime(nextEnd);
+            setTimeMode("rel");
+            setRelativeDuration("1h");
+            setRefresh("off");
             void onSearch(
               "",
               { level: "", service: "", host: "", sourceId: "" },
-              { startTime: new Date(nextStart).toISOString(), endTime: new Date(nextEnd).toISOString() },
+              {
+                startTime: new Date(Date.now() - RELATIVE_MS["1h"]).toISOString(),
+                endTime: new Date().toISOString(),
+              },
+              { mode: "rel", relativeDuration: "1h", refresh: "off" },
               { sortBy: "timestamp", sortDirection: "desc" },
               pageSize,
             );
