@@ -42,7 +42,13 @@ export class QueryService {
     const requestId = randomUUID();
     if (query.queryType === "natural" && query.query) {
       const originalQuery = query.query;
-      const facetHints = await this.loadFacetHints(query);
+      const initialUserFilters = query.filters ?? [];
+      const preValidatedUser = this.validateGeneratedFilters(initialUserFilters, {});
+      for (const pruned of preValidatedUser.pruned) {
+        nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
+      }
+      const validatedUserFilters = preValidatedUser.filters;
+      const facetHints = await this.loadFacetHints({ ...query, filters: validatedUserFilters });
       const translation = await this.aiService.translateQuery(originalQuery, query.teamId, {
         facetHints: this.facetHintsToArrays(facetHints),
       });
@@ -52,8 +58,7 @@ export class QueryService {
         nlqFilterPrunedTotal.inc({ field: pruned.field, reason: pruned.reason });
       }
 
-      const userFilters = query.filters ?? [];
-      const mergedFilters = [...userFilters, ...validatedAiFilters].filter(
+      const mergedFilters = [...validatedUserFilters, ...validatedAiFilters].filter(
         (filter, index, allFilters) =>
           allFilters.findIndex(
             (candidate) =>
@@ -62,7 +67,16 @@ export class QueryService {
               String(candidate.value) === String(filter.value),
           ) === index,
       );
-      const textTerms = (translation.textTerms ?? []).join(" ").trim();
+      // Remove textTerms already covered by filters to avoid redundant AND conditions
+      const filterValues = new Set(
+        [...validatedUserFilters, ...validatedAiFilters]
+          .map((f) => String(f.value).toLowerCase())
+          .flatMap((v) => v.split(/\s+/)),
+      );
+      const textTerms = (translation.textTerms ?? [])
+        .filter((term) => !filterValues.has(term.toLowerCase()))
+        .join(" ")
+        .trim();
       const inferredStart = translation.inferredTimeRange?.startTime;
       const inferredEnd = translation.inferredTimeRange?.endTime;
 
@@ -80,7 +94,7 @@ export class QueryService {
         nlqRelaxedFallbackUsedTotal.inc({ result: "triggered" });
         const relaxedResult = await this.logRepo.search({
           ...plannedQuery,
-          filters: userFilters,
+          filters: validatedUserFilters,
         });
         if (relaxedResult.total > 0) {
           nlqRelaxedFallbackUsedTotal.inc({ result: "recovered" });
@@ -238,9 +252,12 @@ export class QueryService {
   private validateGeneratedFilters(
     filters: LogFilter[],
     facetHints: FacetHints,
-  ): { filters: LogFilter[]; pruned: Array<{ field: string; reason: "empty" | "unknown_value" }> } {
+  ): {
+    filters: LogFilter[];
+    pruned: Array<{ field: string; reason: "empty" | "unknown_value" | "redundant" }>;
+  } {
     const kept: LogFilter[] = [];
-    const pruned: Array<{ field: string; reason: "empty" | "unknown_value" }> = [];
+    const pruned: Array<{ field: string; reason: "empty" | "unknown_value" | "redundant" }> = [];
 
     for (const filter of filters) {
       if (typeof filter.value !== "string") {
@@ -294,6 +311,12 @@ export class QueryService {
         } else {
           pruned.push({ field: filter.field, reason: "unknown_value" });
         }
+        continue;
+      }
+
+      // NLQ text intent should flow through textTerms search, not strict message filters.
+      if (filter.field === "message") {
+        pruned.push({ field: filter.field, reason: "redundant" });
         continue;
       }
 
