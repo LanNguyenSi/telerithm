@@ -1,0 +1,8 @@
+name: telerithm
+health: /api/v1/health
+compose_file: docker-compose.traefik.yml
+pre_update:
+  - docker compose -f docker-compose.traefik.yml build --no-cache backend frontend
+post_update:
+  - docker compose -f docker-compose.traefik.yml exec backend npx prisma db push --skip-generate
+rollback: true
