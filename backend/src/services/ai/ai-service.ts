@@ -1,8 +1,10 @@
 import OpenAI from "openai";
+import { z } from "zod";
 import type { LogFilter, LogQueryContext, NLQTranslation } from "../../types/domain.js";
 import { config } from "../../config/index.js";
 import { logger } from "../../logger.js";
 import { DOMAIN_STOPWORDS, NLQ_STOPWORD_PROMPT_HINT } from "../../constants/nlq.js";
+import { nlqLlmDuration, nlqLlmErrorsTotal, nlqLlmFallbackTotal } from "../../metrics/index.js";
 
 const ALLOWED_OPERATORS: LogFilter["operator"][] = ["eq", "neq", "gt", "lt", "contains"];
 type FacetHints = Partial<Record<"service" | "host" | "level", string[]>>;
@@ -15,6 +17,31 @@ const TERM_VARIANTS: Record<string, string[]> = {
   failing: ["fail", "failed", "failure", "failures"],
 };
 
+const nlqResponseSchema = z.object({
+  explanation: z.string().optional(),
+  filtersApplied: z
+    .array(
+      z.object({
+        field: z.string(),
+        operator: z.string(),
+        value: z.union([z.string(), z.number()]),
+      }),
+    )
+    .optional(),
+  inferredTimeRange: z
+    .object({
+      startTime: z.string(),
+      endTime: z.string(),
+    })
+    .nullable()
+    .optional(),
+  textTerms: z.array(z.string()).optional(),
+  warnings: z.array(z.string()).optional(),
+});
+
+const MAX_RETRIES = 2;
+const BACKOFF_MS = [1000, 3000];
+
 export class AIService {
   private openai: OpenAI | null = null;
   private useLLM: boolean = false;
@@ -24,6 +51,8 @@ export class AIService {
     if (config.openaiApiKey) {
       this.openai = new OpenAI({
         apiKey: config.openaiApiKey,
+        ...(config.openaiBaseUrl ? { baseURL: config.openaiBaseUrl } : {}),
+        timeout: config.openaiTimeoutMs,
       });
       this.useLLM = true;
       logger.info("AI Service initialized with OpenAI LLM support");
@@ -38,16 +67,56 @@ export class AIService {
     options?: { facetHints?: FacetHints; formContext?: FormContext },
   ): Promise<NLQTranslation> {
     if (this.useLLM && this.openai) {
+      const timer = nlqLlmDuration.startTimer();
       try {
-        return await this.translateQueryWithLLM(naturalQuery, teamId, options);
+        // Retry loop with exponential backoff for transient errors
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          try {
+            const result = await this.translateQueryWithLLM(naturalQuery, teamId, options);
+            timer();
+            return result;
+          } catch (error) {
+            const errorType = this.classifyError(error);
+            if (attempt === MAX_RETRIES || !this.isRetryable(errorType)) {
+              nlqLlmErrorsTotal.inc({ type: errorType });
+              throw error;
+            }
+            logger.warn(
+              { error, attempt, errorType },
+              `LLM attempt ${attempt + 1} failed (${errorType}), retrying in ${BACKOFF_MS[attempt]}ms`,
+            );
+            await new Promise((r) => setTimeout(r, BACKOFF_MS[attempt]));
+          }
+        }
+        // Unreachable, but TypeScript needs it
+        throw new Error("Retry loop exited unexpectedly");
       } catch (error) {
-        logger.error({ error }, "LLM translation failed, falling back to heuristic");
+        timer();
+        nlqLlmFallbackTotal.inc();
+        logger.error({ error }, "LLM translation failed after retries, falling back to heuristic");
         return this.translateQueryHeuristicPublic(naturalQuery, teamId);
       }
     }
 
     // Fallback to heuristic if no LLM available
     return this.translateQueryHeuristicPublic(naturalQuery, teamId);
+  }
+
+  private classifyError(error: unknown): string {
+    if (error instanceof OpenAI.APIError) {
+      if (error.status === 401 || error.status === 403) return "auth";
+      if (error.status === 429) return "rate_limit";
+      if (error.status && error.status >= 500) return "server";
+      return "unknown";
+    }
+    if (error instanceof OpenAI.APIConnectionError) return "timeout";
+    if (error instanceof SyntaxError) return "parse";
+    if (error instanceof z.ZodError) return "parse";
+    return "unknown";
+  }
+
+  private isRetryable(errorType: string): boolean {
+    return errorType === "timeout" || errorType === "rate_limit" || errorType === "server";
   }
 
   private async translateQueryWithLLM(
@@ -102,7 +171,7 @@ ${facetHintText}${contextSection}
 ${NLQ_STOPWORD_PROMPT_HINT}`;
 
     const response = await this.openai!.chat.completions.create({
-      model: process.env.OPENAI_MODEL || "llama-3.3-70b-versatile",
+      model: config.openaiModel ?? "llama-3.3-70b-versatile",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: naturalQuery },
@@ -116,7 +185,13 @@ ${NLQ_STOPWORD_PROMPT_HINT}`;
       throw new Error("No response from LLM");
     }
 
-    const parsed = JSON.parse(content) as Partial<NLQTranslation>;
+    const raw = JSON.parse(content);
+    const validated = nlqResponseSchema.safeParse(raw);
+    if (!validated.success) {
+      logger.warn({ zodErrors: validated.error.flatten() }, "LLM response failed schema validation");
+      throw validated.error;
+    }
+    const parsed = validated.data;
     const filters = Array.isArray(parsed.filtersApplied)
       ? parsed.filtersApplied
           .map((filter) => this.normalizeFilter(filter))

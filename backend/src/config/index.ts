@@ -21,6 +21,9 @@ const configSchema = z.object({
     .or(z.literal(""))
     .transform((v) => (v === "" ? undefined : v)),
   openaiApiKey: z.string().optional(), // Optional: AI query engine falls back to heuristic if not provided
+  openaiBaseUrl: z.string().url().optional(), // Optional: OpenAI-compatible endpoint (e.g. Ollama, llama.cpp)
+  openaiModel: z.string().optional(), // Optional: model name (default llama-3.3-70b-versatile)
+  openaiTimeoutMs: z.coerce.number().int().positive().default(10000), // LLM call timeout
   maxLookbackMs: z.coerce
     .number()
     .int()
@@ -46,6 +49,9 @@ function loadConfig(): Config {
     registrationMode: process.env.REGISTRATION_MODE,
     adminEmail: process.env.ADMIN_EMAIL,
     openaiApiKey: process.env.OPENAI_API_KEY,
+    openaiBaseUrl: process.env.OPENAI_BASE_URL,
+    openaiModel: process.env.OPENAI_MODEL,
+    openaiTimeoutMs: process.env.OPENAI_TIMEOUT_MS,
     maxLookbackMs: process.env.MAX_LOOKBACK_MS,
     maxPageSize: process.env.MAX_PAGE_SIZE,
     maxSyncRuntimeMs: process.env.MAX_SYNC_RUNTIME_MS,

@@ -25,7 +25,17 @@ vi.mock("../../src/config/index.js", () => ({
     corsOrigins: "*",
     redisUrl: "redis://localhost:6379",
     openaiApiKey: "test-api-key-for-mocking",
+    openaiModel: "test-model",
+    openaiTimeoutMs: 10000,
   },
+}));
+
+vi.mock("../../src/metrics/index.js", () => ({
+  nlqLlmDuration: { startTimer: vi.fn(() => vi.fn()) },
+  nlqLlmErrorsTotal: { inc: vi.fn() },
+  nlqLlmFallbackTotal: { inc: vi.fn() },
+  nlqFilterPrunedTotal: { inc: vi.fn() },
+  nlqRelaxedFallbackUsedTotal: { inc: vi.fn() },
 }));
 
 vi.mock("../../src/logger.js", () => ({
@@ -280,5 +290,75 @@ describe("AIService — LLM path (with mocked OpenAI)", () => {
     // Should not throw
     const systemPrompt = mockCreate.mock.calls[0]?.[0].messages[0]?.content as string;
     expect(systemPrompt).toContain("2026-04-01T00:00:00Z");
+  });
+});
+
+// ── Retry, timeout, schema validation ───────────────────────────────────────
+
+describe("retry and error handling", () => {
+  let service: AIService;
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+    service = new AIService();
+  });
+
+  it("falls back to heuristic after LLM failure", async () => {
+    mockCreate.mockImplementation(() => Promise.reject(new Error("network timeout")));
+
+    const result = await service.translateQuery("show errors", "team-1");
+    expect(result.warnings).toContain("AI fallback mode active: heuristic interpretation was used.");
+  });
+
+  it("does not retry on non-retryable errors (parse)", async () => {
+    mockCreate.mockImplementation(() => Promise.reject(new SyntaxError("Unexpected token")));
+
+    const result = await service.translateQuery("show errors", "team-1");
+    // Should fall back immediately without retry
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(result.warnings).toContain("AI fallback mode active: heuristic interpretation was used.");
+  });
+
+  it("falls back to heuristic when LLM returns malformed JSON", async () => {
+    mockCreate.mockImplementation(() => Promise.resolve({
+      choices: [{ message: { content: "not valid json {{{" } }],
+    }));
+
+    const result = await service.translateQuery("show errors", "team-1");
+    expect(result.warnings).toContain("AI fallback mode active: heuristic interpretation was used.");
+  });
+
+  it("falls back to heuristic when LLM response fails schema validation", async () => {
+    mockCreate.mockImplementation(() => Promise.resolve({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              explanation: 123, // wrong type — should be string
+              filtersApplied: "not an array",
+            }),
+          },
+        },
+      ],
+    }));
+
+    const result = await service.translateQuery("show errors", "team-1");
+    // filtersApplied is wrong type → Zod rejects → heuristic fallback
+    expect(result.warnings).toContain("AI fallback mode active: heuristic interpretation was used.");
+  });
+
+  it("accepts a valid LLM response through schema validation", async () => {
+    mockCreate.mockImplementation(() => Promise.resolve(
+      makeLLMResponse({
+        explanation: "Found payment errors",
+        filtersApplied: [{ field: "level", operator: "eq", value: "error" }],
+        textTerms: ["payment"],
+      }),
+    ));
+
+    const result = await service.translateQuery("payment errors", "team-1");
+    expect(result.explanation).toBe("Found payment errors");
+    expect(result.filtersApplied).toHaveLength(1);
+    expect(result.filtersApplied[0].field).toBe("level");
   });
 });
