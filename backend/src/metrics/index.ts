@@ -64,3 +64,23 @@ export const nlqRelaxedFallbackUsedTotal = new Counter({
   labelNames: ["result"] as const,
   registers: [registry],
 });
+
+export const nlqLlmDuration = new Histogram({
+  name: "telerithm_nlq_llm_duration_seconds",
+  help: "LLM call latency for NLQ translation",
+  buckets: [0.5, 1, 2, 5, 10, 30],
+  registers: [registry],
+});
+
+export const nlqLlmErrorsTotal = new Counter({
+  name: "telerithm_nlq_llm_errors_total",
+  help: "LLM errors by type (timeout, auth, rate_limit, parse, unknown)",
+  labelNames: ["type"] as const,
+  registers: [registry],
+});
+
+export const nlqLlmFallbackTotal = new Counter({
+  name: "telerithm_nlq_llm_fallback_total",
+  help: "How often heuristic fallback fires after LLM failure",
+  registers: [registry],
+});
