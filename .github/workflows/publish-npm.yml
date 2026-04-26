@@ -1,0 +1,77 @@
+name: Publish SDK to npm
+
+on:
+  push:
+    tags: ["sdk-v*"]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/sdk-js
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/sdk-js/package-lock.json
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Preflight — verify NPM_TOKEN secret is set
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NPM_TOKEN}" ]; then
+            echo "::error::NPM_TOKEN secret is not configured. Add a Granular Access Token (with 'Allow this token to bypass two-factor authentication' enabled, scoped to @telerithm) under Settings → Secrets and variables → Actions before tagging an SDK release." >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify package.json version matches tag
+        run: |
+          tag_version="${GITHUB_REF_NAME#sdk-v}"
+          pkg_version=$(node -p "require('./package.json').version")
+          if [ "$pkg_version" != "$tag_version" ]; then
+            echo "Tag version ($tag_version) does not match packages/sdk-js/package.json ($pkg_version)" >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --provenance
+
+  github-release:
+    name: GitHub Release (SDK)
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract SDK version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#sdk-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Extract SDK changelog for this version
+        run: |
+          awk '/^## \[${{ steps.version.outputs.version }}\]/{found=1; next} /^## \[/{found=0} found' packages/sdk-js/CHANGELOG.md > release_notes.md
+          echo "SDK release notes extracted for sdk-v${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "sdk-v${{ steps.version.outputs.version }}"
+          body_path: release_notes.md
+          generate_release_notes: false
