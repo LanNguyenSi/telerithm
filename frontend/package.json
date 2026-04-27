@@ -31,7 +31,7 @@
     "eslint": "^10.0.3",
     "eslint-config-next": "^16.2.0",
     "jsdom": "^29.0.0",
-    "postcss": "^8.5.3",
+    "postcss": "^8.5.10",
     "prettier": "^3.8.1",
     "supertest": "^7.2.2",
     "tailwindcss": "^3.4.17",
@@ -40,6 +40,7 @@
     "vitest": "^4.1.0"
   },
   "overrides": {
-    "picomatch": ">=4.0.4"
+    "picomatch": ">=4.0.4",
+    "postcss": "^8.5.10"
   }
 }
