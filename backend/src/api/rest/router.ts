@@ -342,172 +342,207 @@ apiRouter.post(
 apiRouter.post(
   "/logs/search",
   asyncHandler(async (req, res) => {
-    const parsed = searchSchema.safeParse(withDefaultSearchRange(req.body));
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
+    try {
+      await resolveUserId(req);
+      const parsed = searchSchema.safeParse(withDefaultSearchRange(req.body));
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const limitError = enforceSearchLimits(parsed.data);
+      if (limitError) {
+        res.status(400).json({ error: limitError });
+        return;
+      }
+      const result = await queryService.search(parsed.data);
+      res.json(result);
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
-    const limitError = enforceSearchLimits(parsed.data);
-    if (limitError) {
-      res.status(400).json({ error: limitError });
-      return;
-    }
-    const result = await queryService.search(parsed.data);
-    res.json(result);
   }),
 );
 
 apiRouter.get(
   "/logs",
   asyncHandler(async (req, res) => {
-    const parsed = searchSchema.safeParse(
-      withDefaultSearchRange({
-        teamId: req.query.teamId,
-        sourceId: req.query.sourceId,
-        startTime: req.query.startTime,
-        endTime: req.query.endTime,
-        query: req.query.query,
-        queryType: req.query.queryType ?? "sql",
-        limit: req.query.limit ? Number(req.query.limit) : 100,
-        offset: req.query.offset ? Number(req.query.offset) : 0,
-        pageToken: req.query.pageToken,
-      }),
-    );
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
+    try {
+      await resolveUserId(req);
+      const parsed = searchSchema.safeParse(
+        withDefaultSearchRange({
+          teamId: req.query.teamId,
+          sourceId: req.query.sourceId,
+          startTime: req.query.startTime,
+          endTime: req.query.endTime,
+          query: req.query.query,
+          queryType: req.query.queryType ?? "sql",
+          limit: req.query.limit ? Number(req.query.limit) : 100,
+          offset: req.query.offset ? Number(req.query.offset) : 0,
+          pageToken: req.query.pageToken,
+        }),
+      );
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const limitError = enforceSearchLimits(parsed.data);
+      if (limitError) {
+        res.status(400).json({ error: limitError });
+        return;
+      }
+      const result = await queryService.search(parsed.data);
+      res.json(result);
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
-    const limitError = enforceSearchLimits(parsed.data);
-    if (limitError) {
-      res.status(400).json({ error: limitError });
-      return;
-    }
-    const result = await queryService.search(parsed.data);
-    res.json(result);
   }),
 );
 
 apiRouter.post(
   "/logs/context",
   asyncHandler(async (req, res) => {
-    const parsed = contextSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
+    try {
+      await resolveUserId(req);
+      const parsed = contextSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const result = await queryService.getContext(parsed.data);
+      res.json(result);
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
-    const result = await queryService.getContext(parsed.data);
-    res.json(result);
   }),
 );
 
 apiRouter.post(
   "/logs/facets",
   asyncHandler(async (req, res) => {
-    const parsed = facetsSchema.safeParse(withDefaultSearchRange(req.body));
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
+    try {
+      await resolveUserId(req);
+      const parsed = facetsSchema.safeParse(withDefaultSearchRange(req.body));
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const limitError = enforceSearchLimits(parsed.data);
+      if (limitError) {
+        res.status(400).json({ error: limitError });
+        return;
+      }
+      if (parsed.data.async) {
+        const asyncStart = queryService.startAsyncJob(() =>
+          queryService.getFacets({ ...parsed.data, async: undefined }),
+        );
+        res.status(202).json({ ...asyncStart, status: "pending" });
+        return;
+      }
+      const syncResult = await runWithSyncBudget(() => queryService.getFacets(parsed.data));
+      if (syncResult === SYNC_TIMEOUT) {
+        const asyncStart = queryService.startAsyncJob(() =>
+          queryService.getFacets({ ...parsed.data, async: undefined }),
+        );
+        res.status(202).json({ ...asyncStart, status: "pending" });
+        return;
+      }
+      const result = syncResult;
+      res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
-    const limitError = enforceSearchLimits(parsed.data);
-    if (limitError) {
-      res.status(400).json({ error: limitError });
-      return;
-    }
-    if (parsed.data.async) {
-      const asyncStart = queryService.startAsyncJob(() =>
-        queryService.getFacets({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const syncResult = await runWithSyncBudget(() => queryService.getFacets(parsed.data));
-    if (syncResult === SYNC_TIMEOUT) {
-      const asyncStart = queryService.startAsyncJob(() =>
-        queryService.getFacets({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const result = syncResult;
-    res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
   }),
 );
 
 apiRouter.post(
   "/logs/histogram",
   asyncHandler(async (req, res) => {
-    const parsed = histogramSchema.safeParse(withDefaultSearchRange(req.body));
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
+    try {
+      await resolveUserId(req);
+      const parsed = histogramSchema.safeParse(withDefaultSearchRange(req.body));
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const limitError = enforceSearchLimits(parsed.data);
+      if (limitError) {
+        res.status(400).json({ error: limitError });
+        return;
+      }
+      if (parsed.data.async) {
+        const asyncStart = queryService.startAsyncJob(() =>
+          queryService.getHistogram({ ...parsed.data, async: undefined }),
+        );
+        res.status(202).json({ ...asyncStart, status: "pending" });
+        return;
+      }
+      const syncResult = await runWithSyncBudget(() => queryService.getHistogram(parsed.data));
+      if (syncResult === SYNC_TIMEOUT) {
+        const asyncStart = queryService.startAsyncJob(() =>
+          queryService.getHistogram({ ...parsed.data, async: undefined }),
+        );
+        res.status(202).json({ ...asyncStart, status: "pending" });
+        return;
+      }
+      const result = syncResult;
+      res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
-    const limitError = enforceSearchLimits(parsed.data);
-    if (limitError) {
-      res.status(400).json({ error: limitError });
-      return;
-    }
-    if (parsed.data.async) {
-      const asyncStart = queryService.startAsyncJob(() =>
-        queryService.getHistogram({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const syncResult = await runWithSyncBudget(() => queryService.getHistogram(parsed.data));
-    if (syncResult === SYNC_TIMEOUT) {
-      const asyncStart = queryService.startAsyncJob(() =>
-        queryService.getHistogram({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const result = syncResult;
-    res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
   }),
 );
 
 apiRouter.post(
   "/logs/patterns",
   asyncHandler(async (req, res) => {
-    const parsed = patternsSchema.safeParse(withDefaultSearchRange(req.body));
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
+    try {
+      await resolveUserId(req);
+      const parsed = patternsSchema.safeParse(withDefaultSearchRange(req.body));
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const limitError = enforceSearchLimits(parsed.data);
+      if (limitError) {
+        res.status(400).json({ error: limitError });
+        return;
+      }
+      if (parsed.data.async) {
+        const asyncStart = queryService.startAsyncJob(() =>
+          queryService.getPatterns({ ...parsed.data, async: undefined }),
+        );
+        res.status(202).json({ ...asyncStart, status: "pending" });
+        return;
+      }
+      const syncResult = await runWithSyncBudget(() => queryService.getPatterns(parsed.data));
+      if (syncResult === SYNC_TIMEOUT) {
+        const asyncStart = queryService.startAsyncJob(() =>
+          queryService.getPatterns({ ...parsed.data, async: undefined }),
+        );
+        res.status(202).json({ ...asyncStart, status: "pending" });
+        return;
+      }
+      const result = syncResult;
+      res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
-    const limitError = enforceSearchLimits(parsed.data);
-    if (limitError) {
-      res.status(400).json({ error: limitError });
-      return;
-    }
-    if (parsed.data.async) {
-      const asyncStart = queryService.startAsyncJob(() =>
-        queryService.getPatterns({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const syncResult = await runWithSyncBudget(() => queryService.getPatterns(parsed.data));
-    if (syncResult === SYNC_TIMEOUT) {
-      const asyncStart = queryService.startAsyncJob(() =>
-        queryService.getPatterns({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const result = syncResult;
-    res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
   }),
 );
 
 apiRouter.get(
   "/query/jobs/:id",
   asyncHandler(async (req, res) => {
-    const job = queryService.getAsyncJob(String(req.params.id));
-    if (!job) {
-      res.status(404).json({ error: "Job not found" });
-      return;
+    try {
+      await resolveUserId(req);
+      const job = queryService.getAsyncJob(String(req.params.id));
+      if (!job) {
+        res.status(404).json({ error: "Job not found" });
+        return;
+      }
+      res.json(job);
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
-    res.json(job);
   }),
 );
 
@@ -636,31 +671,41 @@ apiRouter.delete(
 apiRouter.get(
   "/logs/:id",
   asyncHandler(async (req, res) => {
-    const teamId = String(Array.isArray(req.query.teamId) ? req.query.teamId[0] : (req.query.teamId ?? ""));
-    const logId = String(req.params.id ?? "");
-    if (!teamId || !logId) {
-      res.status(400).json({ error: "teamId and id are required" });
-      return;
+    try {
+      await resolveUserId(req);
+      const teamId = String(Array.isArray(req.query.teamId) ? req.query.teamId[0] : (req.query.teamId ?? ""));
+      const logId = String(req.params.id ?? "");
+      if (!teamId || !logId) {
+        res.status(400).json({ error: "teamId and id are required" });
+        return;
+      }
+      const log = await logRepository.findById(teamId, logId);
+      if (!log) {
+        res.status(404).json({ error: "Log not found" });
+        return;
+      }
+      res.json({ log });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
-    const log = await logRepository.findById(teamId, logId);
-    if (!log) {
-      res.status(404).json({ error: "Log not found" });
-      return;
-    }
-    res.json({ log });
   }),
 );
 
 apiRouter.post(
   "/query/natural",
   asyncHandler(async (req, res) => {
-    const parsed = naturalQuerySchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
+    try {
+      await resolveUserId(req);
+      const parsed = naturalQuerySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: parsed.error.flatten() });
+        return;
+      }
+      const result = await queryService.explainNaturalQuery(parsed.data.teamId, parsed.data.query);
+      res.json(result);
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
     }
-    const result = await queryService.explainNaturalQuery(parsed.data.teamId, parsed.data.query);
-    res.json(result);
   }),
 );
 
