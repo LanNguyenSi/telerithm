@@ -442,11 +442,16 @@ describe("API Routes", () => {
 
   describe("POST /api/v1/logs/search", () => {
     it("rejects missing teamId", async () => {
-      const res = await app.post("/api/v1/logs/search").send({});
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({});
       expect(res.status).toBe(400);
     });
 
     it("supports offset pagination and returns total count", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "12" }]))
         .mockResolvedValueOnce(
@@ -464,7 +469,10 @@ describe("API Routes", () => {
           ]),
         );
 
-      const res = await app.post("/api/v1/logs/search").send({ teamId: "t1", limit: 5, offset: 0 });
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", limit: 5, offset: 0 });
 
       expect(res.status).toBe(200);
       expect(res.body.total).toBe(12);
@@ -480,19 +488,27 @@ describe("API Routes", () => {
     });
 
     it("rejects search limit above configured max page size", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedConfig.maxPageSize = 50;
-      const res = await app.post("/api/v1/logs/search").send({ teamId: "t1", limit: 100 });
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", limit: 100 });
       expect(res.status).toBe(400);
       expect(res.body.error).toContain("limit exceeds maximum");
     });
 
     it("accepts opaque page token and maps it to offset", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "20" }]))
         .mockResolvedValueOnce(makeClickhouseResult([]));
 
       const pageToken = Buffer.from(JSON.stringify({ offset: 10 }), "utf8").toString("base64url");
-      const res = await app.post("/api/v1/logs/search").send({ teamId: "t1", limit: 5, pageToken });
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", limit: 5, pageToken });
 
       expect(res.status).toBe(200);
       expect(mockedClickhouse.query).toHaveBeenNthCalledWith(
@@ -504,6 +520,7 @@ describe("API Routes", () => {
     });
 
     it("returns the next page when offset advances", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "12" }]))
         .mockResolvedValueOnce(
@@ -521,7 +538,10 @@ describe("API Routes", () => {
           ]),
         );
 
-      const res = await app.post("/api/v1/logs/search").send({ teamId: "t1", limit: 5, offset: 5 });
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", limit: 5, offset: 5 });
 
       expect(res.status).toBe(200);
       expect(res.body.logs[0].message).toBe("second page");
@@ -534,6 +554,7 @@ describe("API Routes", () => {
     });
 
     it("passes the level filter to log search", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "1" }]))
         .mockResolvedValueOnce(
@@ -551,10 +572,13 @@ describe("API Routes", () => {
           ]),
         );
 
-      const res = await app.post("/api/v1/logs/search").send({
-        teamId: "t1",
-        filters: [{ field: "level", operator: "eq", value: "error" }],
-      });
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({
+          teamId: "t1",
+          filters: [{ field: "level", operator: "eq", value: "error" }],
+        });
 
       expect(res.status).toBe(200);
       expect(res.body.logs[0].level).toBe("error");
@@ -568,6 +592,7 @@ describe("API Routes", () => {
     });
 
     it("passes the service filter to log search", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "1" }]))
         .mockResolvedValueOnce(
@@ -585,10 +610,13 @@ describe("API Routes", () => {
           ]),
         );
 
-      const res = await app.post("/api/v1/logs/search").send({
-        teamId: "t1",
-        filters: [{ field: "service", operator: "contains", value: "payment" }],
-      });
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({
+          teamId: "t1",
+          filters: [{ field: "service", operator: "contains", value: "payment" }],
+        });
 
       expect(res.status).toBe(200);
       expect(res.body.logs[0].service).toBe("payment-api");
@@ -602,6 +630,7 @@ describe("API Routes", () => {
     });
 
     it("supports normalized pattern filter", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "1" }]))
         .mockResolvedValueOnce(
@@ -619,10 +648,13 @@ describe("API Routes", () => {
           ]),
         );
 
-      const res = await app.post("/api/v1/logs/search").send({
-        teamId: "t1",
-        filters: [{ field: "__pattern", operator: "eq", value: "error <id> failed" }],
-      });
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({
+          teamId: "t1",
+          filters: [{ field: "__pattern", operator: "eq", value: "error <id> failed" }],
+        });
 
       expect(res.status).toBe(200);
       expect(mockedClickhouse.query).toHaveBeenNthCalledWith(
@@ -637,11 +669,16 @@ describe("API Routes", () => {
 
   describe("POST /api/v1/logs/facets", () => {
     it("rejects missing teamId", async () => {
-      const res = await app.post("/api/v1/logs/facets").send({});
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app
+        .post("/api/v1/logs/facets")
+        .set("Authorization", "Bearer sess_admin")
+        .send({});
       expect(res.status).toBe(400);
     });
 
     it("returns facet buckets for requested fields", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedClickhouse.query
         .mockResolvedValueOnce(
           makeClickhouseResult([
@@ -656,11 +693,14 @@ describe("API Routes", () => {
           ]),
         );
 
-      const res = await app.post("/api/v1/logs/facets").send({
-        teamId: "t1",
-        fields: ["service", "level"],
-        limit: 5,
-      });
+      const res = await app
+        .post("/api/v1/logs/facets")
+        .set("Authorization", "Bearer sess_admin")
+        .send({
+          teamId: "t1",
+          fields: ["service", "level"],
+          limit: 5,
+        });
 
       expect(res.status).toBe(200);
       expect(res.body.facets).toHaveLength(2);
@@ -675,13 +715,17 @@ describe("API Routes", () => {
     });
 
     it("supports async mode and returns job envelope", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedClickhouse.query.mockResolvedValue(makeClickhouseResult([{ value: "api", count: "1" }]));
 
-      const res = await app.post("/api/v1/logs/facets").send({
-        teamId: "t1",
-        fields: ["service"],
-        async: true,
-      });
+      const res = await app
+        .post("/api/v1/logs/facets")
+        .set("Authorization", "Bearer sess_admin")
+        .send({
+          teamId: "t1",
+          fields: ["service"],
+          async: true,
+        });
 
       expect(res.status).toBe(202);
       expect(res.body.requestId).toBeTruthy();
@@ -691,11 +735,16 @@ describe("API Routes", () => {
 
   describe("POST /api/v1/logs/histogram", () => {
     it("rejects missing teamId", async () => {
-      const res = await app.post("/api/v1/logs/histogram").send({});
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app
+        .post("/api/v1/logs/histogram")
+        .set("Authorization", "Bearer sess_admin")
+        .send({});
       expect(res.status).toBe(400);
     });
 
     it("returns histogram buckets", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedClickhouse.query.mockResolvedValueOnce(
         makeClickhouseResult([
           { bucket_start: "2026-03-23 10:00:00", count: "10" },
@@ -703,10 +752,13 @@ describe("API Routes", () => {
         ]),
       );
 
-      const res = await app.post("/api/v1/logs/histogram").send({
-        teamId: "t1",
-        interval: "5m",
-      });
+      const res = await app
+        .post("/api/v1/logs/histogram")
+        .set("Authorization", "Bearer sess_admin")
+        .send({
+          teamId: "t1",
+          interval: "5m",
+        });
 
       expect(res.status).toBe(200);
       expect(res.body.interval).toBe("5m");
@@ -722,11 +774,16 @@ describe("API Routes", () => {
 
   describe("POST /api/v1/logs/patterns", () => {
     it("rejects missing teamId", async () => {
-      const res = await app.post("/api/v1/logs/patterns").send({});
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app
+        .post("/api/v1/logs/patterns")
+        .set("Authorization", "Bearer sess_admin")
+        .send({});
       expect(res.status).toBe(400);
     });
 
     it("returns grouped patterns", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedClickhouse.query.mockResolvedValueOnce(
         makeClickhouseResult([
           {
@@ -741,11 +798,14 @@ describe("API Routes", () => {
         ]),
       );
 
-      const res = await app.post("/api/v1/logs/patterns").send({
-        teamId: "t1",
-        groupBy: "service_level",
-        limit: 20,
-      });
+      const res = await app
+        .post("/api/v1/logs/patterns")
+        .set("Authorization", "Bearer sess_admin")
+        .send({
+          teamId: "t1",
+          groupBy: "service_level",
+          limit: 20,
+        });
 
       expect(res.status).toBe(200);
       expect(res.body.patterns).toHaveLength(1);
@@ -762,7 +822,10 @@ describe("API Routes", () => {
 
   describe("GET /api/v1/query/jobs/:id", () => {
     it("returns 404 for unknown job", async () => {
-      const res = await app.get("/api/v1/query/jobs/unknown-job");
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app
+        .get("/api/v1/query/jobs/unknown-job")
+        .set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(404);
     });
   });
@@ -936,16 +999,71 @@ describe("API Routes", () => {
 
   describe("POST /api/v1/query/natural", () => {
     it("rejects missing query", async () => {
-      const res = await app.post("/api/v1/query/natural").send({ teamId: "t1" });
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app
+        .post("/api/v1/query/natural")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1" });
       expect(res.status).toBe(400);
     });
 
     it("translates natural query", async () => {
-      const res = await app.post("/api/v1/query/natural").send({ teamId: "t1", query: "show errors" });
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app
+        .post("/api/v1/query/natural")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", query: "show errors" });
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("explanation");
       expect(res.body).toHaveProperty("filtersApplied");
       expect(res.body).not.toHaveProperty("sql");
+    });
+  });
+
+  describe("Auth gates on log + query endpoints", () => {
+    it("rejects POST /api/v1/logs/search without Authorization", async () => {
+      const res = await app.post("/api/v1/logs/search").send({ teamId: "t1" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects POST /api/v1/query/natural without Authorization", async () => {
+      const res = await app.post("/api/v1/query/natural").send({ teamId: "t1", query: "show errors" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects GET /api/v1/logs without Authorization", async () => {
+      const res = await app.get("/api/v1/logs?teamId=t1");
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects POST /api/v1/logs/context without Authorization", async () => {
+      const res = await app.post("/api/v1/logs/context").send({ teamId: "t1" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects POST /api/v1/logs/facets without Authorization", async () => {
+      const res = await app.post("/api/v1/logs/facets").send({ teamId: "t1" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects POST /api/v1/logs/histogram without Authorization", async () => {
+      const res = await app.post("/api/v1/logs/histogram").send({ teamId: "t1" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects POST /api/v1/logs/patterns without Authorization", async () => {
+      const res = await app.post("/api/v1/logs/patterns").send({ teamId: "t1" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects GET /api/v1/query/jobs/:id without Authorization", async () => {
+      const res = await app.get("/api/v1/query/jobs/some-id");
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects GET /api/v1/logs/:id without Authorization", async () => {
+      const res = await app.get("/api/v1/logs/abc?teamId=t1");
+      expect(res.status).toBe(401);
     });
   });
 
