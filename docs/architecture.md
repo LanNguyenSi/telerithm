@@ -24,7 +24,7 @@ backend/
       log-view/           Saved views
     repositories/         ClickHouse + Prisma data access
     workers/              Background jobs (alert evaluation, retention)
-    prisma/               Postgres schema and migrations
+  prisma/                 Postgres schema and migrations
   tests/                  Vitest integration tests
 packages/sdk-js/          @telerithm/sdk client SDK
 deploy/                   Optional fluentd / vector ingestion sidecars

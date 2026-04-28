@@ -53,7 +53,7 @@ Response:
 
 ## Example queries
 
-These all translate cleanly with the LLM path. The heuristic fallback handles the simpler cases (level + service intent, last-hour time anchor) but loses nuance on multi-clause queries.
+These all translate cleanly with the LLM path. The heuristic fallback handles the simpler cases (level + service intent, basic field matches) but loses nuance on multi-clause queries; only the LLM path emits `inferredTimeRange`.
 
 ### By level
 
@@ -109,7 +109,7 @@ The AI plans a multi-filter query plus inferred time range plus residual text te
 
 Treat the system prompt as a contract; the user query is everything you'd write into a search box. The translator is tuned for:
 
-- **Time anchors.** "last hour", "today", "yesterday", "in the last 15 minutes", "overnight" produce an `inferredTimeRange`.
+- **Time anchors.** "last hour", "today", "yesterday", "in the last 15 minutes", "overnight" produce an `inferredTimeRange` on the LLM path. The heuristic fallback ignores time anchors.
 - **Level keywords.** "error", "errors", "warn", "warning", "critical" map to `level` filters.
 - **Service intent.** "from <name>", "<name> service", or a bare service name match to the facet hints produce a `service` `contains` filter.
 - **Field comparisons.** "status_code 502", "above 499", "below 100" produce numeric `eq` / `gt` / `lt` filters.
