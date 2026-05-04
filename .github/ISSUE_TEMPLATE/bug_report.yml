@@ -1,0 +1,43 @@
+name: Bug report
+description: Report a defect in telerithm
+labels: ["bug"]
+body:
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options:
+        - SDK
+        - backend
+        - frontend
+        - ingest pipeline
+        - ClickHouse / storage
+        - local LLM integration
+        - deployment / Docker
+        - other / unsure
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Expected vs. actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal commands or code that trigger the bug.
+      render: bash
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit SHA
+  - type: input
+    id: env
+    attributes:
+      label: Environment
+      placeholder: "self-hosted, local dev"
