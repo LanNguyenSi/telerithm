@@ -30,8 +30,6 @@ landed, so this release re-establishes deploy provenance.
 - **CVE sweep 2026-05-10** (PR #58): bumps `ip-address` and
   `express-rate-limit` to versions that close advisories surfaced
   by the dependency scanner.
-- **next 15.5.15** (PR #51): closes GHSA-q4gf-8mx6-v5v3 in the
-  frontend.
 
 ### Fixed
 
