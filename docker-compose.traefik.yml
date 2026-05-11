@@ -34,12 +34,13 @@ services:
     volumes:
       - chdata:/var/lib/clickhouse
       - ./backend/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./backend/clickhouse/limits.xml:/etc/clickhouse-server/config.d/limits.xml:ro
     networks:
       - telerithm-internal
     deploy:
       resources:
         limits:
-          memory: 1.5G
+          memory: 3G
           cpus: "2.0"
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
