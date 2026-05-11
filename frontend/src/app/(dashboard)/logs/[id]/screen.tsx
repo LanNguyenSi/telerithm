@@ -15,7 +15,7 @@ export function LogDetailScreen({
   paramsPromise: Promise<{ id: string }>;
 }) {
   const { id: logId } = use(paramsPromise);
-  const { team } = useLogAuth();
+  const { team, token } = useLogAuth();
 
   const [log, setLog] = useState<LogEntry | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,7 +29,7 @@ export function LogDetailScreen({
     setLoading(true);
     setError(null);
 
-    void getLogById(team.id, logId)
+    void getLogById(team.id, logId, token)
       .then(({ log: entry }) => {
         if (active) setLog(entry);
       })
@@ -39,11 +39,11 @@ export function LogDetailScreen({
       .finally(() => { if (active) setLoading(false); });
 
     return () => { active = false; };
-  }, [team.id, logId]);
+  }, [team.id, token, logId]);
 
   useEffect(() => {
     if (!log) return;
-    void getLogContext({
+    void getLogContext(token, {
       teamId: team.id,
       sourceId: log.sourceId,
       timestamp: log.timestamp,
@@ -59,7 +59,7 @@ export function LogDetailScreen({
         setContextBefore([]);
         setContextAfter([]);
       });
-  }, [log, contextScope, team.id]);
+  }, [log, contextScope, team.id, token]);
 
   if (loading) {
     return (

@@ -66,13 +66,14 @@ function isAsyncEnvelope(value: unknown): value is { requestId: string; status: 
   );
 }
 
-async function waitForAsyncJob<T>(requestId: string): Promise<T> {
+async function waitForAsyncJob<T>(requestId: string, token: string): Promise<T> {
   const attempts = 20;
   const delayMs = 250;
 
   for (let index = 0; index < attempts; index += 1) {
-    const status = await request<{ status: "pending" | "completed" | "failed"; data?: T; error?: string }>(
+    const status = await authedRequest<{ status: "pending" | "completed" | "failed"; data?: T; error?: string }>(
       `/query/jobs/${requestId}`,
+      token,
     );
     if (status.status === "completed") {
       return status.data as T;
@@ -116,6 +117,7 @@ export interface LogQueryContext {
 
 export async function getLogs(
   teamId: string,
+  token: string,
   options?: {
     sourceId?: string;
     startTime?: string;
@@ -131,12 +133,12 @@ export async function getLogs(
     limit?: number;
     offset?: number;
     pageToken?: string;
-    /** Form state context hints — only used in natural mode */
+    /** Form state context hints, only used in natural mode */
     context?: LogQueryContext;
   },
 ) {
   const isNatural = Boolean(options?.query);
-  return request<{
+  return authedRequest<{
     logs: LogEntry[];
     total: number;
     requestId: string;
@@ -145,7 +147,7 @@ export async function getLogs(
     executionTimeMs: number;
     cached: boolean;
     nextPageToken?: string;
-  }>("/logs/search", {
+  }>("/logs/search", token, {
     method: "POST",
     body: JSON.stringify({
       teamId,
@@ -167,12 +169,12 @@ export async function getLogs(
   });
 }
 
-export async function getLogById(teamId: string, logId: string) {
-  return request<{ log: LogEntry }>(`/logs/${logId}?teamId=${teamId}`);
+export async function getLogById(teamId: string, logId: string, token: string) {
+  return authedRequest<{ log: LogEntry }>(`/logs/${logId}?teamId=${teamId}`, token);
 }
 
-export async function getNaturalExplanation(teamId: string, query: string) {
-  return request<NaturalQueryPlan>("/query/natural", {
+export async function getNaturalExplanation(teamId: string, query: string, token: string) {
+  return authedRequest<NaturalQueryPlan>("/query/natural", token, {
     method: "POST",
     body: JSON.stringify({ teamId, query }),
   });
@@ -180,6 +182,7 @@ export async function getNaturalExplanation(teamId: string, query: string) {
 
 export async function getLogFacets(
   teamId: string,
+  token: string,
   options?: {
     sourceId?: string;
     startTime?: string;
@@ -194,8 +197,9 @@ export async function getLogFacets(
     limit?: number;
   },
 ) {
-  const response = await request<{ facets: LogFacet[] } | { requestId: string; status: "pending" }>(
+  const response = await authedRequest<{ facets: LogFacet[] } | { requestId: string; status: "pending" }>(
     "/logs/facets",
+    token,
     {
       method: "POST",
       body: JSON.stringify({
@@ -212,13 +216,14 @@ export async function getLogFacets(
     },
   );
   if (isAsyncEnvelope(response)) {
-    return waitForAsyncJob<{ facets: LogFacet[] }>(response.requestId);
+    return waitForAsyncJob<{ facets: LogFacet[] }>(response.requestId, token);
   }
   return response;
 }
 
 export async function getLogHistogram(
   teamId: string,
+  token: string,
   options?: {
     sourceId?: string;
     startTime?: string;
@@ -232,13 +237,13 @@ export async function getLogHistogram(
     interval?: "minute" | "5m" | "15m" | "hour" | "day";
   },
 ) {
-  const response = await request<
+  const response = await authedRequest<
     | {
         interval: "minute" | "5m" | "15m" | "hour" | "day";
         buckets: LogHistogramBucket[];
       }
     | { requestId: string; status: "pending" }
-  >("/logs/histogram", {
+  >("/logs/histogram", token, {
     method: "POST",
     body: JSON.stringify({
       teamId,
@@ -255,13 +260,14 @@ export async function getLogHistogram(
     return waitForAsyncJob<{
       interval: "minute" | "5m" | "15m" | "hour" | "day";
       buckets: LogHistogramBucket[];
-    }>(response.requestId);
+    }>(response.requestId, token);
   }
   return response;
 }
 
 export async function getLogPatterns(
   teamId: string,
+  token: string,
   options?: {
     sourceId?: string;
     startTime?: string;
@@ -276,8 +282,9 @@ export async function getLogPatterns(
     limit?: number;
   },
 ) {
-  const response = await request<{ patterns: LogPattern[] } | { requestId: string; status: "pending" }>(
+  const response = await authedRequest<{ patterns: LogPattern[] } | { requestId: string; status: "pending" }>(
     "/logs/patterns",
+    token,
     {
       method: "POST",
       body: JSON.stringify({
@@ -294,7 +301,7 @@ export async function getLogPatterns(
     },
   );
   if (isAsyncEnvelope(response)) {
-    return waitForAsyncJob<{ patterns: LogPattern[] }>(response.requestId);
+    return waitForAsyncJob<{ patterns: LogPattern[] }>(response.requestId, token);
   }
   return response;
 }
@@ -357,20 +364,23 @@ export async function deleteSavedLogView(id: string, teamId: string, token: stri
   });
 }
 
-export async function getLogContext(options: {
-  teamId: string;
-  sourceId: string;
-  timestamp: string;
-  before?: number;
-  after?: number;
-  scope?: "source" | "service" | "host";
-  service?: string;
-  host?: string;
-}) {
-  return request<{
+export async function getLogContext(
+  token: string,
+  options: {
+    teamId: string;
+    sourceId: string;
+    timestamp: string;
+    before?: number;
+    after?: number;
+    scope?: "source" | "service" | "host";
+    service?: string;
+    host?: string;
+  },
+) {
+  return authedRequest<{
     before: LogEntry[];
     after: LogEntry[];
-  }>("/logs/context", {
+  }>("/logs/context", token, {
     method: "POST",
     body: JSON.stringify({
       teamId: options.teamId,
