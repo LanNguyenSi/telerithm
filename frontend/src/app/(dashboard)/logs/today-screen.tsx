@@ -21,7 +21,7 @@ const LEVEL_OPTIONS = [
 ] as const;
 
 export function TodayScreen() {
-  const { team } = useLogAuth();
+  const { team, token } = useLogAuth();
   const router = useRouter();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,7 +41,7 @@ export function TodayScreen() {
         const filters = level
           ? [{ field: "level", operator: "eq" as const, value: level }]
           : [];
-        const result = await getLogs(team.id, {
+        const result = await getLogs(team.id, token, {
           startTime: start.toISOString(),
           endTime: now.toISOString(),
           filters,
@@ -67,7 +67,7 @@ export function TodayScreen() {
     void load();
     const interval = setInterval(() => void load(), 30_000);
     return () => { active = false; clearInterval(interval); };
-  }, [team.id, level]);
+  }, [team.id, token, level]);
 
   return (
     <div className="space-y-4">

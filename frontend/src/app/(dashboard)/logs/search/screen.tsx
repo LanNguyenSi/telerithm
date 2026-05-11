@@ -191,9 +191,9 @@ export function SearchScreen() {
         );
         const [explanation, result, facetResult, histogramResult, patternResult] = await Promise.all([
           currentQuery
-            ? getNaturalExplanation(team.id, currentQuery).catch(() => null)
+            ? getNaturalExplanation(team.id, currentQuery, token).catch(() => null)
             : Promise.resolve(null),
-          getLogs(team.id, {
+          getLogs(team.id, token, {
             sourceId: currentSourceId || undefined,
             startTime: currentTimeRange.startTime,
             endTime: currentTimeRange.endTime,
@@ -220,7 +220,7 @@ export function SearchScreen() {
                 }
               : undefined,
           }),
-          getLogFacets(team.id, {
+          getLogFacets(team.id, token, {
             sourceId: currentSourceId || undefined,
             startTime: currentTimeRange.startTime,
             endTime: currentTimeRange.endTime,
@@ -229,7 +229,7 @@ export function SearchScreen() {
             fields: FACET_FIELDS,
             limit: 10,
           }),
-          getLogHistogram(team.id, {
+          getLogHistogram(team.id, token, {
             sourceId: currentSourceId || undefined,
             startTime: currentTimeRange.startTime,
             endTime: currentTimeRange.endTime,
@@ -237,7 +237,7 @@ export function SearchScreen() {
             filters,
             interval: "5m",
           }),
-          getLogPatterns(team.id, {
+          getLogPatterns(team.id, token, {
             sourceId: currentSourceId || undefined,
             startTime: currentTimeRange.startTime,
             endTime: currentTimeRange.endTime,
