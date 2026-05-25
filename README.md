@@ -88,21 +88,27 @@ The frontend renders this as editable filter chips plus a timeline view, so you 
 
 ## API at a glance
 
-All endpoints under `/api/v1`. Bearer-token auth except `/ingest/*` (API key) and `/auth/*`.
+All endpoints under `/api/v1`. Bearer-token auth except `/ingest/*` (API key) and `/auth/*`. The table below is a sampling, the full surface is ~58 endpoints across the categories below. See `GET /api/v1/openapi.json` for the complete spec.
 
-| Method | Path                     | Description                |
-| ------ | ------------------------ | -------------------------- |
-| `POST` | `/auth/register`         | Create account             |
-| `POST` | `/auth/login`            | Sign in                    |
-| `POST` | `/ingest/:sourceId`      | Ingest logs (API key)      |
-| `POST` | `/logs/search`           | Search logs                |
-| `POST` | `/query/natural`         | Translate NL to query plan |
-| `GET`  | `/stream/logs`           | SSE live tail              |
-| `GET`  | `/alerts/incidents`      | List incidents             |
-| `GET`  | `/issues`                | List grouped errors        |
-| `GET`  | `/health`                | Health check               |
-
-Full spec at `GET /api/v1/openapi.json`.
+| Method | Path                              | Description                       |
+| ------ | --------------------------------- | --------------------------------- |
+| `POST` | `/auth/register`, `/auth/login`   | Account creation, sign in         |
+| `GET`  | `/teams`, `POST /teams`           | Teams (CRUD, invites, members)    |
+| `GET`  | `/sources`, `POST /sources`       | Ingestion sources                 |
+| `POST` | `/ingest/:sourceId`               | Ingest logs (API key)             |
+| `POST` | `/logs/search`                    | Search logs                       |
+| `POST` | `/logs/facets`, `/histogram`, `/patterns` | Faceted search, timelines, pattern clustering |
+| `GET`  | `/logs/views`, `POST /logs/views` | Saved views                       |
+| `POST` | `/query/natural`                  | Translate NL to query plan        |
+| `GET`  | `/stream/logs`                    | SSE live tail                     |
+| `GET`  | `/alerts/rules`, `/alerts/incidents` | Alert rules + incidents        |
+| `POST` | `/alerts/incidents/:id/acknowledge` | Incident workflow (ack, resolve, reopen) |
+| `GET`  | `/dashboards/overview`            | Overview dashboard                |
+| `GET`  | `/issues`, `/issues/:id`          | Grouped errors with assignment    |
+| `GET`  | `/subscriptions`                  | Notification channels             |
+| `GET`  | `/maintenance-windows`            | Maintenance windows               |
+| `GET`  | `/admin/users`, `/admin/teams`    | Admin (Owner role)                |
+| `GET`  | `/health`                         | Health check                      |
 
 ## Architecture
 
@@ -117,7 +123,7 @@ backend/
 packages/sdk-js/  JavaScript/TypeScript client SDK
 ```
 
-**Stack:** Node.js, Express, Prisma, PostgreSQL, ClickHouse, Redis, Next.js, Tailwind. See [docs/architecture.md](docs/architecture.md) for how ingestion, storage, and the NLQ pipeline fit together.
+**Stack:** Node.js, Express, Prisma, PostgreSQL, ClickHouse, Next.js, Tailwind. Redis is optional (used for background queues when `REDIS_URL` is set, see `backend/.env.example`). See [docs/architecture.md](docs/architecture.md) for how ingestion, storage, and the NLQ pipeline fit together.
 
 ## Development
 
@@ -127,7 +133,7 @@ cd backend && npx tsc --noEmit      # type check
 cd frontend && npx tsc --noEmit     # type check
 ```
 
-Contributions welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Release notes live in [CHANGELOG.md](CHANGELOG.md) (app) and [packages/sdk-js/CHANGELOG.md](packages/sdk-js/CHANGELOG.md) (SDK, versioned independently).
 
 ## License
 
