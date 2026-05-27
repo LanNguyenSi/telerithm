@@ -258,6 +258,9 @@ apiRouter.post(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    // Auth is already verified above; any error from createTeam is a
+    // business-rule failure (single-tenant mode disabled, slug taken,
+    // etc.), so 400 fits rather than 401.
     try {
       const team = await teamService.createTeam(
         parseToken(req.header("authorization")),
@@ -266,7 +269,7 @@ apiRouter.post(
       );
       res.status(201).json({ team });
     } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
     }
   }),
 );
@@ -704,11 +707,19 @@ apiRouter.post(
       return;
     }
     const muteUntil = new Date(Date.now() + parsed.data.durationMinutes * 60_000);
-    const rule = await prisma.alertRule.update({
-      where: { id: String(req.params.id) },
-      data: { muteUntil },
-    });
-    res.json({ rule: { id: rule.id, muteUntil: rule.muteUntil } });
+    try {
+      const rule = await prisma.alertRule.update({
+        where: { id: String(req.params.id) },
+        data: { muteUntil },
+      });
+      res.json({ rule: { id: rule.id, muteUntil: rule.muteUntil } });
+    } catch (error) {
+      if (isPrismaNotFound(error)) {
+        res.status(404).json({ error: "Alert rule not found" });
+        return;
+      }
+      throw error;
+    }
   }),
 );
 
@@ -716,11 +727,19 @@ apiRouter.post(
   "/alerts/rules/:id/unmute",
   asyncHandler(async (req, res) => {
     if ((await requireAuth(req, res)) === null) return;
-    const rule = await prisma.alertRule.update({
-      where: { id: String(req.params.id) },
-      data: { muteUntil: null },
-    });
-    res.json({ rule: { id: rule.id, muteUntil: null } });
+    try {
+      const rule = await prisma.alertRule.update({
+        where: { id: String(req.params.id) },
+        data: { muteUntil: null },
+      });
+      res.json({ rule: { id: rule.id, muteUntil: null } });
+    } catch (error) {
+      if (isPrismaNotFound(error)) {
+        res.status(404).json({ error: "Alert rule not found" });
+        return;
+      }
+      throw error;
+    }
   }),
 );
 
@@ -769,8 +788,16 @@ apiRouter.delete(
   "/maintenance-windows/:id",
   asyncHandler(async (req, res) => {
     if ((await requireAuth(req, res)) === null) return;
-    await prisma.maintenanceWindow.delete({ where: { id: String(req.params.id) } });
-    res.status(204).end();
+    try {
+      await prisma.maintenanceWindow.delete({ where: { id: String(req.params.id) } });
+      res.status(204).end();
+    } catch (error) {
+      if (isPrismaNotFound(error)) {
+        res.status(404).json({ error: "Maintenance window not found" });
+        return;
+      }
+      throw error;
+    }
   }),
 );
 
@@ -842,6 +869,18 @@ async function requireTeamRole(
     res.status(403).json({ error: "Forbidden" });
     return null;
   }
+}
+
+// Prisma's "record not found" error code on update/delete with a stale
+// id. Structural check so we don't have to import the Prisma error class
+// here (it's a runtime class, not a value-only type).
+function isPrismaNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2025"
+  );
 }
 
 apiRouter.post(

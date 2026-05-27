@@ -1110,15 +1110,26 @@ describe("API Routes", () => {
     });
   });
 
-  // Negative-control: at least one positive case proves the auth gate isn't
-  // accidentally a hard-block — confirms a properly authenticated request
-  // still flows through to the handler body and returns 200.
+  // Negative-control: a positive case proves the auth gate is not a
+  // hard-block. Uses GET /logs/views because that route threads userId
+  // through requireTeamRole and into logViewService.list, so the
+  // control exercises the userId plumbing end-to-end (not just the
+  // existence of the auth check).
   describe("Auth gate negative control", () => {
-    it("allows GET /api/v1/sources?teamId=t1 with a valid bearer token", async () => {
+    it("allows GET /api/v1/logs/views?teamId=t1 with a valid bearer token", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
-      const res = await app.get("/api/v1/sources?teamId=t1").set("Authorization", "Bearer sess_admin");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.findMany.mockResolvedValueOnce([]);
+
+      const res = await app.get("/api/v1/logs/views?teamId=t1").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("sources");
+      expect(res.body).toHaveProperty("views");
     });
   });
 
