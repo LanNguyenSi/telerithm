@@ -34,8 +34,10 @@ provably gated, verified by an in-process route-audit fixture.
   success, sends 401 and returns null on failure) and a paired
   `requireTeamRole` helper that returns 403 on non-membership.
   `/alerts/rules/:id/mute` and `/unmute` now return 401 (not
-  400) on auth failure. Every other authenticated handler was
-  refactored away from the broad
+  400) on auth failure. All other authenticated handlers
+  except `GET /teams` (still on the legacy inline-`parseToken`
+  pattern, tracked as a follow-up) were refactored away from
+  the broad
   `try { resolveUserId; ...body... } catch { 401 }` shape, so
   legitimate handler errors flow to the central error
   middleware as 5xx instead of being masked as 401. A new
