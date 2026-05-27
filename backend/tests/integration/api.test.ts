@@ -406,13 +406,15 @@ describe("API Routes", () => {
 
   describe("GET /api/v1/sources", () => {
     it("rejects missing teamId", async () => {
-      const res = await app.get("/api/v1/sources");
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app.get("/api/v1/sources").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(400);
       expect(res.body.error).toBe("teamId is required");
     });
 
     it("returns sources for teamId", async () => {
-      const res = await app.get("/api/v1/sources?teamId=t1");
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app.get("/api/v1/sources?teamId=t1").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("sources");
     });
@@ -443,10 +445,7 @@ describe("API Routes", () => {
   describe("POST /api/v1/logs/search", () => {
     it("rejects missing teamId", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
-      const res = await app
-        .post("/api/v1/logs/search")
-        .set("Authorization", "Bearer sess_admin")
-        .send({});
+      const res = await app.post("/api/v1/logs/search").set("Authorization", "Bearer sess_admin").send({});
       expect(res.status).toBe(400);
     });
 
@@ -670,10 +669,7 @@ describe("API Routes", () => {
   describe("POST /api/v1/logs/facets", () => {
     it("rejects missing teamId", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
-      const res = await app
-        .post("/api/v1/logs/facets")
-        .set("Authorization", "Bearer sess_admin")
-        .send({});
+      const res = await app.post("/api/v1/logs/facets").set("Authorization", "Bearer sess_admin").send({});
       expect(res.status).toBe(400);
     });
 
@@ -736,10 +732,7 @@ describe("API Routes", () => {
   describe("POST /api/v1/logs/histogram", () => {
     it("rejects missing teamId", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
-      const res = await app
-        .post("/api/v1/logs/histogram")
-        .set("Authorization", "Bearer sess_admin")
-        .send({});
+      const res = await app.post("/api/v1/logs/histogram").set("Authorization", "Bearer sess_admin").send({});
       expect(res.status).toBe(400);
     });
 
@@ -752,13 +745,10 @@ describe("API Routes", () => {
         ]),
       );
 
-      const res = await app
-        .post("/api/v1/logs/histogram")
-        .set("Authorization", "Bearer sess_admin")
-        .send({
-          teamId: "t1",
-          interval: "5m",
-        });
+      const res = await app.post("/api/v1/logs/histogram").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        interval: "5m",
+      });
 
       expect(res.status).toBe(200);
       expect(res.body.interval).toBe("5m");
@@ -775,10 +765,7 @@ describe("API Routes", () => {
   describe("POST /api/v1/logs/patterns", () => {
     it("rejects missing teamId", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
-      const res = await app
-        .post("/api/v1/logs/patterns")
-        .set("Authorization", "Bearer sess_admin")
-        .send({});
+      const res = await app.post("/api/v1/logs/patterns").set("Authorization", "Bearer sess_admin").send({});
       expect(res.status).toBe(400);
     });
 
@@ -798,14 +785,11 @@ describe("API Routes", () => {
         ]),
       );
 
-      const res = await app
-        .post("/api/v1/logs/patterns")
-        .set("Authorization", "Bearer sess_admin")
-        .send({
-          teamId: "t1",
-          groupBy: "service_level",
-          limit: 20,
-        });
+      const res = await app.post("/api/v1/logs/patterns").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        groupBy: "service_level",
+        limit: 20,
+      });
 
       expect(res.status).toBe(200);
       expect(res.body.patterns).toHaveLength(1);
@@ -823,9 +807,7 @@ describe("API Routes", () => {
   describe("GET /api/v1/query/jobs/:id", () => {
     it("returns 404 for unknown job", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
-      const res = await app
-        .get("/api/v1/query/jobs/unknown-job")
-        .set("Authorization", "Bearer sess_admin");
+      const res = await app.get("/api/v1/query/jobs/unknown-job").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(404);
     });
   });
@@ -972,12 +954,14 @@ describe("API Routes", () => {
 
   describe("GET /api/v1/alerts/rules", () => {
     it("rejects missing teamId", async () => {
-      const res = await app.get("/api/v1/alerts/rules");
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app.get("/api/v1/alerts/rules").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(400);
     });
 
     it("returns rules for teamId", async () => {
-      const res = await app.get("/api/v1/alerts/rules?teamId=t1");
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app.get("/api/v1/alerts/rules?teamId=t1").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("rules");
     });
@@ -985,14 +969,16 @@ describe("API Routes", () => {
 
   describe("GET /api/v1/alerts/incidents", () => {
     it("rejects missing teamId", async () => {
-      const res = await app.get("/api/v1/alerts/incidents");
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app.get("/api/v1/alerts/incidents").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(400);
     });
   });
 
   describe("GET /api/v1/dashboards/overview", () => {
     it("rejects missing teamId", async () => {
-      const res = await app.get("/api/v1/dashboards/overview");
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app.get("/api/v1/dashboards/overview").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(400);
     });
   });
@@ -1064,6 +1050,130 @@ describe("API Routes", () => {
     it("rejects GET /api/v1/logs/:id without Authorization", async () => {
       const res = await app.get("/api/v1/logs/abc?teamId=t1");
       expect(res.status).toBe(401);
+    });
+  });
+
+  describe("Auth gates on remaining endpoints", () => {
+    it("rejects GET /api/v1/sources without Authorization", async () => {
+      const res = await app.get("/api/v1/sources?teamId=t1");
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects POST /api/v1/sources without Authorization", async () => {
+      const res = await app.post("/api/v1/sources").send({ teamId: "t1", name: "s", type: "API" });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects GET /api/v1/alerts/rules without Authorization", async () => {
+      const res = await app.get("/api/v1/alerts/rules?teamId=t1");
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects GET /api/v1/alerts/incidents without Authorization", async () => {
+      const res = await app.get("/api/v1/alerts/incidents?teamId=t1");
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects GET /api/v1/maintenance-windows without Authorization", async () => {
+      const res = await app.get("/api/v1/maintenance-windows?teamId=t1");
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects GET /api/v1/dashboards/overview without Authorization", async () => {
+      const res = await app.get("/api/v1/dashboards/overview?teamId=t1");
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects GET /api/v1/issues without Authorization", async () => {
+      const res = await app.get("/api/v1/issues?teamId=t1");
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects GET /api/v1/issues/:id without Authorization", async () => {
+      const res = await app.get("/api/v1/issues/issue-1");
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects GET /api/v1/stream/logs without Authorization", async () => {
+      const res = await app.get("/api/v1/stream/logs?teamId=t1");
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects POST /api/v1/alerts/rules/:id/mute without Authorization (401 not 400)", async () => {
+      const res = await app.post("/api/v1/alerts/rules/rule-1/mute").send({ durationMinutes: 30 });
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects POST /api/v1/alerts/rules/:id/unmute without Authorization (401 not 400)", async () => {
+      const res = await app.post("/api/v1/alerts/rules/rule-1/unmute");
+      expect(res.status).toBe(401);
+    });
+  });
+
+  // Negative-control: a positive case proves the auth gate is not a
+  // hard-block. Uses GET /logs/views because that route threads userId
+  // through requireTeamRole and into logViewService.list, so the
+  // control exercises the userId plumbing end-to-end (not just the
+  // existence of the auth check).
+  describe("Auth gate negative control", () => {
+    it("allows GET /api/v1/logs/views?teamId=t1 with a valid bearer token", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.findMany.mockResolvedValueOnce([]);
+
+      const res = await app.get("/api/v1/logs/views?teamId=t1").set("Authorization", "Bearer sess_admin");
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("views");
+    });
+  });
+
+  // Provable claim: the README states "Bearer-token auth except /ingest/*
+  // (API key) and /auth/*". This walks every registered route and asserts
+  // each non-public path rejects an unauthenticated request with 401.
+  // Catches accidental regressions when new handlers are added.
+  describe("Route auth audit", () => {
+    const PUBLIC_PATHS = new Set<string>(["/health", "/auth/register", "/auth/settings", "/auth/login"]);
+    const API_KEY_PREFIX = "/ingest/";
+
+    function fillParams(path: string): string {
+      return path.replace(/:[A-Za-z0-9_]+/g, "placeholder");
+    }
+
+    it("rejects unauthenticated requests on every non-public /api/v1 route", async () => {
+      const { apiRouter } = await import("../../src/api/rest/router.js");
+      type Layer = { route?: { path: string; methods: Record<string, boolean> } };
+      const stack = (apiRouter as unknown as { stack: Layer[] }).stack;
+      const routes = stack
+        .filter((l): l is { route: { path: string; methods: Record<string, boolean> } } =>
+          Boolean(l.route?.path),
+        )
+        .flatMap((l) =>
+          Object.keys(l.route.methods)
+            .filter((m) => l.route.methods[m])
+            .map((method) => ({ method: method.toUpperCase(), path: l.route.path })),
+        );
+
+      expect(routes.length).toBeGreaterThan(20);
+
+      for (const { method, path } of routes) {
+        if (PUBLIC_PATHS.has(path)) continue;
+        if (path.startsWith(API_KEY_PREFIX)) {
+          const res = await app[method.toLowerCase() as "get"](`/api/v1${fillParams(path)}`);
+          expect(res.status, `${method} ${path} should require API key`).toBe(401);
+          continue;
+        }
+
+        const filled = fillParams(path);
+        const verb = method.toLowerCase() as "get" | "post" | "put" | "delete" | "patch";
+        const res = await app[verb](`/api/v1${filled}`);
+        expect(res.status, `${method} ${path} should require bearer auth`).toBe(401);
+      }
     });
   });
 
@@ -1154,6 +1264,7 @@ describe("API Routes", () => {
 
   describe("GET /api/v1/issues", () => {
     it("passes query, status, sorting, limit and offset to the issue service", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedPrisma.issue.findMany.mockResolvedValueOnce([
         {
           id: "issue-1",
@@ -1171,9 +1282,11 @@ describe("API Routes", () => {
       ]);
       mockedPrisma.issue.count.mockResolvedValueOnce(7);
 
-      const res = await app.get(
-        "/api/v1/issues?teamId=t1&query=payment&status=NEW&service=api&sortBy=eventCount&sortDirection=desc&limit=2&offset=1",
-      );
+      const res = await app
+        .get(
+          "/api/v1/issues?teamId=t1&query=payment&status=NEW&service=api&sortBy=eventCount&sortDirection=desc&limit=2&offset=1",
+        )
+        .set("Authorization", "Bearer sess_admin");
 
       expect(res.status).toBe(200);
       expect(res.body.total).toBe(7);

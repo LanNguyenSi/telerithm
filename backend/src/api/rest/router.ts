@@ -252,11 +252,15 @@ apiRouter.get(
 apiRouter.post(
   "/teams",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     const parsed = createTeamSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    // Auth is already verified above; any error from createTeam is a
+    // business-rule failure (single-tenant mode disabled, slug taken,
+    // etc.), so 400 fits rather than 401.
     try {
       const team = await teamService.createTeam(
         parseToken(req.header("authorization")),
@@ -265,7 +269,7 @@ apiRouter.post(
       );
       res.status(201).json({ team });
     } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
     }
   }),
 );
@@ -273,6 +277,7 @@ apiRouter.post(
 apiRouter.get(
   "/sources",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
@@ -286,6 +291,7 @@ apiRouter.get(
 apiRouter.post(
   "/sources",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     const parsed = createSourceSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
@@ -342,376 +348,329 @@ apiRouter.post(
 apiRouter.post(
   "/logs/search",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const parsed = searchSchema.safeParse(withDefaultSearchRange(req.body));
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const limitError = enforceSearchLimits(parsed.data);
-      if (limitError) {
-        res.status(400).json({ error: limitError });
-        return;
-      }
-      const result = await queryService.search(parsed.data);
-      res.json(result);
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    if ((await requireAuth(req, res)) === null) return;
+    const parsed = searchSchema.safeParse(withDefaultSearchRange(req.body));
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    const limitError = enforceSearchLimits(parsed.data);
+    if (limitError) {
+      res.status(400).json({ error: limitError });
+      return;
+    }
+    const result = await queryService.search(parsed.data);
+    res.json(result);
   }),
 );
 
 apiRouter.get(
   "/logs",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const parsed = searchSchema.safeParse(
-        withDefaultSearchRange({
-          teamId: req.query.teamId,
-          sourceId: req.query.sourceId,
-          startTime: req.query.startTime,
-          endTime: req.query.endTime,
-          query: req.query.query,
-          queryType: req.query.queryType ?? "sql",
-          limit: req.query.limit ? Number(req.query.limit) : 100,
-          offset: req.query.offset ? Number(req.query.offset) : 0,
-          pageToken: req.query.pageToken,
-        }),
-      );
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const limitError = enforceSearchLimits(parsed.data);
-      if (limitError) {
-        res.status(400).json({ error: limitError });
-        return;
-      }
-      const result = await queryService.search(parsed.data);
-      res.json(result);
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    if ((await requireAuth(req, res)) === null) return;
+    const parsed = searchSchema.safeParse(
+      withDefaultSearchRange({
+        teamId: req.query.teamId,
+        sourceId: req.query.sourceId,
+        startTime: req.query.startTime,
+        endTime: req.query.endTime,
+        query: req.query.query,
+        queryType: req.query.queryType ?? "sql",
+        limit: req.query.limit ? Number(req.query.limit) : 100,
+        offset: req.query.offset ? Number(req.query.offset) : 0,
+        pageToken: req.query.pageToken,
+      }),
+    );
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    const limitError = enforceSearchLimits(parsed.data);
+    if (limitError) {
+      res.status(400).json({ error: limitError });
+      return;
+    }
+    const result = await queryService.search(parsed.data);
+    res.json(result);
   }),
 );
 
 apiRouter.post(
   "/logs/context",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const parsed = contextSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const result = await queryService.getContext(parsed.data);
-      res.json(result);
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    if ((await requireAuth(req, res)) === null) return;
+    const parsed = contextSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    const result = await queryService.getContext(parsed.data);
+    res.json(result);
   }),
 );
 
 apiRouter.post(
   "/logs/facets",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const parsed = facetsSchema.safeParse(withDefaultSearchRange(req.body));
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const limitError = enforceSearchLimits(parsed.data);
-      if (limitError) {
-        res.status(400).json({ error: limitError });
-        return;
-      }
-      if (parsed.data.async) {
-        const asyncStart = queryService.startAsyncJob(() =>
-          queryService.getFacets({ ...parsed.data, async: undefined }),
-        );
-        res.status(202).json({ ...asyncStart, status: "pending" });
-        return;
-      }
-      const syncResult = await runWithSyncBudget(() => queryService.getFacets(parsed.data));
-      if (syncResult === SYNC_TIMEOUT) {
-        const asyncStart = queryService.startAsyncJob(() =>
-          queryService.getFacets({ ...parsed.data, async: undefined }),
-        );
-        res.status(202).json({ ...asyncStart, status: "pending" });
-        return;
-      }
-      const result = syncResult;
-      res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    if ((await requireAuth(req, res)) === null) return;
+    const parsed = facetsSchema.safeParse(withDefaultSearchRange(req.body));
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    const limitError = enforceSearchLimits(parsed.data);
+    if (limitError) {
+      res.status(400).json({ error: limitError });
+      return;
+    }
+    if (parsed.data.async) {
+      const asyncStart = queryService.startAsyncJob(() =>
+        queryService.getFacets({ ...parsed.data, async: undefined }),
+      );
+      res.status(202).json({ ...asyncStart, status: "pending" });
+      return;
+    }
+    const syncResult = await runWithSyncBudget(() => queryService.getFacets(parsed.data));
+    if (syncResult === SYNC_TIMEOUT) {
+      const asyncStart = queryService.startAsyncJob(() =>
+        queryService.getFacets({ ...parsed.data, async: undefined }),
+      );
+      res.status(202).json({ ...asyncStart, status: "pending" });
+      return;
+    }
+    const result = syncResult;
+    res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
   }),
 );
 
 apiRouter.post(
   "/logs/histogram",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const parsed = histogramSchema.safeParse(withDefaultSearchRange(req.body));
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const limitError = enforceSearchLimits(parsed.data);
-      if (limitError) {
-        res.status(400).json({ error: limitError });
-        return;
-      }
-      if (parsed.data.async) {
-        const asyncStart = queryService.startAsyncJob(() =>
-          queryService.getHistogram({ ...parsed.data, async: undefined }),
-        );
-        res.status(202).json({ ...asyncStart, status: "pending" });
-        return;
-      }
-      const syncResult = await runWithSyncBudget(() => queryService.getHistogram(parsed.data));
-      if (syncResult === SYNC_TIMEOUT) {
-        const asyncStart = queryService.startAsyncJob(() =>
-          queryService.getHistogram({ ...parsed.data, async: undefined }),
-        );
-        res.status(202).json({ ...asyncStart, status: "pending" });
-        return;
-      }
-      const result = syncResult;
-      res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    if ((await requireAuth(req, res)) === null) return;
+    const parsed = histogramSchema.safeParse(withDefaultSearchRange(req.body));
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    const limitError = enforceSearchLimits(parsed.data);
+    if (limitError) {
+      res.status(400).json({ error: limitError });
+      return;
+    }
+    if (parsed.data.async) {
+      const asyncStart = queryService.startAsyncJob(() =>
+        queryService.getHistogram({ ...parsed.data, async: undefined }),
+      );
+      res.status(202).json({ ...asyncStart, status: "pending" });
+      return;
+    }
+    const syncResult = await runWithSyncBudget(() => queryService.getHistogram(parsed.data));
+    if (syncResult === SYNC_TIMEOUT) {
+      const asyncStart = queryService.startAsyncJob(() =>
+        queryService.getHistogram({ ...parsed.data, async: undefined }),
+      );
+      res.status(202).json({ ...asyncStart, status: "pending" });
+      return;
+    }
+    const result = syncResult;
+    res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
   }),
 );
 
 apiRouter.post(
   "/logs/patterns",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const parsed = patternsSchema.safeParse(withDefaultSearchRange(req.body));
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const limitError = enforceSearchLimits(parsed.data);
-      if (limitError) {
-        res.status(400).json({ error: limitError });
-        return;
-      }
-      if (parsed.data.async) {
-        const asyncStart = queryService.startAsyncJob(() =>
-          queryService.getPatterns({ ...parsed.data, async: undefined }),
-        );
-        res.status(202).json({ ...asyncStart, status: "pending" });
-        return;
-      }
-      const syncResult = await runWithSyncBudget(() => queryService.getPatterns(parsed.data));
-      if (syncResult === SYNC_TIMEOUT) {
-        const asyncStart = queryService.startAsyncJob(() =>
-          queryService.getPatterns({ ...parsed.data, async: undefined }),
-        );
-        res.status(202).json({ ...asyncStart, status: "pending" });
-        return;
-      }
-      const result = syncResult;
-      res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    if ((await requireAuth(req, res)) === null) return;
+    const parsed = patternsSchema.safeParse(withDefaultSearchRange(req.body));
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    const limitError = enforceSearchLimits(parsed.data);
+    if (limitError) {
+      res.status(400).json({ error: limitError });
+      return;
+    }
+    if (parsed.data.async) {
+      const asyncStart = queryService.startAsyncJob(() =>
+        queryService.getPatterns({ ...parsed.data, async: undefined }),
+      );
+      res.status(202).json({ ...asyncStart, status: "pending" });
+      return;
+    }
+    const syncResult = await runWithSyncBudget(() => queryService.getPatterns(parsed.data));
+    if (syncResult === SYNC_TIMEOUT) {
+      const asyncStart = queryService.startAsyncJob(() =>
+        queryService.getPatterns({ ...parsed.data, async: undefined }),
+      );
+      res.status(202).json({ ...asyncStart, status: "pending" });
+      return;
+    }
+    const result = syncResult;
+    res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
   }),
 );
 
 apiRouter.get(
   "/query/jobs/:id",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const job = queryService.getAsyncJob(String(req.params.id));
-      if (!job) {
-        res.status(404).json({ error: "Job not found" });
-        return;
-      }
-      res.json(job);
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    if ((await requireAuth(req, res)) === null) return;
+    const job = queryService.getAsyncJob(String(req.params.id));
+    if (!job) {
+      res.status(404).json({ error: "Job not found" });
+      return;
     }
+    res.json(job);
   }),
 );
 
 apiRouter.get(
   "/logs/views",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const teamId = String(req.query.teamId ?? "");
-      if (!teamId) {
-        res.status(400).json({ error: "teamId is required" });
-        return;
-      }
-      await resolveTeamRole(userId, teamId);
-      const views = await logViewService.list(teamId, userId);
-      res.json({ views });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const teamId = String(req.query.teamId ?? "");
+    if (!teamId) {
+      res.status(400).json({ error: "teamId is required" });
+      return;
     }
+    if ((await requireTeamRole(userId, teamId, res)) === null) return;
+    const views = await logViewService.list(teamId, userId);
+    res.json({ views });
   }),
 );
 
 apiRouter.post(
   "/logs/views",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const parsed = createSavedViewSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      await resolveTeamRole(userId, parsed.data.teamId);
-      const view = await logViewService.create({
-        teamId: parsed.data.teamId,
-        userId,
-        name: parsed.data.name,
-        isShared: parsed.data.isShared,
-        isDefault: parsed.data.isDefault,
-        definition: parsed.data.definition,
-      });
-      res.status(201).json({ view });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const parsed = createSavedViewSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
+    const view = await logViewService.create({
+      teamId: parsed.data.teamId,
+      userId,
+      name: parsed.data.name,
+      isShared: parsed.data.isShared,
+      isDefault: parsed.data.isDefault,
+      definition: parsed.data.definition,
+    });
+    res.status(201).json({ view });
   }),
 );
 
 apiRouter.put(
   "/logs/views/:id",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const teamId = String(req.query.teamId ?? req.body?.teamId ?? "");
-      if (!teamId) {
-        res.status(400).json({ error: "teamId is required" });
-        return;
-      }
-      const parsed = updateSavedViewSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const role = await resolveTeamRole(userId, teamId);
-      const view = await logViewService.update(String(req.params.id), {
-        teamId,
-        userId,
-        canManageShared: role === "OWNER" || role === "ADMIN",
-        ...parsed.data,
-      });
-      res.json({ view });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const teamId = String(req.query.teamId ?? req.body?.teamId ?? "");
+    if (!teamId) {
+      res.status(400).json({ error: "teamId is required" });
+      return;
     }
+    const parsed = updateSavedViewSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const role = await requireTeamRole(userId, teamId, res);
+    if (role === null) return;
+    const view = await logViewService.update(String(req.params.id), {
+      teamId,
+      userId,
+      canManageShared: role === "OWNER" || role === "ADMIN",
+      ...parsed.data,
+    });
+    res.json({ view });
   }),
 );
 
 apiRouter.post(
   "/logs/views/:id/duplicate",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const teamId = String(req.body?.teamId ?? "");
-      if (!teamId) {
-        res.status(400).json({ error: "teamId is required" });
-        return;
-      }
-      const name = typeof req.body?.name === "string" ? req.body.name : undefined;
-      const role = await resolveTeamRole(userId, teamId);
-      const view = await logViewService.duplicate(String(req.params.id), {
-        teamId,
-        userId,
-        canManageShared: role === "OWNER" || role === "ADMIN",
-        name,
-      });
-      res.status(201).json({ view });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const teamId = String(req.body?.teamId ?? "");
+    if (!teamId) {
+      res.status(400).json({ error: "teamId is required" });
+      return;
     }
+    const name = typeof req.body?.name === "string" ? req.body.name : undefined;
+    const role = await requireTeamRole(userId, teamId, res);
+    if (role === null) return;
+    const view = await logViewService.duplicate(String(req.params.id), {
+      teamId,
+      userId,
+      canManageShared: role === "OWNER" || role === "ADMIN",
+      name,
+    });
+    res.status(201).json({ view });
   }),
 );
 
 apiRouter.delete(
   "/logs/views/:id",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const teamId = String(req.query.teamId ?? "");
-      if (!teamId) {
-        res.status(400).json({ error: "teamId is required" });
-        return;
-      }
-      const role = await resolveTeamRole(userId, teamId);
-      await logViewService.remove(String(req.params.id), {
-        teamId,
-        userId,
-        canManageShared: role === "OWNER" || role === "ADMIN",
-      });
-      res.status(204).end();
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const teamId = String(req.query.teamId ?? "");
+    if (!teamId) {
+      res.status(400).json({ error: "teamId is required" });
+      return;
     }
+    const role = await requireTeamRole(userId, teamId, res);
+    if (role === null) return;
+    await logViewService.remove(String(req.params.id), {
+      teamId,
+      userId,
+      canManageShared: role === "OWNER" || role === "ADMIN",
+    });
+    res.status(204).end();
   }),
 );
 
 apiRouter.get(
   "/logs/:id",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const teamId = String(Array.isArray(req.query.teamId) ? req.query.teamId[0] : (req.query.teamId ?? ""));
-      const logId = String(req.params.id ?? "");
-      if (!teamId || !logId) {
-        res.status(400).json({ error: "teamId and id are required" });
-        return;
-      }
-      const log = await logRepository.findById(teamId, logId);
-      if (!log) {
-        res.status(404).json({ error: "Log not found" });
-        return;
-      }
-      res.json({ log });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    if ((await requireAuth(req, res)) === null) return;
+    const teamId = String(Array.isArray(req.query.teamId) ? req.query.teamId[0] : (req.query.teamId ?? ""));
+    const logId = String(req.params.id ?? "");
+    if (!teamId || !logId) {
+      res.status(400).json({ error: "teamId and id are required" });
+      return;
     }
+    const log = await logRepository.findById(teamId, logId);
+    if (!log) {
+      res.status(404).json({ error: "Log not found" });
+      return;
+    }
+    res.json({ log });
   }),
 );
 
 apiRouter.post(
   "/query/natural",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const parsed = naturalQuerySchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const result = await queryService.explainNaturalQuery(parsed.data.teamId, parsed.data.query);
-      res.json(result);
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    if ((await requireAuth(req, res)) === null) return;
+    const parsed = naturalQuerySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    const result = await queryService.explainNaturalQuery(parsed.data.teamId, parsed.data.query);
+    res.json(result);
   }),
 );
 
 apiRouter.get(
   "/alerts/rules",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
@@ -725,6 +684,7 @@ apiRouter.get(
 apiRouter.get(
   "/alerts/incidents",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
@@ -740,21 +700,25 @@ apiRouter.get(
 apiRouter.post(
   "/alerts/rules/:id/mute",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
+    const parsed = muteRuleSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const muteUntil = new Date(Date.now() + parsed.data.durationMinutes * 60_000);
     try {
-      await resolveUserId(req);
-      const parsed = muteRuleSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const muteUntil = new Date(Date.now() + parsed.data.durationMinutes * 60_000);
       const rule = await prisma.alertRule.update({
         where: { id: String(req.params.id) },
         data: { muteUntil },
       });
       res.json({ rule: { id: rule.id, muteUntil: rule.muteUntil } });
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Mute failed" });
+      if (isPrismaNotFound(error)) {
+        res.status(404).json({ error: "Alert rule not found" });
+        return;
+      }
+      throw error;
     }
   }),
 );
@@ -762,15 +726,19 @@ apiRouter.post(
 apiRouter.post(
   "/alerts/rules/:id/unmute",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     try {
-      await resolveUserId(req);
       const rule = await prisma.alertRule.update({
         where: { id: String(req.params.id) },
         data: { muteUntil: null },
       });
       res.json({ rule: { id: rule.id, muteUntil: null } });
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Unmute failed" });
+      if (isPrismaNotFound(error)) {
+        res.status(404).json({ error: "Alert rule not found" });
+        return;
+      }
+      throw error;
     }
   }),
 );
@@ -780,6 +748,7 @@ apiRouter.post(
 apiRouter.get(
   "/maintenance-windows",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
@@ -797,37 +766,37 @@ apiRouter.get(
 apiRouter.post(
   "/maintenance-windows",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const parsed = maintenanceWindowSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const window = await prisma.maintenanceWindow.create({
-        data: {
-          teamId: parsed.data.teamId,
-          name: parsed.data.name,
-          startsAt: new Date(parsed.data.startsAt),
-          endsAt: new Date(parsed.data.endsAt),
-        },
-      });
-      res.status(201).json({ window });
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
+    if ((await requireAuth(req, res)) === null) return;
+    const parsed = maintenanceWindowSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    const window = await prisma.maintenanceWindow.create({
+      data: {
+        teamId: parsed.data.teamId,
+        name: parsed.data.name,
+        startsAt: new Date(parsed.data.startsAt),
+        endsAt: new Date(parsed.data.endsAt),
+      },
+    });
+    res.status(201).json({ window });
   }),
 );
 
 apiRouter.delete(
   "/maintenance-windows/:id",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     try {
-      await resolveUserId(req);
       await prisma.maintenanceWindow.delete({ where: { id: String(req.params.id) } });
       res.status(204).end();
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
+      if (isPrismaNotFound(error)) {
+        res.status(404).json({ error: "Maintenance window not found" });
+        return;
+      }
+      throw error;
     }
   }),
 );
@@ -835,6 +804,7 @@ apiRouter.delete(
 apiRouter.get(
   "/dashboards/overview",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
@@ -857,6 +827,20 @@ async function resolveUserId(req: Request): Promise<string> {
   return session.userId;
 }
 
+// Bearer-token auth gate. Returns the userId on success, or sends a 401
+// and returns null so the handler can early-return. Keeps the try/catch
+// narrowed to the auth check, so any error thrown inside the handler body
+// flows to the async error middleware as a 5xx rather than being masked
+// as a 401.
+async function requireAuth(req: Request, res: Response): Promise<string | null> {
+  try {
+    return await resolveUserId(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+}
+
 async function resolveTeamRole(
   userId: string,
   teamId: string,
@@ -870,61 +854,77 @@ async function resolveTeamRole(
   return membership.role as "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
 }
 
+// Team-membership gate, mirrored on requireAuth: returns the role on
+// success, or sends a 403 and returns null. Used after requireAuth so
+// non-member callers get a Forbidden response instead of a 500 from the
+// async error middleware.
+async function requireTeamRole(
+  userId: string,
+  teamId: string,
+  res: Response,
+): Promise<"OWNER" | "ADMIN" | "MEMBER" | "VIEWER" | null> {
+  try {
+    return await resolveTeamRole(userId, teamId);
+  } catch {
+    res.status(403).json({ error: "Forbidden" });
+    return null;
+  }
+}
+
+// Prisma's "record not found" error code on update/delete with a stale
+// id. Structural check so we don't have to import the Prisma error class
+// here (it's a runtime class, not a value-only type).
+function isPrismaNotFound(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2025"
+  );
+}
+
 apiRouter.post(
   "/alerts/incidents/:id/acknowledge",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const parsed = incidentActionSchema.safeParse(req.body);
-      const comment = parsed.success ? parsed.data.comment : undefined;
-      const incident = await alertService.acknowledgeIncident(String(req.params.id), userId, comment);
-      res.json({ incident });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
-    }
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const parsed = incidentActionSchema.safeParse(req.body);
+    const comment = parsed.success ? parsed.data.comment : undefined;
+    const incident = await alertService.acknowledgeIncident(String(req.params.id), userId, comment);
+    res.json({ incident });
   }),
 );
 
 apiRouter.post(
   "/alerts/incidents/:id/resolve",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const parsed = incidentActionSchema.safeParse(req.body);
-      const comment = parsed.success ? parsed.data.comment : undefined;
-      const incident = await alertService.resolveIncident(String(req.params.id), userId, comment);
-      res.json({ incident });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
-    }
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const parsed = incidentActionSchema.safeParse(req.body);
+    const comment = parsed.success ? parsed.data.comment : undefined;
+    const incident = await alertService.resolveIncident(String(req.params.id), userId, comment);
+    res.json({ incident });
   }),
 );
 
 apiRouter.post(
   "/alerts/incidents/:id/reopen",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const parsed = incidentActionSchema.safeParse(req.body);
-      const comment = parsed.success ? parsed.data.comment : undefined;
-      const incident = await alertService.reopenIncident(String(req.params.id), userId, comment);
-      res.json({ incident });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
-    }
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const parsed = incidentActionSchema.safeParse(req.body);
+    const comment = parsed.success ? parsed.data.comment : undefined;
+    const incident = await alertService.reopenIncident(String(req.params.id), userId, comment);
+    res.json({ incident });
   }),
 );
 
 apiRouter.get(
   "/alerts/incidents/:id/timeline",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const events = await alertService.getIncidentTimeline(String(req.params.id));
-      res.json({ events });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
-    }
+    if ((await requireAuth(req, res)) === null) return;
+    const events = await alertService.getIncidentTimeline(String(req.params.id));
+    res.json({ events });
   }),
 );
 
@@ -933,67 +933,55 @@ apiRouter.get(
 apiRouter.get(
   "/subscriptions",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const teamId = String(req.query.teamId ?? "");
-      if (!teamId) {
-        res.status(400).json({ error: "teamId is required" });
-        return;
-      }
-      const subscriptions = await subscriptionService.listByUser(userId, teamId);
-      res.json({ subscriptions });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const teamId = String(req.query.teamId ?? "");
+    if (!teamId) {
+      res.status(400).json({ error: "teamId is required" });
+      return;
     }
+    const subscriptions = await subscriptionService.listByUser(userId, teamId);
+    res.json({ subscriptions });
   }),
 );
 
 apiRouter.post(
   "/subscriptions",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const parsed = createSubscriptionSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const subscription = await subscriptionService.create({ ...parsed.data, userId });
-      res.status(201).json({ subscription });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const parsed = createSubscriptionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    const subscription = await subscriptionService.create({ ...parsed.data, userId });
+    res.status(201).json({ subscription });
   }),
 );
 
 apiRouter.put(
   "/subscriptions/:id",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      const parsed = updateSubscriptionSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      const subscription = await subscriptionService.update(String(req.params.id), userId, parsed.data);
-      res.json({ subscription });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const parsed = updateSubscriptionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    const subscription = await subscriptionService.update(String(req.params.id), userId, parsed.data);
+    res.json({ subscription });
   }),
 );
 
 apiRouter.delete(
   "/subscriptions/:id",
   asyncHandler(async (req, res) => {
-    try {
-      const userId = await resolveUserId(req);
-      await subscriptionService.delete(String(req.params.id), userId);
-      res.status(204).end();
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
-    }
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    await subscriptionService.delete(String(req.params.id), userId);
+    res.status(204).end();
   }),
 );
 
@@ -1002,19 +990,19 @@ apiRouter.delete(
 apiRouter.post(
   "/subscriptions/:id/test",
   asyncHandler(async (req, res) => {
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const subscription = await prisma.alertSubscription.findFirst({
+      where: { id: String(req.params.id), userId },
+      include: { user: { select: { id: true, email: true, name: true } } },
+    });
+    if (!subscription) {
+      res.status(404).json({ error: "Subscription not found" });
+      return;
+    }
+    const { NotificationDispatcher } = await import("../../services/notification/notification-dispatcher.js");
+    const dispatcher = new NotificationDispatcher();
     try {
-      const userId = await resolveUserId(req);
-      const subscription = await prisma.alertSubscription.findFirst({
-        where: { id: String(req.params.id), userId },
-        include: { user: { select: { id: true, email: true, name: true } } },
-      });
-      if (!subscription) {
-        res.status(404).json({ error: "Subscription not found" });
-        return;
-      }
-      const { NotificationDispatcher } =
-        await import("../../services/notification/notification-dispatcher.js");
-      const dispatcher = new NotificationDispatcher();
       await dispatcher.dispatch({
         id: "test-incident-000",
         ruleId: subscription.ruleId ?? "test-rule",
@@ -1036,6 +1024,7 @@ apiRouter.post(
 apiRouter.get(
   "/issues",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     const parsed = issueQuerySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
@@ -1056,6 +1045,7 @@ apiRouter.get(
 apiRouter.get(
   "/issues/:id",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     const issue = await issueService.getById(String(req.params.id));
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
@@ -1068,24 +1058,20 @@ apiRouter.get(
 apiRouter.put(
   "/issues/:id",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const parsed = issueUpdateSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
-      let issue;
-      if (parsed.data.status) {
-        issue = await issueService.updateStatus(String(req.params.id), parsed.data.status);
-      }
-      if (parsed.data.assigneeId !== undefined) {
-        issue = await issueService.assign(String(req.params.id), parsed.data.assigneeId);
-      }
-      res.json({ issue });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
+    if ((await requireAuth(req, res)) === null) return;
+    const parsed = issueUpdateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
     }
+    let issue;
+    if (parsed.data.status) {
+      issue = await issueService.updateStatus(String(req.params.id), parsed.data.status);
+    }
+    if (parsed.data.assigneeId !== undefined) {
+      issue = await issueService.assign(String(req.params.id), parsed.data.assigneeId);
+    }
+    res.json({ issue });
   }),
 );
 
@@ -1094,13 +1080,14 @@ apiRouter.put(
 apiRouter.post(
   "/teams/:id/invites",
   asyncHandler(async (req, res) => {
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const parsed = createInviteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
     try {
-      const userId = await resolveUserId(req);
-      const parsed = createInviteSchema.safeParse(req.body);
-      if (!parsed.success) {
-        res.status(400).json({ error: parsed.error.flatten() });
-        return;
-      }
       const invite = await teamService.createInvite(
         String(req.params.id),
         userId,
@@ -1117,21 +1104,18 @@ apiRouter.post(
 apiRouter.get(
   "/teams/:id/invites",
   asyncHandler(async (req, res) => {
-    try {
-      await resolveUserId(req);
-      const invites = await teamService.listInvites(String(req.params.id));
-      res.json({ invites });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
-    }
+    if ((await requireAuth(req, res)) === null) return;
+    const invites = await teamService.listInvites(String(req.params.id));
+    res.json({ invites });
   }),
 );
 
 apiRouter.post(
   "/invites/:token/accept",
   asyncHandler(async (req, res) => {
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     try {
-      const userId = await resolveUserId(req);
       const team = await teamService.acceptInvite(String(req.params.token), userId);
       res.json({ team });
     } catch (error) {
@@ -1143,8 +1127,8 @@ apiRouter.post(
 apiRouter.delete(
   "/invites/:id",
   asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
     try {
-      await resolveUserId(req);
       await teamService.revokeInvite(String(req.params.id));
       res.status(204).end();
     } catch (error) {
@@ -1365,24 +1349,28 @@ apiRouter.get(
 
 // --- Streaming ---
 
-apiRouter.get("/stream/logs", (req, res) => {
-  const teamId = String(req.query.teamId ?? "");
-  if (!teamId) {
-    res.status(400).json({ error: "teamId is required" });
-    return;
-  }
-  const sourceId = typeof req.query.sourceId === "string" ? req.query.sourceId : undefined;
-  const service = typeof req.query.service === "string" ? req.query.service : undefined;
-  const host = typeof req.query.host === "string" ? req.query.host : undefined;
-  const level = typeof req.query.level === "string" ? req.query.level : undefined;
-  const query = typeof req.query.query === "string" ? req.query.query : undefined;
+apiRouter.get(
+  "/stream/logs",
+  asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
+    const teamId = String(req.query.teamId ?? "");
+    if (!teamId) {
+      res.status(400).json({ error: "teamId is required" });
+      return;
+    }
+    const sourceId = typeof req.query.sourceId === "string" ? req.query.sourceId : undefined;
+    const service = typeof req.query.service === "string" ? req.query.service : undefined;
+    const host = typeof req.query.host === "string" ? req.query.host : undefined;
+    const level = typeof req.query.level === "string" ? req.query.level : undefined;
+    const query = typeof req.query.query === "string" ? req.query.query : undefined;
 
-  const unsubscribe = streamingService.subscribe(teamId, res, {
-    sourceId,
-    service,
-    host,
-    level,
-    query,
-  });
-  req.on("close", unsubscribe);
-});
+    const unsubscribe = streamingService.subscribe(teamId, res, {
+      sourceId,
+      service,
+      host,
+      level,
+      query,
+    });
+    req.on("close", unsubscribe);
+  }),
+);
