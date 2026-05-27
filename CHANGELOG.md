@@ -13,6 +13,70 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 > `master`. App-suite tags are deploy provenance, not consumable
 > artefacts.
 
+## [0.2.0] - 2026-05-27
+
+Minor release closing the remaining unauthenticated endpoints on
+`/api/v1`, rolling up two upstream CVE bumps, and landing one
+docs refresh + a small ops fix. After this release every
+`/api/v1` route except `/health`, `/auth/*`, and `/ingest/*` is
+provably gated, verified by an in-process route-audit fixture.
+
+### Security
+
+- **Auth audit and `requireAuth` helper** (PR #67): closes the
+  9 remaining unauthenticated routes flagged in the post-v0.1.1
+  audit. `GET /sources`, `POST /sources`, `GET /alerts/rules`,
+  `GET /alerts/incidents`, `GET /maintenance-windows`,
+  `GET /dashboards/overview`, `GET /issues`, `GET /issues/:id`,
+  and `GET /stream/logs` now reject unauthenticated requests
+  with 401. Adds a `requireAuth(req, res)` helper that mirrors
+  the existing `requireAdmin` pattern (returns userId on
+  success, sends 401 and returns null on failure) and a paired
+  `requireTeamRole` helper that returns 403 on non-membership.
+  `/alerts/rules/:id/mute` and `/unmute` now return 401 (not
+  400) on auth failure. Every other authenticated handler was
+  refactored away from the broad
+  `try { resolveUserId; ...body... } catch { 401 }` shape, so
+  legitimate handler errors flow to the central error
+  middleware as 5xx instead of being masked as 401. A new
+  in-process route-audit test walks `apiRouter.stack` and
+  asserts every non-public path rejects an unauthenticated
+  request with 401.
+- **Frontend Next.js bumped to ^15.5.18** (PR #62): patches 13
+  CVEs surfaced by the dependency scanner.
+- **`qs` bumped to 6.15.2** (PR #64) in both backend and
+  frontend, closing CVE-2026-8723.
+
+### Fixed
+
+- **Stale `:id` on alert mute/unmute and maintenance-window
+  delete now returns 404, not 500** (PR #67 review fixes):
+  added an `isPrismaNotFound` helper that maps Prisma's `P2025`
+  ("record not found") to 404, preserving the prior 4xx
+  behaviour on a stale id without bringing back the broad
+  try/catch that was masking auth failures.
+- **`POST /api/v1/teams` post-auth errors now return 400, not
+  401** (PR #67 review fixes): once `requireAuth` has run, any
+  error from `teamService.createTeam` is a business-rule
+  failure (single-tenant mode disabled, slug taken), not an
+  auth one.
+- **Makefile duplicate `Production Deploy` section removed**
+  (PR #66): cleans up a duplicate target block and adds the
+  missing `.PHONY` declarations.
+
+### Docs
+
+- **README API table refresh and CHANGELOG cross-links** (PR
+  #65): the API table now matches the deployed surface, Redis
+  is marked optional in the prerequisites, and the top-level
+  README links the app-suite and SDK changelogs.
+
+### Chore
+
+- **`*.tsbuildinfo` is gitignored and the existing
+  `frontend/tsconfig.tsbuildinfo` is untracked** (PR #63):
+  removes incremental-build cache state from version control.
+
 ## [0.1.1] - 2026-05-11
 
 Patch release rolling up the post-v0.1.0 auth hardening and the
