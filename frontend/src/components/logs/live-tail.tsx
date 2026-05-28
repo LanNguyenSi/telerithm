@@ -6,7 +6,7 @@ import { decodeHtml, formatDate } from "@/lib/utils/format";
 import { streamLogs } from "@/lib/api/client";
 import type { LogEntry } from "@/types";
 
-export function LiveTail({ teamId }: { teamId: string }) {
+export function LiveTail({ teamId, token }: { teamId: string; token: string }) {
   const [items, setItems] = useState<LogEntry[]>([]);
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(true);
@@ -24,7 +24,7 @@ export function LiveTail({ teamId }: { teamId: string }) {
       return;
     }
 
-    const source = streamLogs(teamId, {
+    const source = streamLogs(teamId, token, {
       level: level || undefined,
       service: service.trim() || undefined,
       host: host.trim() || undefined,
@@ -41,7 +41,7 @@ export function LiveTail({ teamId }: { teamId: string }) {
     return () => {
       source.close();
     };
-  }, [host, level, query, running, service, teamId]);
+  }, [host, level, query, running, service, teamId, token]);
 
   return (
     <Card>

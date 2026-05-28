@@ -1099,6 +1099,15 @@ describe("API Routes", () => {
       expect(res.status).toBe(401);
     });
 
+    it("rejects GET /api/v1/stream/logs with an invalid ?token= query", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValue(null);
+      const res = await app.get("/api/v1/stream/logs?teamId=t1&token=bogus");
+      expect(res.status).toBe(401);
+      expect(mockedPrisma.session.findUnique).toHaveBeenCalledWith({
+        where: { token: "bogus" },
+      });
+    });
+
     it("rejects POST /api/v1/alerts/rules/:id/mute without Authorization (401 not 400)", async () => {
       const res = await app.post("/api/v1/alerts/rules/rule-1/mute").send({ durationMinutes: 30 });
       expect(res.status).toBe(401);
