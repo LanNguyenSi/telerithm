@@ -13,6 +13,47 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 > `master`. App-suite tags are deploy provenance, not consumable
 > artefacts.
 
+## [0.2.1] - 2026-05-28
+
+Patch release closing the auth regression introduced by v0.2.0. PR
+#67 hardened nine `/api/v1` routes server-side without touching the
+frontend, so every logged-in dashboard page on demo.telerithm.cloud
+returned 401 immediately after deploy. v0.2.1 lands the frontend
+side of the same audit plus the SSE counterpart that EventSource
+made non-trivial.
+
+### Fixed
+
+- **Frontend bearer-token plumbing** (PR #69): switched five client
+  helpers (`getOverview`, `getSources`, `getAlertRules`,
+  `getAlertIncidents`, `getIssues`) from the unauthenticated
+  `request` to `authedRequest`, and threaded the session token
+  through six SSR pages (`/`, `/dashboards`, `/alerts`,
+  `/alerts/subscriptions`, `/settings`, `/issues`) plus the
+  `IssueExplorer` client component. Dashboard, Alerts, Issues and
+  Settings render real data again instead of returning 401.
+
+### Security
+
+- **SSE bearer + access-log redaction on `/stream/logs`** (PR #70):
+  `EventSource` cannot set an `Authorization` header, so PR #67
+  also broke the Live Tail panel on `/logs` (401 reconnect loop).
+  Adds a narrow `requireStreamAuth` gate that accepts the bearer
+  via `?token=` query parameter in addition to the header; every
+  other authenticated route stays header-only via the existing
+  `requireAuth`. The HTTP access logger in `app.ts` now strips
+  `token=…` from the URL before pino writes the line, so the
+  query-token does not leak into log files. OpenAPI documents the
+  new query parameter and adds an explicit 401 response.
+
+### Known follow-ups
+
+- `GET /stream/logs` still does not enforce team membership after
+  authentication, so any logged-in user can subscribe to any team's
+  live log stream by guessing the `teamId`. Pre-existing on master
+  since the route was first added; tracked separately and will be
+  closed in a follow-up patch.
+
 ## [0.2.0] - 2026-05-27
 
 Minor release closing the remaining unauthenticated endpoints on
