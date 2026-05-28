@@ -45,14 +45,13 @@ made non-trivial.
   `token=…` from the URL before pino writes the line, so the
   query-token does not leak into log files. OpenAPI documents the
   new query parameter and adds an explicit 401 response.
-
-### Known follow-ups
-
-- `GET /stream/logs` still does not enforce team membership after
-  authentication, so any logged-in user can subscribe to any team's
-  live log stream by guessing the `teamId`. Pre-existing on master
-  since the route was first added; tracked separately and will be
-  closed in a follow-up patch.
+- **Cross-team isolation on `/stream/logs`**: the SSE route now
+  calls `requireTeamRole` after authentication, so a logged-in
+  user can no longer subscribe to another team's live log stream
+  by guessing the `teamId`. Pre-existing on master since the route
+  was first added; surfaced during review of the SSE-auth change.
+  Non-members get 403 (consistent with every other team-scoped
+  endpoint), members continue to receive the stream.
 
 ## [0.2.0] - 2026-05-27
 
