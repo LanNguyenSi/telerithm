@@ -12,6 +12,13 @@ import { openApiSpec } from "./api/openapi.js";
 
 const log = createChildLogger("http");
 
+// /stream/logs accepts the bearer token via `?token=` because EventSource
+// can't set Authorization headers. Strip it before logging so tokens never
+// land in the http access log.
+function redactTokenQuery(url: string): string {
+  return url.replace(/([?&])token=[^&#]*/gi, "$1token=REDACTED");
+}
+
 export function createApp() {
   const app = express();
 
@@ -51,10 +58,11 @@ export function createApp() {
     res.on("finish", () => {
       const duration = Math.round(performance.now() - start);
       const route = req.route?.path ?? req.path;
+      const safeUrl = redactTokenQuery(req.originalUrl);
 
       log.info(
-        { requestId, method: req.method, url: req.originalUrl, status: res.statusCode, durationMs: duration },
-        `${req.method} ${req.originalUrl} ${res.statusCode}`,
+        { requestId, method: req.method, url: safeUrl, status: res.statusCode, durationMs: duration },
+        `${req.method} ${safeUrl} ${res.statusCode}`,
       );
 
       // Skip metrics endpoint itself to avoid recursion

@@ -490,6 +490,7 @@ export async function removeAdminUserFromTeam(userId: string, teamId: string, to
 
 export function streamLogs(
   teamId: string,
+  token: string,
   filters?: {
     sourceId?: string;
     service?: string;
@@ -498,7 +499,9 @@ export function streamLogs(
     query?: string;
   },
 ) {
-  const params = new URLSearchParams({ teamId });
+  // EventSource can't set headers, so the backend /stream/logs handler
+  // accepts the bearer via ?token=. Backend http logger redacts it.
+  const params = new URLSearchParams({ teamId, token });
   if (filters?.sourceId) params.set("sourceId", filters.sourceId);
   if (filters?.service) params.set("service", filters.service);
   if (filters?.host) params.set("host", filters.host);

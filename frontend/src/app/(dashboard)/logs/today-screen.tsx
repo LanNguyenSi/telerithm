@@ -71,7 +71,7 @@ export function TodayScreen() {
 
   return (
     <div className="space-y-4">
-      <LiveTail teamId={team.id} />
+      <LiveTail teamId={team.id} token={token} />
 
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">

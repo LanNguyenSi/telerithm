@@ -827,6 +827,35 @@ async function resolveUserId(req: Request): Promise<string> {
   return session.userId;
 }
 
+// SSE-only variant: accepts the bearer token via `?token=` in addition to
+// the Authorization header, because `EventSource` cannot set headers.
+// Only mounted on /stream/logs; every other route stays header-only via
+// resolveUserId. The token in URL leaks into the access log, so the http
+// logger in app.ts redacts `token=...` before writing.
+async function resolveStreamUserId(req: Request): Promise<string> {
+  const header = req.header("authorization");
+  const headerToken = header ? header.replace(/^Bearer\s+/i, "") : undefined;
+  const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
+  const token = headerToken || queryToken;
+  if (!token) {
+    throw new Error("Unauthorized");
+  }
+  const session = await prisma.session.findUnique({ where: { token } });
+  if (!session || session.expiresAt < new Date()) {
+    throw new Error("Unauthorized");
+  }
+  return session.userId;
+}
+
+async function requireStreamAuth(req: Request, res: Response): Promise<string | null> {
+  try {
+    return await resolveStreamUserId(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+}
+
 // Bearer-token auth gate. Returns the userId on success, or sends a 401
 // and returns null so the handler can early-return. Keeps the try/catch
 // narrowed to the auth check, so any error thrown inside the handler body
@@ -1352,7 +1381,7 @@ apiRouter.get(
 apiRouter.get(
   "/stream/logs",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    if ((await requireStreamAuth(req, res)) === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
