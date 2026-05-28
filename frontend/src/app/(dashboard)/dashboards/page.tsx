@@ -8,8 +8,8 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Dashboards" };
 
 export default async function DashboardsPage() {
-  const { team } = await requireAuth();
-  const { overview } = await getOverview(team.id);
+  const { team, token } = await requireAuth();
+  const { overview } = await getOverview(team.id, token);
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">

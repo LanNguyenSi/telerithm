@@ -10,8 +10,8 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Overview" };
 
 export default async function HomePage() {
-  const { team } = await requireAuth();
-  const { overview } = await getOverview(team.id);
+  const { team, token } = await requireAuth();
+  const { overview } = await getOverview(team.id, token);
 
   return (
     <>
