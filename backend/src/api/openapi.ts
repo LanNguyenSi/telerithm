@@ -345,7 +345,8 @@ export const openApiSpec = {
             name: "token",
             in: "query",
             schema: { type: "string" },
-            description: "Bearer token (use only when the Authorization header is not available, e.g. EventSource).",
+            description:
+              "Bearer token (use only when the Authorization header is not available, e.g. EventSource).",
           },
           { name: "sourceId", in: "query", schema: { type: "string" } },
           { name: "service", in: "query", schema: { type: "string" } },
