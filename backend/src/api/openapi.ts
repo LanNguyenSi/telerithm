@@ -335,16 +335,28 @@ export const openApiSpec = {
     "/stream/logs": {
       get: {
         summary: "Server-Sent Events log stream",
+        description:
+          "Accepts the bearer either via the Authorization header or via ?token= query parameter. The query fallback exists because EventSource cannot set headers; the backend HTTP access log redacts the token.",
         tags: ["Streaming"],
+        security: [{ bearerAuth: [] }],
         parameters: [
           { name: "teamId", in: "query", required: true, schema: { type: "string" } },
+          {
+            name: "token",
+            in: "query",
+            schema: { type: "string" },
+            description: "Bearer token (use only when the Authorization header is not available, e.g. EventSource).",
+          },
           { name: "sourceId", in: "query", schema: { type: "string" } },
           { name: "service", in: "query", schema: { type: "string" } },
           { name: "host", in: "query", schema: { type: "string" } },
           { name: "level", in: "query", schema: { type: "string" } },
           { name: "query", in: "query", schema: { type: "string" } },
         ],
-        responses: { 200: { description: "SSE stream", content: { "text/event-stream": {} } } },
+        responses: {
+          200: { description: "SSE stream", content: { "text/event-stream": {} } },
+          401: { description: "Missing or invalid bearer token" },
+        },
       },
     },
   },
