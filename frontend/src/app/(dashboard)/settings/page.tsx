@@ -9,8 +9,8 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Settings" };
 
 export default async function SettingsPage() {
-  const { team } = await requireAuth();
-  const { sources } = await getSources(team.id);
+  const { team, token } = await requireAuth();
+  const { sources } = await getSources(team.id, token);
 
   return (
     <div className="space-y-4 lg:space-y-6">

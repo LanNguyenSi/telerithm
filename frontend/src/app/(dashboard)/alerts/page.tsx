@@ -10,8 +10,11 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Alerts" };
 
 export default async function AlertsPage() {
-  const { team } = await requireAuth();
-  const [{ incidents }, { rules }] = await Promise.all([getAlertIncidents(team.id), getAlertRules(team.id)]);
+  const { team, token } = await requireAuth();
+  const [{ incidents }, { rules }] = await Promise.all([
+    getAlertIncidents(team.id, token),
+    getAlertRules(team.id, token),
+  ]);
 
   return (
     <>

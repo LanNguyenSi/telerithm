@@ -17,7 +17,7 @@ export default async function SubscriptionsPage() {
   const { token, team } = await requireAuth();
   const [{ subscriptions }, { rules }] = await Promise.all([
     getSubscriptions(team.id, token),
-    getAlertRules(team.id),
+    getAlertRules(team.id, token),
   ]);
 
   return (

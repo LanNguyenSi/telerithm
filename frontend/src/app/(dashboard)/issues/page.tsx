@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Issues" };
 
 export default async function IssuesPage() {
-  const { team } = await requireAuth();
+  const { team, token } = await requireAuth();
 
-  return <IssueExplorer team={team} />;
+  return <IssueExplorer team={team} token={token} />;
 }

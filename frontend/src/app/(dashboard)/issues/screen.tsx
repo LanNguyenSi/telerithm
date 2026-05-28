@@ -49,7 +49,7 @@ function levelTone(level: string) {
   return "neutral";
 }
 
-export function IssueExplorer({ team }: { team: Team }) {
+export function IssueExplorer({ team, token }: { team: Team; token: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -111,7 +111,7 @@ export function IssueExplorer({ team }: { team: Team }) {
 
       try {
         const offset = (currentPage - 1) * pageSize;
-        const result = await getIssues(team.id, {
+        const result = await getIssues(team.id, token, {
           query: currentFilters.query || undefined,
           status: currentFilters.status || undefined,
           service: currentFilters.service || undefined,
@@ -155,6 +155,7 @@ export function IssueExplorer({ team }: { team: Team }) {
     pageSize,
     reloadToken,
     team.id,
+    token,
   ]);
 
   function updateSearch(next: {

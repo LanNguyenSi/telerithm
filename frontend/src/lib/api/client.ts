@@ -101,12 +101,12 @@ export async function getTeams(token: string) {
   return authedRequest<{ teams: Team[] }>("/teams", token);
 }
 
-export async function getOverview(teamId: string) {
-  return request<{ overview: DashboardOverview }>(`/dashboards/overview?teamId=${teamId}`);
+export async function getOverview(teamId: string, token: string) {
+  return authedRequest<{ overview: DashboardOverview }>(`/dashboards/overview?teamId=${teamId}`, token);
 }
 
-export async function getSources(teamId: string) {
-  return request<{ sources: Source[] }>(`/sources?teamId=${teamId}`);
+export async function getSources(teamId: string, token: string) {
+  return authedRequest<{ sources: Source[] }>(`/sources?teamId=${teamId}`, token);
 }
 
 export interface LogQueryContext {
@@ -395,12 +395,12 @@ export async function getLogContext(
   });
 }
 
-export async function getAlertRules(teamId: string) {
-  return request<{ rules: AlertRule[] }>(`/alerts/rules?teamId=${teamId}`);
+export async function getAlertRules(teamId: string, token: string) {
+  return authedRequest<{ rules: AlertRule[] }>(`/alerts/rules?teamId=${teamId}`, token);
 }
 
-export async function getAlertIncidents(teamId: string) {
-  return request<{ incidents: AlertIncident[] }>(`/alerts/incidents?teamId=${teamId}`);
+export async function getAlertIncidents(teamId: string, token: string) {
+  return authedRequest<{ incidents: AlertIncident[] }>(`/alerts/incidents?teamId=${teamId}`, token);
 }
 
 export async function getSubscriptions(teamId: string, token: string) {
@@ -429,6 +429,7 @@ export async function deleteSubscription(id: string, token: string) {
 
 export async function getIssues(
   teamId: string,
+  token: string,
   options?: {
     query?: string;
     status?: string;
@@ -449,7 +450,7 @@ export async function getIssues(
   if (options?.sortDirection) params.set("sortDirection", options.sortDirection);
   if (options?.limit) params.set("limit", String(options.limit));
   if (options?.offset) params.set("offset", String(options.offset));
-  return request<{ issues: Issue[]; total: number }>(`/issues?${params.toString()}`);
+  return authedRequest<{ issues: Issue[]; total: number }>(`/issues?${params.toString()}`, token);
 }
 
 export async function getRegistrationSettings() {
