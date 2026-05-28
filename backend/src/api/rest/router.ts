@@ -1381,12 +1381,14 @@ apiRouter.get(
 apiRouter.get(
   "/stream/logs",
   asyncHandler(async (req, res) => {
-    if ((await requireStreamAuth(req, res)) === null) return;
+    const userId = await requireStreamAuth(req, res);
+    if (userId === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
       return;
     }
+    if ((await requireTeamRole(userId, teamId, res)) === null) return;
     const sourceId = typeof req.query.sourceId === "string" ? req.query.sourceId : undefined;
     const service = typeof req.query.service === "string" ? req.query.service : undefined;
     const host = typeof req.query.host === "string" ? req.query.host : undefined;

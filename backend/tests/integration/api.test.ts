@@ -1108,6 +1108,18 @@ describe("API Routes", () => {
       });
     });
 
+    it("rejects GET /api/v1/stream/logs when the authed user is not a team member (cross-team)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+      const res = await app
+        .get("/api/v1/stream/logs?teamId=other-team")
+        .set("Authorization", "Bearer sess_admin");
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "other-team", userId: "user-1" } },
+      });
+    });
+
     it("rejects POST /api/v1/alerts/rules/:id/mute without Authorization (401 not 400)", async () => {
       const res = await app.post("/api/v1/alerts/rules/rule-1/mute").send({ durationMinutes: 30 });
       expect(res.status).toBe(401);
