@@ -5,6 +5,13 @@ import { randomUUID } from "node:crypto";
 const prisma = new PrismaClient();
 
 async function main() {
+  if (process.env.NODE_ENV === "production" && process.env.SEED_DEMO_DATA !== "true") {
+    console.log(
+      "Skipping demo seed: NODE_ENV=production and SEED_DEMO_DATA!=true. Set SEED_DEMO_DATA=true to force.",
+    );
+    return;
+  }
+
   const existingUser = await prisma.user.findUnique({ where: { email: "demo@telerithm.dev" } });
   if (existingUser) {
     console.log("Seed data already exists, skipping.");
