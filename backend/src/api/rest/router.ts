@@ -277,12 +277,14 @@ apiRouter.post(
 apiRouter.get(
   "/sources",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
       return;
     }
+    if ((await requireTeamRole(userId, teamId, res)) === null) return;
     const sources = await teamService.listSources(teamId);
     res.json({ sources });
   }),
@@ -291,12 +293,14 @@ apiRouter.get(
 apiRouter.post(
   "/sources",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = createSourceSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
     const source = await teamService.createSource(parsed.data.teamId, parsed.data.name, parsed.data.type);
     res.status(201).json({ source });
   }),
@@ -348,12 +352,14 @@ apiRouter.post(
 apiRouter.post(
   "/logs/search",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = searchSchema.safeParse(withDefaultSearchRange(req.body));
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
     const limitError = enforceSearchLimits(parsed.data);
     if (limitError) {
       res.status(400).json({ error: limitError });
@@ -367,7 +373,8 @@ apiRouter.post(
 apiRouter.get(
   "/logs",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = searchSchema.safeParse(
       withDefaultSearchRange({
         teamId: req.query.teamId,
@@ -385,6 +392,7 @@ apiRouter.get(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
     const limitError = enforceSearchLimits(parsed.data);
     if (limitError) {
       res.status(400).json({ error: limitError });
@@ -398,12 +406,14 @@ apiRouter.get(
 apiRouter.post(
   "/logs/context",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = contextSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
     const result = await queryService.getContext(parsed.data);
     res.json(result);
   }),
@@ -412,12 +422,14 @@ apiRouter.post(
 apiRouter.post(
   "/logs/facets",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = facetsSchema.safeParse(withDefaultSearchRange(req.body));
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
     const limitError = enforceSearchLimits(parsed.data);
     if (limitError) {
       res.status(400).json({ error: limitError });
@@ -446,12 +458,14 @@ apiRouter.post(
 apiRouter.post(
   "/logs/histogram",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = histogramSchema.safeParse(withDefaultSearchRange(req.body));
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
     const limitError = enforceSearchLimits(parsed.data);
     if (limitError) {
       res.status(400).json({ error: limitError });
@@ -480,12 +494,14 @@ apiRouter.post(
 apiRouter.post(
   "/logs/patterns",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = patternsSchema.safeParse(withDefaultSearchRange(req.body));
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
     const limitError = enforceSearchLimits(parsed.data);
     if (limitError) {
       res.status(400).json({ error: limitError });
@@ -637,13 +653,15 @@ apiRouter.delete(
 apiRouter.get(
   "/logs/:id",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const teamId = String(Array.isArray(req.query.teamId) ? req.query.teamId[0] : (req.query.teamId ?? ""));
     const logId = String(req.params.id ?? "");
     if (!teamId || !logId) {
       res.status(400).json({ error: "teamId and id are required" });
       return;
     }
+    if ((await requireTeamRole(userId, teamId, res)) === null) return;
     const log = await logRepository.findById(teamId, logId);
     if (!log) {
       res.status(404).json({ error: "Log not found" });
@@ -656,12 +674,14 @@ apiRouter.get(
 apiRouter.post(
   "/query/natural",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = naturalQuerySchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
     const result = await queryService.explainNaturalQuery(parsed.data.teamId, parsed.data.query);
     res.json(result);
   }),
@@ -670,12 +690,14 @@ apiRouter.post(
 apiRouter.get(
   "/alerts/rules",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
       return;
     }
+    if ((await requireTeamRole(userId, teamId, res)) === null) return;
     const rules = await alertService.listRules(teamId);
     res.json({ rules });
   }),
@@ -684,12 +706,14 @@ apiRouter.get(
 apiRouter.get(
   "/alerts/incidents",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
       return;
     }
+    if ((await requireTeamRole(userId, teamId, res)) === null) return;
     const incidents = await alertService.listIncidents(teamId);
     res.json({ incidents });
   }),
@@ -748,12 +772,14 @@ apiRouter.post(
 apiRouter.get(
   "/maintenance-windows",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
       return;
     }
+    if ((await requireTeamRole(userId, teamId, res)) === null) return;
     const windows = await prisma.maintenanceWindow.findMany({
       where: { teamId },
       orderBy: { startsAt: "desc" },
@@ -766,12 +792,14 @@ apiRouter.get(
 apiRouter.post(
   "/maintenance-windows",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = maintenanceWindowSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
     const window = await prisma.maintenanceWindow.create({
       data: {
         teamId: parsed.data.teamId,
@@ -804,12 +832,14 @@ apiRouter.delete(
 apiRouter.get(
   "/dashboards/overview",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
       return;
     }
+    if ((await requireTeamRole(userId, teamId, res)) === null) return;
     const overview = await dashboardService.getOverview(teamId);
     res.json({ overview });
   }),
@@ -969,6 +999,7 @@ apiRouter.get(
       res.status(400).json({ error: "teamId is required" });
       return;
     }
+    if ((await requireTeamRole(userId, teamId, res)) === null) return;
     const subscriptions = await subscriptionService.listByUser(userId, teamId);
     res.json({ subscriptions });
   }),
@@ -1053,13 +1084,15 @@ apiRouter.post(
 apiRouter.get(
   "/issues",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = issueQuerySchema.safeParse(req.query);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
     const { teamId, query, status, service, level, sortBy, sortDirection, limit, offset } = parsed.data;
+    if ((await requireTeamRole(userId, teamId, res)) === null) return;
     const result = await issueService.list(
       teamId,
       { query, status, service, level },
