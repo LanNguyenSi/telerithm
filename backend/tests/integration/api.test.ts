@@ -414,9 +414,28 @@ describe("API Routes", () => {
 
     it("returns sources for teamId", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       const res = await app.get("/api/v1/sources?teamId=t1").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("sources");
+    });
+
+    it("rejects GET /api/v1/sources when the authed user is not a team member (cross-team)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+      const res = await app
+        .get("/api/v1/sources?teamId=other-team")
+        .set("Authorization", "Bearer sess_admin");
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "other-team", userId: "user-1" } },
+      });
     });
   });
 
@@ -451,6 +470,13 @@ describe("API Routes", () => {
 
     it("supports offset pagination and returns total count", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "12" }]))
         .mockResolvedValueOnce(
@@ -488,6 +514,13 @@ describe("API Routes", () => {
 
     it("rejects search limit above configured max page size", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedConfig.maxPageSize = 50;
       const res = await app
         .post("/api/v1/logs/search")
@@ -499,6 +532,13 @@ describe("API Routes", () => {
 
     it("accepts opaque page token and maps it to offset", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "20" }]))
         .mockResolvedValueOnce(makeClickhouseResult([]));
@@ -520,6 +560,13 @@ describe("API Routes", () => {
 
     it("returns the next page when offset advances", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "12" }]))
         .mockResolvedValueOnce(
@@ -554,6 +601,13 @@ describe("API Routes", () => {
 
     it("passes the level filter to log search", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "1" }]))
         .mockResolvedValueOnce(
@@ -592,6 +646,13 @@ describe("API Routes", () => {
 
     it("passes the service filter to log search", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "1" }]))
         .mockResolvedValueOnce(
@@ -630,6 +691,13 @@ describe("API Routes", () => {
 
     it("supports normalized pattern filter", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedClickhouse.query
         .mockResolvedValueOnce(makeClickhouseResult([{ total: "1" }]))
         .mockResolvedValueOnce(
@@ -664,6 +732,19 @@ describe("API Routes", () => {
         }),
       );
     });
+
+    it("rejects POST /api/v1/logs/search when the authed user is not a team member (cross-team)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "other-team" });
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "other-team", userId: "user-1" } },
+      });
+    });
   });
 
   describe("POST /api/v1/logs/facets", () => {
@@ -675,6 +756,13 @@ describe("API Routes", () => {
 
     it("returns facet buckets for requested fields", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedClickhouse.query
         .mockResolvedValueOnce(
           makeClickhouseResult([
@@ -712,6 +800,13 @@ describe("API Routes", () => {
 
     it("supports async mode and returns job envelope", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedClickhouse.query.mockResolvedValue(makeClickhouseResult([{ value: "api", count: "1" }]));
 
       const res = await app
@@ -738,6 +833,13 @@ describe("API Routes", () => {
 
     it("returns histogram buckets", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedClickhouse.query.mockResolvedValueOnce(
         makeClickhouseResult([
           { bucket_start: "2026-03-23 10:00:00", count: "10" },
@@ -771,6 +873,13 @@ describe("API Routes", () => {
 
     it("returns grouped patterns", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedClickhouse.query.mockResolvedValueOnce(
         makeClickhouseResult([
           {
@@ -961,9 +1070,28 @@ describe("API Routes", () => {
 
     it("returns rules for teamId", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       const res = await app.get("/api/v1/alerts/rules?teamId=t1").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(200);
       expect(res.body).toHaveProperty("rules");
+    });
+
+    it("rejects GET /api/v1/alerts/rules when the authed user is not a team member (cross-team)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+      const res = await app
+        .get("/api/v1/alerts/rules?teamId=other-team")
+        .set("Authorization", "Bearer sess_admin");
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "other-team", userId: "user-1" } },
+      });
     });
   });
 
@@ -995,6 +1123,13 @@ describe("API Routes", () => {
 
     it("translates natural query", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       const res = await app
         .post("/api/v1/query/natural")
         .set("Authorization", "Bearer sess_admin")
@@ -1286,6 +1421,13 @@ describe("API Routes", () => {
   describe("GET /api/v1/issues", () => {
     it("passes query, status, sorting, limit and offset to the issue service", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       mockedPrisma.issue.findMany.mockResolvedValueOnce([
         {
           id: "issue-1",
@@ -1324,6 +1466,16 @@ describe("API Routes", () => {
           skip: 1,
         }),
       );
+    });
+
+    it("rejects GET /api/v1/issues when the authed user is not a team member (cross-team)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+      const res = await app.get("/api/v1/issues?teamId=other-team").set("Authorization", "Bearer sess_admin");
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "other-team", userId: "user-1" } },
+      });
     });
   });
 });
