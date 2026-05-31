@@ -1,4 +1,5 @@
 import { createChildLogger } from "../../../logger.js";
+import { assertSafeUrl } from "../url-guard.js";
 
 const log = createChildLogger("notify-msteams");
 
@@ -56,10 +57,14 @@ export async function sendMsTeamsMessage(webhookUrl: string, incident: IncidentP
     ],
   };
 
+  // SSRF guard: re-validate at delivery time and block redirect-based bypass.
+  await assertSafeUrl(webhookUrl);
+
   const res = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    redirect: "manual",
     signal: AbortSignal.timeout(10_000),
   });
 
