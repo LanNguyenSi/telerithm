@@ -2,6 +2,7 @@ import { SubscriptionService } from "../subscription/subscription-service.js";
 import { sendWebhook } from "./channels/webhook.js";
 import { sendEmail } from "./channels/email.js";
 import { sendMsTeamsMessage } from "./channels/msteams.js";
+import { assertSafeUrl } from "./url-guard.js";
 import { createChildLogger } from "../../logger.js";
 
 const log = createChildLogger("notification-dispatcher");
@@ -164,10 +165,14 @@ async function sendSlackMessage(webhookUrl: string, incident: IncidentInfo): Pro
     ],
   };
 
+  // SSRF guard: re-validate at delivery time and block redirect-based bypass.
+  await assertSafeUrl(webhookUrl);
+
   const res = await fetch(webhookUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    redirect: "manual",
     signal: AbortSignal.timeout(10_000),
   });
 

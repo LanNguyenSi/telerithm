@@ -10,6 +10,7 @@ import { LogViewService } from "../../services/log-view/log-view-service.js";
 import { StreamingService } from "../../services/streaming/streaming-service.js";
 import { IssueService } from "../../services/issue/issue-service.js";
 import { SubscriptionService } from "../../services/subscription/subscription-service.js";
+import { assertSafeUrl } from "../../services/notification/url-guard.js";
 import { TeamService } from "../../services/team/team-service.js";
 import {
   addUserToTeamSchema,
@@ -150,6 +151,15 @@ async function authenticateApiKey(req: Request, res: Response, next: NextFunctio
   const source = await prisma.logSource.findUnique({ where: { apiKey } });
   if (!source) {
     res.status(403).json({ error: "Invalid API key" });
+    return;
+  }
+
+  // The API key resolves a single source/tenant. Reject if it does not match
+  // the URL path source, otherwise any valid key could forge logs into another
+  // source / team (cross-tenant log forgery). Applies to both
+  // /ingest/:sourceId and /ingest/:sourceId/raw via this shared middleware.
+  if (source.id !== String(req.params.sourceId)) {
+    res.status(403).json({ error: "API key does not match source" });
     return;
   }
 
@@ -1005,6 +1015,29 @@ apiRouter.get(
   }),
 );
 
+// SSRF guard at the input boundary: for URL-bearing channels, validate the
+// configured webhook target before persisting. Returns an error string on
+// rejection, or null when safe / not applicable. Delivery-time validation in
+// the channel senders provides defense in depth against later DNS rebinding.
+async function validateSubscriptionWebhook(
+  channel: string | undefined,
+  config: Record<string, unknown> | undefined,
+): Promise<string | null> {
+  if (!config) return null;
+  let urlKey: string | null = null;
+  if (channel === "WEBHOOK") urlKey = "url";
+  else if (channel === "SLACK" || channel === "MSTEAMS") urlKey = "webhook_url";
+  if (!urlKey) return null;
+  const candidate = config[urlKey];
+  if (typeof candidate !== "string" || candidate.length === 0) return null;
+  try {
+    await assertSafeUrl(candidate);
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : "Invalid webhook URL";
+  }
+}
+
 apiRouter.post(
   "/subscriptions",
   asyncHandler(async (req, res) => {
@@ -1013,6 +1046,11 @@ apiRouter.post(
     const parsed = createSubscriptionSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const webhookError = await validateSubscriptionWebhook(parsed.data.channel, parsed.data.config);
+    if (webhookError) {
+      res.status(400).json({ error: webhookError });
       return;
     }
     const subscription = await subscriptionService.create({ ...parsed.data, userId });
@@ -1028,6 +1066,11 @@ apiRouter.put(
     const parsed = updateSubscriptionSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const webhookError = await validateSubscriptionWebhook(parsed.data.channel, parsed.data.config);
+    if (webhookError) {
+      res.status(400).json({ error: webhookError });
       return;
     }
     const subscription = await subscriptionService.update(String(req.params.id), userId, parsed.data);
@@ -1107,12 +1150,16 @@ apiRouter.get(
 apiRouter.get(
   "/issues/:id",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const issue = await issueService.getById(String(req.params.id));
     if (!issue) {
       res.status(404).json({ error: "Issue not found" });
       return;
     }
+    // Scope by the issue's own team, not mere existence, otherwise any
+    // authenticated user could read any issue by enumerating its id (IDOR).
+    if ((await requireTeamRole(userId, issue.teamId, res)) === null) return;
     res.json({ issue });
   }),
 );
@@ -1120,17 +1167,38 @@ apiRouter.get(
 apiRouter.put(
   "/issues/:id",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = issueUpdateSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    // Load the target issue first and authorize against its team before any
+    // mutation, otherwise any authenticated user could change status of or
+    // reassign any issue by enumerating its id (cross-tenant IDOR).
+    const existing = await issueService.getById(String(req.params.id));
+    if (!existing) {
+      res.status(404).json({ error: "Issue not found" });
+      return;
+    }
+    if ((await requireTeamRole(userId, existing.teamId, res)) === null) return;
     let issue;
     if (parsed.data.status) {
       issue = await issueService.updateStatus(String(req.params.id), parsed.data.status);
     }
     if (parsed.data.assigneeId !== undefined) {
+      // An assignee must be a member of the issue's team; reject cross-team
+      // or non-member user ids.
+      if (parsed.data.assigneeId !== null) {
+        const assigneeMembership = await prisma.teamMember.findUnique({
+          where: { teamId_userId: { teamId: existing.teamId, userId: parsed.data.assigneeId } },
+        });
+        if (!assigneeMembership) {
+          res.status(400).json({ error: "Assignee is not a member of the issue's team" });
+          return;
+        }
+      }
       issue = await issueService.assign(String(req.params.id), parsed.data.assigneeId);
     }
     res.json({ issue });

@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { createChildLogger } from "../../../logger.js";
+import { assertSafeUrl } from "../url-guard.js";
 
 const log = createChildLogger("notify-webhook");
 
@@ -29,10 +30,15 @@ export async function sendWebhook(
     reqHeaders["X-Telerithm-Signature"] = `sha256=${signature}`;
   }
 
+  // SSRF guard: re-validate at delivery time (DNS may have rebound since the
+  // subscription was persisted) and block redirect-based bypass.
+  await assertSafeUrl(url);
+
   const res = await fetch(url, {
     method: "POST",
     headers: reqHeaders,
     body,
+    redirect: "manual",
     signal: AbortSignal.timeout(10_000),
   });
 
