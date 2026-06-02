@@ -15,22 +15,28 @@ vi.mock("../../src/config/index.js", () => ({
 }));
 
 vi.mock("../../src/services/ai/ai-service.js", () => ({
-  AIService: vi.fn().mockImplementation(() => ({
-    translateQuery: translateQueryMock,
-  })),
+  AIService: vi.fn().mockImplementation(function () {
+    return {
+      translateQuery: translateQueryMock,
+    };
+  }),
 }));
 
 vi.mock("../../src/repositories/log-repository.js", () => ({
-  LogRepository: vi.fn().mockImplementation(() => ({
-    search: searchMock,
-    getFacets: getFacetsMock,
-  })),
+  LogRepository: vi.fn().mockImplementation(function () {
+    return {
+      search: searchMock,
+      getFacets: getFacetsMock,
+    };
+  }),
 }));
 
 vi.mock("../../src/services/alert/alert-service.js", () => ({
-  AlertService: vi.fn().mockImplementation(() => ({
-    listIncidents: vi.fn(),
-  })),
+  AlertService: vi.fn().mockImplementation(function () {
+    return {
+      listIncidents: vi.fn(),
+    };
+  }),
 }));
 
 vi.mock("../../src/cache/cache-service.js", () => ({
