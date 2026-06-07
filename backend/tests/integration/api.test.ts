@@ -439,6 +439,21 @@ describe("API Routes", () => {
     });
   });
 
+  describe("POST /api/v1/subscriptions", () => {
+    it("rejects creating a subscription for a team the user does not belong to (cross-team)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+      const res = await app
+        .post("/api/v1/subscriptions")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "other-team", channel: "EMAIL", config: {} });
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "other-team", userId: "user-1" } },
+      });
+    });
+  });
+
   describe("POST /api/v1/ingest/:sourceId", () => {
     it("rejects missing API key", async () => {
       const res = await app.post("/api/v1/ingest/source-1").send({ logs: ["test log"] });

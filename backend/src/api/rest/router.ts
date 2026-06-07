@@ -1053,6 +1053,7 @@ apiRouter.post(
       res.status(400).json({ error: webhookError });
       return;
     }
+    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
     const subscription = await subscriptionService.create({ ...parsed.data, userId });
     res.status(201).json({ subscription });
   }),
