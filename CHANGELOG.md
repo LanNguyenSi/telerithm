@@ -13,6 +13,29 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 > `master`. App-suite tags are deploy provenance, not consumable
 > artefacts.
 
+## [0.2.2] - 2026-06-09
+
+Security release closing the 2026-05-30 audit findings for the
+backend. The headline is a CRITICAL: the published image seeded a
+publicly known ADMIN credential on every production boot. This
+release also closes four HIGH findings (IDOR, ClickHouse SQLi, SSRF,
+cross-tenant ingest), enforces team membership across every
+tenant-scoped route, and bumps vitest off a known CVE. No frontend
+behaviour change; backend and frontend version in lockstep as the
+app suite.
+
+### Security
+
+- **CRITICAL: production no longer seeds a public ADMIN credential** (PR #73). The Docker entrypoint ran `node dist/seed.js` on every container start, and the only guard was an idempotency check on the demo email, so a fresh production database was provisioned with `demo@telerithm.dev` / `demo123` at role ADMIN (the image sets `NODE_ENV=production`). Both `backend/src/seed.ts` and `backend/prisma/seed.ts` now skip seeding when `NODE_ENV=production` unless `SEED_DEMO_DATA=true` is set explicitly. Dev / CI / test behaviour is unchanged. **Operator note**: rotate or delete any `demo@telerithm.dev` ADMIN account that a prior deploy may have created.
+- **HIGH: four audit findings closed** (PR #75). ClickHouse SQLi: `log-repository.ts buildFilterCondition` now sanitises the dynamic map key against the existing allow-list regex so a crafted `filter.field` cannot break out of the `fields['<key>']` literal. Cross-tenant ingest forgery: `authenticateApiKey` rejects when the API-key source id does not match the URL `:sourceId` on both ingest routes. Issue IDOR: `GET/PUT /issues/:id` loads the issue, 404s if absent, then enforces `requireTeamRole` against the issue's own team and verifies the assignee belongs to it. SSRF: a new `assertSafeUrl` guard rejects non-http(s) schemes and private / loopback / link-local / ULA / metadata ranges, enforced at the subscription input boundary and again before every webhook / Slack / MSTeams fetch (`redirect: "manual"`).
+- **HIGH: team membership enforced on tenant-scoped endpoints** (PR #74). Tenant-scoped handlers authenticated the caller but never checked that the user belonged to the `teamId` they passed, so any logged-in user could read or write another team's sources, logs, alerts, maintenance windows, dashboards, issues, and subscriptions. The two-step `requireAuth` then `requireTeamRole` gate is now applied to every `teamId`-scoped handler that previously called only `requireAuth`, returning 403 for non-members. Cross-team 403 regression tests added.
+- **MEDIUM: two findings closed** (PR #78). `backend/entrypoint.sh` no longer swallows `prisma db push` / seed failures, so `set -e` aborts startup on a schema error instead of masking it. `POST /subscriptions` now enforces team membership via `requireTeamRole` before create, with a cross-team regression test.
+- **vitest bumped to `^4.1.4`** (CVE-2026-47429 / GHSA-5xrq-8626-4rwp, PR #76). vitest < 4.1.0 lets the UI server read and execute arbitrary files. vitest is a devDependency; the lockfile is regenerated and four constructor-mock factories were converted from arrow functions to function expressions for the vitest-4 `[[Construct]]` change. Suite green (224 passed).
+
+### Changed
+
+- **Backend branch-coverage threshold re-baselined to 70** (PR #77). vitest 4's v8 coverage provider counts branches more granularly than vitest 3, so backend branch coverage measures 74.06% with no test change; lines / statements / functions stay at 80, matching the frontend job.
+
 ## [0.2.1] - 2026-05-28
 
 Patch release closing the auth regression introduced by v0.2.0. PR
