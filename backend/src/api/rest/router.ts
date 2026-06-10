@@ -746,10 +746,7 @@ apiRouter.post(
       });
       res.json({ rule: { id: rule.id, muteUntil: rule.muteUntil } });
     } catch (error) {
-      if (isPrismaNotFound(error)) {
-        res.status(404).json({ error: "Alert rule not found" });
-        return;
-      }
+      if (handlePrismaError(error, res, { notFound: "Alert rule not found" })) return;
       throw error;
     }
   }),
@@ -766,10 +763,7 @@ apiRouter.post(
       });
       res.json({ rule: { id: rule.id, muteUntil: null } });
     } catch (error) {
-      if (isPrismaNotFound(error)) {
-        res.status(404).json({ error: "Alert rule not found" });
-        return;
-      }
+      if (handlePrismaError(error, res, { notFound: "Alert rule not found" })) return;
       throw error;
     }
   }),
@@ -808,15 +802,20 @@ apiRouter.post(
       return;
     }
     if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
-    const window = await prisma.maintenanceWindow.create({
-      data: {
-        teamId: parsed.data.teamId,
-        name: parsed.data.name,
-        startsAt: new Date(parsed.data.startsAt),
-        endsAt: new Date(parsed.data.endsAt),
-      },
-    });
-    res.status(201).json({ window });
+    try {
+      const window = await prisma.maintenanceWindow.create({
+        data: {
+          teamId: parsed.data.teamId,
+          name: parsed.data.name,
+          startsAt: new Date(parsed.data.startsAt),
+          endsAt: new Date(parsed.data.endsAt),
+        },
+      });
+      res.status(201).json({ window });
+    } catch (error) {
+      if (handlePrismaError(error, res, { conflict: "Maintenance window already exists" })) return;
+      throw error;
+    }
   }),
 );
 
@@ -828,10 +827,7 @@ apiRouter.delete(
       await prisma.maintenanceWindow.delete({ where: { id: String(req.params.id) } });
       res.status(204).end();
     } catch (error) {
-      if (isPrismaNotFound(error)) {
-        res.status(404).json({ error: "Maintenance window not found" });
-        return;
-      }
+      if (handlePrismaError(error, res, { notFound: "Maintenance window not found" })) return;
       throw error;
     }
   }),
@@ -938,16 +934,30 @@ async function requireTeamRole(
   }
 }
 
-// Prisma's "record not found" error code on update/delete with a stale
-// id. Structural check so we don't have to import the Prisma error class
-// here (it's a runtime class, not a value-only type).
-function isPrismaNotFound(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "P2025"
-  );
+// Maps a Prisma known-request error to an HTTP response:
+//   P2025 (record not found)  -> 404
+//   P2002 (unique constraint) -> 409
+// Returns true (and sends the response) when the error is one of these so the
+// caller can `return`; otherwise returns false so the caller rethrows and the
+// central error middleware turns it into a 500. Structural check so we don't
+// import the Prisma error class here (a runtime class, not a value-only type).
+function handlePrismaError(
+  error: unknown,
+  res: Response,
+  messages: { notFound?: string; conflict?: string } = {},
+): boolean {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === "P2025") {
+      res.status(404).json({ error: messages.notFound ?? "Not found" });
+      return true;
+    }
+    if (code === "P2002") {
+      res.status(409).json({ error: messages.conflict ?? "Conflict" });
+      return true;
+    }
+  }
+  return false;
 }
 
 apiRouter.post(
@@ -1333,17 +1343,22 @@ apiRouter.put(
     if (parsed.data.role) data.role = parsed.data.role;
     if (parsed.data.status) data.status = parsed.data.status;
     if (parsed.data.disabled !== undefined) data.status = parsed.data.disabled ? "DISABLED" : "ACTIVE";
-    const user = await prisma.user.update({
-      where: { id: String(req.params.id) },
-      select: { id: true, email: true, name: true, role: true, status: true, createdAt: true },
-      data,
-    });
-    res.json({
-      user: {
-        ...user,
-        createdAt: user.createdAt.toISOString(),
-      },
-    });
+    try {
+      const user = await prisma.user.update({
+        where: { id: String(req.params.id) },
+        select: { id: true, email: true, name: true, role: true, status: true, createdAt: true },
+        data,
+      });
+      res.json({
+        user: {
+          ...user,
+          createdAt: user.createdAt.toISOString(),
+        },
+      });
+    } catch (error) {
+      if (handlePrismaError(error, res, { notFound: "User not found" })) return;
+      throw error;
+    }
   }),
 );
 
@@ -1457,8 +1472,9 @@ apiRouter.delete(
         },
       });
       res.status(204).end();
-    } catch {
-      res.status(404).json({ error: "Member not found" });
+    } catch (error) {
+      if (handlePrismaError(error, res, { notFound: "Member not found" })) return;
+      throw error;
     }
   }),
 );
