@@ -132,6 +132,7 @@ let app: supertest.Agent;
 
 const mockedConfig = config;
 const mockedPrisma = prisma as typeof prisma & {
+  $queryRaw: ReturnType<typeof vi.fn>;
   user: {
     findUnique: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
@@ -172,6 +173,12 @@ const mockedPrisma = prisma as typeof prisma & {
     updateMany: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
   };
+  alertRule: {
+    findMany: ReturnType<typeof vi.fn>;
+  };
+  alertIncident: {
+    findMany: ReturnType<typeof vi.fn>;
+  };
   issue: {
     findMany: ReturnType<typeof vi.fn>;
     findUnique: ReturnType<typeof vi.fn>;
@@ -182,6 +189,7 @@ const mockedPrisma = prisma as typeof prisma & {
 };
 const mockedClickhouse = clickhouse as typeof clickhouse & {
   query: ReturnType<typeof vi.fn>;
+  ping: ReturnType<typeof vi.fn>;
 };
 
 function makeUser(overrides: Record<string, unknown> = {}) {
@@ -219,7 +227,13 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // resetAllMocks (not clearAllMocks) so mockResolvedValueOnce queues are drained
+  // between tests, not just call history. clearAllMocks leaves once-queues intact,
+  // which would let an unconsumed mockResolvedValueOnce leak into the next test.
+  // Because reset also drops implementations, every default the suite relies on is
+  // re-seeded below: this block is the authoritative source for mock defaults (the
+  // vi.mock factories above only establish the shape for module-load safety).
+  vi.resetAllMocks();
 
   mockedConfig.multiTenant = false;
   mockedConfig.registrationMode = "approval";
@@ -228,9 +242,14 @@ beforeEach(() => {
   mockedConfig.maxLookbackMs = 7 * 24 * 60 * 60 * 1000;
   mockedConfig.maxSyncRuntimeMs = 1500;
 
+  mockedClickhouse.ping.mockResolvedValue({ success: true });
+
+  mockedPrisma.$queryRaw.mockResolvedValue([{ "?column?": 1 }]);
   mockedPrisma.user.findUnique.mockResolvedValue(null);
   mockedPrisma.user.create.mockResolvedValue(makeUser());
   mockedPrisma.user.update.mockResolvedValue(makeUser());
+  mockedPrisma.user.findMany.mockResolvedValue([]);
+  mockedPrisma.user.count.mockResolvedValue(0);
   mockedPrisma.session.findUnique.mockResolvedValue(null);
   mockedPrisma.session.create.mockResolvedValue({ id: "session-1" });
   mockedPrisma.team.findUnique.mockResolvedValue({
@@ -245,8 +264,11 @@ beforeEach(() => {
     slug: "default",
     createdAt: new Date("2026-03-23T00:00:00.000Z"),
   });
+  mockedPrisma.team.findMany.mockResolvedValue([]);
+  mockedPrisma.team.count.mockResolvedValue(0);
   mockedPrisma.teamMember.findUnique.mockResolvedValue(null);
   mockedPrisma.teamMember.findFirst.mockResolvedValue(null);
+  mockedPrisma.teamMember.findMany.mockResolvedValue([]);
   mockedPrisma.teamMember.upsert.mockResolvedValue({
     id: "member-1",
     teamId: "team-default",
@@ -261,10 +283,14 @@ beforeEach(() => {
     role: "MEMBER",
     joinedAt: new Date("2026-03-23T00:00:00.000Z"),
   });
-  mockedPrisma.issue.findMany.mockResolvedValue([]);
-  mockedPrisma.issue.count.mockResolvedValue(0);
+  mockedPrisma.logSource.findMany.mockResolvedValue([]);
+  mockedPrisma.logSource.count.mockResolvedValue(0);
   mockedPrisma.logView.findMany.mockResolvedValue([]);
   mockedPrisma.logView.updateMany.mockResolvedValue({ count: 0 });
+  mockedPrisma.alertRule.findMany.mockResolvedValue([]);
+  mockedPrisma.alertIncident.findMany.mockResolvedValue([]);
+  mockedPrisma.issue.findMany.mockResolvedValue([]);
+  mockedPrisma.issue.count.mockResolvedValue(0);
 });
 
 describe("API Routes", () => {
@@ -401,6 +427,22 @@ describe("API Routes", () => {
     it("rejects missing auth header", async () => {
       const res = await app.get("/api/v1/teams");
       expect(res.status).toBe(401);
+    });
+  });
+
+  describe("mock isolation (regression: mockResolvedValueOnce queue leak)", () => {
+    // Guards the beforeEach resetAllMocks choice: a mockResolvedValueOnce queued
+    // in one test but never consumed must not survive into the next test. Under the
+    // old vi.clearAllMocks() the second test below would observe the "leaked-user"
+    // session instead of the default null.
+    it("queues an unconsumed session.findUnique once-value", () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "leaked-user" }));
+      // intentionally left unconsumed
+    });
+
+    it("does not inherit the previous test's unconsumed once-value", async () => {
+      const session = await mockedPrisma.session.findUnique({ where: { token: "anything" } });
+      expect(session).toBeNull();
     });
   });
 
