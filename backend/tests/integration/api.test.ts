@@ -79,9 +79,15 @@ vi.mock("../../src/repositories/prisma.js", () => {
     },
     alertRule: {
       findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn(),
     },
     alertIncident: {
       findMany: vi.fn().mockResolvedValue([]),
+    },
+    maintenanceWindow: {
+      findMany: vi.fn(),
+      create: vi.fn(),
+      delete: vi.fn(),
     },
     issue: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -176,9 +182,15 @@ const mockedPrisma = prisma as typeof prisma & {
   };
   alertRule: {
     findMany: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
   };
   alertIncident: {
     findMany: ReturnType<typeof vi.fn>;
+  };
+  maintenanceWindow: {
+    findMany: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
   };
   issue: {
     findMany: ReturnType<typeof vi.fn>;
@@ -453,6 +465,48 @@ describe("API Routes", () => {
     it("does not inherit the previous test's unconsumed once-value", async () => {
       const session = await mockedPrisma.session.findUnique({ where: { token: "anything" } });
       expect(session).toBeNull();
+    });
+  });
+
+  describe("Prisma error mapping", () => {
+    it("maps P2025 on an update to 404 (POST /alerts/rules/:id/mute)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const notFound = Object.assign(new Error("Record to update not found."), { code: "P2025" });
+      mockedPrisma.alertRule.update.mockRejectedValueOnce(notFound);
+
+      const res = await app
+        .post("/api/v1/alerts/rules/missing-rule/mute")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ durationMinutes: 30 });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Alert rule not found");
+    });
+
+    it("maps P2002 on a create to 409 (POST /maintenance-windows)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "ADMIN",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      const conflict = Object.assign(new Error("Unique constraint failed."), { code: "P2002" });
+      mockedPrisma.maintenanceWindow.create.mockRejectedValueOnce(conflict);
+
+      const res = await app
+        .post("/api/v1/maintenance-windows")
+        .set("Authorization", "Bearer sess_admin")
+        .send({
+          teamId: "t1",
+          name: "Deploy freeze",
+          startsAt: "2026-07-01T00:00:00.000Z",
+          endsAt: "2026-07-01T01:00:00.000Z",
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe("Maintenance window already exists");
     });
   });
 
