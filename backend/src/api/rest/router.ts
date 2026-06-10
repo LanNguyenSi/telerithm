@@ -859,7 +859,7 @@ apiRouter.get(
 
 async function resolveUserId(req: Request): Promise<string> {
   const header = req.header("authorization");
-  const token = parseToken(typeof header === "string" ? header : header?.[0]);
+  const token = parseToken(header);
   const session = await prisma.session.findUnique({ where: { token } });
   if (!session || session.expiresAt < new Date()) {
     throw new Error("Unauthorized");
