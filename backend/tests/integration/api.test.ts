@@ -127,6 +127,7 @@ vi.mock("../../src/repositories/redis.js", () => ({
 import { config } from "../../src/config/index.js";
 import { clickhouse } from "../../src/repositories/clickhouse.js";
 import { prisma } from "../../src/repositories/prisma.js";
+import { redis } from "../../src/repositories/redis.js";
 
 let app: supertest.Agent;
 
@@ -191,6 +192,11 @@ const mockedClickhouse = clickhouse as typeof clickhouse & {
   query: ReturnType<typeof vi.fn>;
   ping: ReturnType<typeof vi.fn>;
 };
+const mockedRedis = redis as typeof redis & {
+  get: ReturnType<typeof vi.fn>;
+  keys: ReturnType<typeof vi.fn>;
+  ping: ReturnType<typeof vi.fn>;
+};
 
 function makeUser(overrides: Record<string, unknown> = {}) {
   return {
@@ -243,6 +249,10 @@ beforeEach(() => {
   mockedConfig.maxSyncRuntimeMs = 1500;
 
   mockedClickhouse.ping.mockResolvedValue({ success: true });
+
+  mockedRedis.get.mockResolvedValue(null);
+  mockedRedis.keys.mockResolvedValue([]);
+  mockedRedis.ping.mockResolvedValue("PONG");
 
   mockedPrisma.$queryRaw.mockResolvedValue([{ "?column?": 1 }]);
   mockedPrisma.user.findUnique.mockResolvedValue(null);
