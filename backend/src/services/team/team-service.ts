@@ -101,10 +101,9 @@ export class TeamService {
     return this.createSession(user);
   }
 
-  async listTeamsForToken(token: string): Promise<Team[]> {
-    const session = await this.validateToken(token);
+  async listTeamsForUser(userId: string): Promise<Team[]> {
     const memberships = await prisma.teamMember.findMany({
-      where: { userId: session.userId },
+      where: { userId },
       include: { team: true },
     });
     return memberships.map((m) => ({

@@ -250,12 +250,10 @@ apiRouter.post(
 apiRouter.get(
   "/teams",
   asyncHandler(async (req, res) => {
-    try {
-      const teams = await teamService.listTeamsForToken(parseToken(req.header("authorization")));
-      res.json({ teams });
-    } catch (error) {
-      res.status(401).json({ error: error instanceof Error ? error.message : "Unauthorized" });
-    }
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const teams = await teamService.listTeamsForUser(userId);
+    res.json({ teams });
   }),
 );
 
