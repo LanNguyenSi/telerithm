@@ -13,6 +13,61 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 > `master`. App-suite tags are deploy provenance, not consumable
 > artefacts.
 
+## [0.2.3] - 2026-06-16
+
+Patch release closing two esbuild build-tool advisories from the
+2026-06-13 CVE sweep and landing three API refactors (generic
+Prisma-error helper, GET /teams requireAuth migration, dead
+header-array removal) plus a test-isolation fix. No frontend
+behaviour change; backend and frontend version in lockstep as the
+app suite.
+
+### Security
+
+- **esbuild pinned to >=0.28.1 in backend** (PR #84, PR #85). Two
+  advisories (GHSA-gv7w-rqvm-qjhr HIGH, GHSA-g7r4-m6w7-qqqr LOW)
+  affected esbuild versions before 0.28.1, which entered the tree as
+  a transitive dependency of tsx and tsup. PR #84 bumps tsx to
+  ^4.22.4 in backend devDependencies (tsx >=4.22.0 depends on esbuild
+  ~0.28.1 patched). PR #85 adds an `overrides` pin `esbuild: >=0.28.1`
+  to backend and sdk-js package.json to close the remaining path
+  through tsup. Build-time only; no runtime risk.
+
+### Changed
+
+- **Generic Prisma-error-to-status helper in REST router** (PR #83).
+  Replaced the inline `isPrismaNotFound` (P2025 only) with
+  `handlePrismaError`, mapping P2025 to 404 and P2002 to 409 and
+  rethrowing everything else to the central error middleware. Applied
+  to every direct Prisma write/update/delete in `router.ts`:
+  alert-rule mute/unmute, maintenance-window create and delete, admin
+  `user.update`, and admin `teamMember.delete`. Previously unguarded
+  Prisma errors on stale IDs surfaced as 500.
+- **GET /teams migrated to requireAuth** (PR #81). The route was the
+  last authenticated handler using the pre-PR-#67 inline parseToken
+  pattern, which masked every auth error as 401. Switched to the
+  shared `requireAuth` helper and replaced `listTeamsForToken(token)`
+  with `listTeamsForUser(userId)`, since `requireAuth` already
+  resolves the session. Auth errors now propagate to the async error
+  middleware as 5xx instead of being silently coerced to 401.
+- **Dead header-array fallback removed in resolveUserId** (PR #80).
+  `req.header()` returns `string | undefined`, so the `string[]`
+  branch was unreachable. On a string, `header?.[0]` would have
+  returned the first character rather than an array element, making
+  the fallback incorrect had it ever fired. Removed; `parseToken`
+  already accepts `string | undefined`.
+
+### Tests
+
+- **Mock-queue leak fixed in API test suite** (PR #82). `beforeEach`
+  used `vi.clearAllMocks()`, which clears call history but leaves
+  `mockResolvedValueOnce` queues intact, allowing an unconsumed
+  once-value to leak from one test into the next. Switched to
+  `vi.resetAllMocks()` and re-seeded every default, including redis
+  `get`/`keys`/`ping`, in `beforeEach` as the single source of truth.
+  Added a regression test that fails under the old strategy and passes
+  under reset.
+
 ## [0.2.2] - 2026-06-09
 
 Security release closing the 2026-05-30 audit findings for the
