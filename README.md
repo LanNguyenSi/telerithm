@@ -4,8 +4,6 @@
 
 Telerithm turns plain-language questions into structured queries over your logs. Instead of grepping millions of lines or hand-writing SQL, you ask _"show me payment errors from the last hour"_ and the AI translates it into filters, a time range, and a search plan you can review and edit. Self-hosted, single-tenant by default, OpenAI-compatible (cloud or local LLM).
 
-<!-- TODO: hero screenshot of the natural-language query interface -->
-
 ## Try it in 60 seconds
 
 **Live demo (no install):**
@@ -83,12 +81,13 @@ The frontend renders this as editable filter chips plus a timeline view, so you 
 - Error grouping with fingerprinting and assignment workflow
 - Team management with RBAC (Owner, Admin, Member, Viewer), invites, admin API
 - Single-tenant by default, optional multi-tenant via config flag
+- Prometheus metrics endpoint (`/metrics`) covering HTTP, ingest, alert, SSE, and NLQ stats
 
-**Planned:** AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, retention policies, Prometheus metrics export, `telerithm` CLI.
+**Planned:** AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, retention policies, `telerithm` CLI.
 
 ## API at a glance
 
-All endpoints under `/api/v1`. Bearer-token auth except `/ingest/*` (API key) and `/auth/*`. The table below is a sampling, the full surface is ~58 endpoints across the categories below. See `GET /api/v1/openapi.json` for the complete spec.
+All endpoints under `/api/v1`. Bearer-token auth except `/ingest/*` (API key) and `/auth/*`. The table below is a sampling, the full surface is ~58 endpoints across the categories below. See `GET /openapi.json` for the complete spec.
 
 | Method | Path                              | Description                       |
 | ------ | --------------------------------- | --------------------------------- |

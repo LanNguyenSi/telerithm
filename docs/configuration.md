@@ -24,6 +24,7 @@ All configuration is environment-driven. The backend validates env vars on start
 | `MAX_LOOKBACK_MS`    | `604800000` (7 days)          | Hard cap on query time range                                                        |
 | `MAX_PAGE_SIZE`      | `500`                         | Max page size for log search (50, 2000)                                             |
 | `MAX_SYNC_RUNTIME_MS`| `1500`                        | Max wall time for synchronous queries before they're pushed to async jobs           |
+| `SEED_DEMO_DATA`     | unset                         | Set to `true` to allow demo seeding when `NODE_ENV=production` (otherwise seeding is skipped in production) |
 
 A starter file lives at `backend/.env.example`. Copy and edit:
 

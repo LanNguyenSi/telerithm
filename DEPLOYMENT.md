@@ -48,11 +48,13 @@ nano .env.production
 
 ### 3. Configure Domain
 
-Update `docker-compose.traefik.yml` — replace all occurrences of the default domain with yours:
+Update `docker-compose.traefik.yml`, replacing every occurrence of the default domain (`demo.telerithm.cloud`) with yours:
 
 ```bash
-sed -i 's/logs.opentriologue.ai/yourdomain.example/g' docker-compose.traefik.yml
+sed -i 's/demo.telerithm.cloud/yourdomain.example/g' docker-compose.traefik.yml
 ```
+
+The backend `CORS_ORIGINS` value also lists a secondary `play.telerithm.cloud` origin; edit it to match your domain(s).
 
 ### 4. Build & Start Services
 
@@ -149,6 +151,16 @@ docker compose -f docker-compose.traefik.yml logs -f backend
 # Resource usage
 docker stats
 ```
+
+### Prometheus metrics
+
+The backend exposes a Prometheus scrape endpoint at `/metrics` (served at the app root, not under `/api/v1`):
+
+```bash
+curl http://localhost:4000/metrics
+```
+
+It publishes default Node process metrics plus Telerithm series for HTTP requests (`telerithm_http_requests_total`, `telerithm_http_request_duration_ms`), ingestion (`telerithm_ingest_batches_total`, `telerithm_ingest_logs_total`), alerting (`telerithm_alert_evaluations_total`, `telerithm_alert_incidents_created_total`), SSE (`telerithm_active_sse_connections`), and NLQ (`telerithm_nlq_llm_duration_seconds`, `telerithm_nlq_llm_errors_total`, `telerithm_nlq_llm_fallback_total`).
 
 ## Backup
 
