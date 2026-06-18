@@ -131,6 +131,17 @@ When `OPENAI_API_KEY` is unset, or after retry exhaustion on a transient LLM err
 
 The UI uses this flag to badge the result so users know they're not seeing the LLM's interpretation.
 
+## Async query jobs
+
+Searches that exceed `MAX_SYNC_RUNTIME_MS` (default 1500 ms, see [configuration.md](configuration.md)) are handed off to a background job instead of blocking the request. In that case the search endpoint returns `202 Accepted` with a job id and `status: "pending"`, and you poll for the result:
+
+```bash
+curl http://localhost:4000/api/v1/query/jobs/<jobId> \
+  -H "Authorization: Bearer <token>"
+```
+
+The job response carries the job status and, once complete, the same result shape as a synchronous search.
+
 ## Domain stop words
 
 The translator strips common log-domain noise words (e.g. "service", "log", "logs", "show", "me") before extracting text terms, so they don't pollute the search. The full list lives in `backend/src/constants/nlq.ts` (`DOMAIN_STOPWORDS`).

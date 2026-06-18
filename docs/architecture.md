@@ -9,21 +9,20 @@ frontend/                 Next.js 15, server components, Tailwind CSS
 backend/
   src/
     api/
-      openapi.ts          OpenAPI 3 spec served at /api/v1/openapi.json
+      openapi.ts          OpenAPI 3 spec served at /openapi.json
       rest/router.ts      REST endpoints
     ingestion/            Single ingestion service, multi-format parser
     parser/               Format detection (JSON, syslog, plain), normalization
     services/
       ai/ai-service.ts    NLQ to filter plan (LLM + heuristic)
       query/              Query plan execution, pattern normalization
-      alert/              Alert rules, incident lifecycle, evaluation worker
+      alert/              Alert rules, incident lifecycle, alert-evaluation-worker.ts
       issue/              Error grouping and fingerprinting
       streaming/          SSE live tail
       team/               Tenancy, sources, invites, RBAC
       notification/       Channels: email, webhook, slack, msteams
       log-view/           Saved views
     repositories/         ClickHouse + Prisma data access
-    workers/              Background jobs (alert evaluation, retention)
   prisma/                 Postgres schema and migrations
   tests/                  Vitest integration tests
 packages/sdk-js/          @telerithm/sdk client SDK

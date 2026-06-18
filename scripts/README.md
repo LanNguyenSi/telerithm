@@ -328,5 +328,4 @@ Planned improvements:
 ## See Also
 
 - [DEPLOYMENT.md](../DEPLOYMENT.md) - Production deployment guide
-- [Task 003](../tasks/003-docker-log-collection.md) - Log collection task
-- [Task 004](../tasks/004-demo-seed-data.md) - Demo data task
+- [docs/configuration.md](../docs/configuration.md#ingestion-sources) - Ingestion sources and forwarder configs

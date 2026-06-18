@@ -1,6 +1,6 @@
 # Local LLM Integration
 
-Telerithm's AI Query Engine translates natural language into ClickHouse SQL queries. By default it falls back to a heuristic parser, but you can connect a local LLM for much better results - no cloud API keys needed.
+Telerithm's AI Query Engine translates natural language into a structured filter plan (a JSON `NLQTranslation`: filters, an inferred time range, and text terms), never raw SQL. By default it falls back to a heuristic parser, but you can connect a local LLM for much better results - no cloud API keys needed.
 
 ## How It Works
 
@@ -68,11 +68,11 @@ docker compose -f docker-compose.traefik.yml logs --tail=10 backend | grep -i "a
 
 | Model | Size | RAM | Quality | Speed |
 |-------|------|-----|---------|-------|
-| Qwen3.5-4B-Q4_K_M | 2.7GB | ~4GB | Good for SQL generation | Fast |
+| Qwen3.5-4B-Q4_K_M | 2.7GB | ~4GB | Good for filter-plan generation | Fast |
 | Qwen2.5-7B-Q4_K_M | 4.4GB | ~6GB | Better accuracy | Moderate |
 | Llama-3.1-8B-Q4_K_M | 4.7GB | ~6GB | Good all-round | Moderate |
 
-For SQL generation, smaller models work well because the output format is constrained (valid SQL only).
+For filter-plan generation, smaller models work well because the output is constrained to a fixed JSON schema (the filter plan), not free-form text. The system prompt explicitly forbids SQL.
 
 ## Alternative Servers
 
@@ -108,7 +108,7 @@ docker compose -f docker-compose.traefik.yml exec backend \
     });
     client.chat.completions.create({
       model: 'Qwen3.5-4B-Q4_K_M.gguf',
-      messages: [{ role: 'user', content: 'SELECT 1' }],
+      messages: [{ role: 'user', content: 'Reply with the single word OK.' }],
       max_tokens: 10
     }).then(r => console.log('LLM OK:', r.choices[0].message.content))
       .catch(e => console.error('LLM Error:', e.message));
@@ -119,7 +119,7 @@ docker compose -f docker-compose.traefik.yml exec backend \
 
 If the LLM is unreachable or returns an error, the AI Query Engine automatically falls back to heuristic parsing. This means:
 
-- **LLM available** → Natural language queries are translated to precise ClickHouse SQL
+- **LLM available** → Natural language queries are translated to a precise structured filter plan
 - **LLM unavailable** → Basic keyword extraction (level, service name) still works
 - **No API key set** → Heuristic mode only, no LLM calls attempted
 
