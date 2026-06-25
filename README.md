@@ -4,6 +4,8 @@
 
 Telerithm turns plain-language questions into structured queries over your logs. Instead of grepping millions of lines or hand-writing SQL, you ask _"show me payment errors from the last hour"_ and the AI translates it into filters, a time range, and a search plan you can review and edit. Self-hosted, single-tenant by default, OpenAI-compatible (cloud or local LLM).
 
+![The Telerithm Logs view: a natural-language log query ('Show me payment failures from the last hour') with level, service, and host filters plus an execution summary.](docs/img/logs.png)
+
 ## Try it in 60 seconds
 
 **Live demo (no install):**
