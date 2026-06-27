@@ -295,6 +295,87 @@ describe("AIService — LLM path (with mocked OpenAI)", () => {
   });
 });
 
+// ── Field allowlist enforcement ──────────────────────────────────────────────
+
+describe("AIService — normalizeFilter field allowlist", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("drops a filter whose field is not in the permitted set (hallucinated name)", async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeLLMResponse({
+        filtersApplied: [{ field: "admin_user_secret", operator: "eq", value: "true" }],
+      }),
+    );
+
+    const service = new AIService();
+    const result = await service.translateQuery("errors", "team-1");
+
+    // The disallowed field must be silently dropped.
+    expect(result.filtersApplied).toHaveLength(0);
+  });
+
+  it("keeps a filter whose field is in the permitted set (env)", async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeLLMResponse({
+        filtersApplied: [{ field: "env", operator: "eq", value: "production" }],
+      }),
+    );
+
+    const service = new AIService();
+    const result = await service.translateQuery("production errors", "team-1");
+
+    expect(result.filtersApplied).toHaveLength(1);
+    expect(result.filtersApplied[0]).toEqual({ field: "env", operator: "eq", value: "production" });
+  });
+
+  it("keeps all permitted core fields: level, service, host, message, sourceId", async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeLLMResponse({
+        filtersApplied: [
+          { field: "level", operator: "eq", value: "error" },
+          { field: "service", operator: "contains", value: "payment" },
+          { field: "host", operator: "eq", value: "web-01" },
+          { field: "message", operator: "contains", value: "timeout" },
+          { field: "sourceId", operator: "eq", value: "src-123" },
+        ],
+      }),
+    );
+
+    const service = new AIService();
+    const result = await service.translateQuery("errors", "team-1");
+
+    expect(result.filtersApplied).toHaveLength(5);
+    // sourceId must be normalized to source_id
+    expect(result.filtersApplied.find((f) => f.field === "source_id")).toBeDefined();
+  });
+
+  it("drops disallowed fields while passing allowed ones in a mixed list", async () => {
+    mockCreate.mockResolvedValueOnce(
+      makeLLMResponse({
+        filtersApplied: [
+          { field: "level", operator: "eq", value: "warn" },
+          { field: "internal_secret", operator: "eq", value: "anything" },
+          { field: "region", operator: "eq", value: "eu-west-1" },
+          { field: "'; DROP TABLE logs; --", operator: "eq", value: "x" },
+        ],
+      }),
+    );
+
+    const service = new AIService();
+    const result = await service.translateQuery("errors", "team-1");
+
+    const fields = result.filtersApplied.map((f) => f.field);
+    expect(fields).toContain("level");
+    expect(fields).toContain("region");
+    expect(fields).not.toContain("internal_secret");
+    // SQL injection attempt must be absent
+    expect(fields.some((f) => f.includes("DROP"))).toBe(false);
+    expect(result.filtersApplied).toHaveLength(2);
+  });
+});
+
 // ── Retry, timeout, schema validation ───────────────────────────────────────
 
 describe("retry and error handling", () => {
