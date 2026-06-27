@@ -4,9 +4,31 @@ import type { LogFilter, LogQueryContext, NLQTranslation } from "../../types/dom
 import { config } from "../../config/index.js";
 import { logger } from "../../logger.js";
 import { DOMAIN_STOPWORDS, NLQ_STOPWORD_PROMPT_HINT } from "../../constants/nlq.js";
-import { nlqLlmDuration, nlqLlmErrorsTotal, nlqLlmFallbackTotal } from "../../metrics/index.js";
+import {
+  nlqFilterPrunedTotal,
+  nlqLlmDuration,
+  nlqLlmErrorsTotal,
+  nlqLlmFallbackTotal,
+} from "../../metrics/index.js";
 
 const ALLOWED_OPERATORS: LogFilter["operator"][] = ["eq", "neq", "gt", "lt", "contains"];
+// Fields the AI is permitted to reference. Must stay in sync with the system
+// prompt ("known fields") and with SEARCHABLE_COLUMNS / FACET_FIELD_REGISTRY in
+// log-repository.ts. Any AI-produced field name not in this set is dropped
+// before it reaches the column builder, capping the risk of hallucinated or
+// abusive field names.
+const ALLOWED_FILTER_FIELDS = new Set([
+  "level",
+  "service",
+  "host",
+  "message",
+  "sourceId",
+  "env",
+  "region",
+  "status_code",
+  "route",
+]);
+
 type FacetHints = Partial<Record<"service" | "host" | "level", string[]>>;
 type FormContext = LogQueryContext;
 const TERM_VARIANTS: Record<string, string[]> = {
@@ -311,6 +333,12 @@ ${NLQ_STOPWORD_PROMPT_HINT}`;
       return null;
     }
     if (typeof candidate.value !== "string" && typeof candidate.value !== "number") {
+      return null;
+    }
+    // Field allowlist: reject AI-hallucinated or unknown field names so they
+    // never reach the column builder, regardless of the sanitizer there.
+    if (!ALLOWED_FILTER_FIELDS.has(candidate.field)) {
+      nlqFilterPrunedTotal.inc({ field: candidate.field.slice(0, 64), reason: "unknown_field" });
       return null;
     }
     const normalizedField = candidate.field === "sourceId" ? "source_id" : candidate.field;
