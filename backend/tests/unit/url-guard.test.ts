@@ -387,3 +387,29 @@ describe("assertSafeUrl — WEBHOOK_HOST_ALLOWLIST", () => {
     await expect(assertSafeUrl("https://random-public-service.io/hook")).resolves.toBeUndefined();
   });
 });
+
+describe("assertSafeUrl — defensive fail-closed + public IPv6 accept", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+  afterEach(() => {
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+
+  it("fails closed when DNS returns a non-parseable address (isIP === 0)", async () => {
+    // A malformed A/AAAA record must be rejected, not silently accepted
+    // (isBlockedAddress fail-closed default at family === 0).
+    mockLookup.mockResolvedValueOnce([{ address: "garbage-not-ip", family: 4 }] as never);
+    await expect(assertSafeUrl("https://malformed-dns.example.com/hook")).rejects.toThrow(
+      "blocked address range"
+    );
+  });
+
+  it("accepts a hostname resolving to a public IPv6 (AAAA) address", async () => {
+    mockLookup.mockResolvedValueOnce([
+      { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
+    ] as never);
+    await expect(assertSafeUrl("https://ipv6-public.example.com/hook")).resolves.toBeUndefined();
+  });
+});
