@@ -24,8 +24,12 @@ export default defineConfig({
         "src/repositories/in-memory-store.ts",
         // Cache service (wraps Redis — integration-only)
         "src/cache/cache-service.ts",
-        // Notification channels (external service integrations)
-        "src/services/notification/**",
+        // Notification channels (external service integrations) — url-guard.ts is intentionally
+        // NOT excluded here so its SSRF-guard logic counts toward coverage thresholds.
+        "src/services/notification/channels/email.ts",
+        "src/services/notification/channels/msteams.ts",
+        "src/services/notification/channels/webhook.ts",
+        "src/services/notification/notification-dispatcher.ts",
         // Alert worker (long-running background process)
         "src/services/alert/alert-evaluation-worker.ts",
         // Streaming service (requires live WS connections)
