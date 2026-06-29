@@ -26,18 +26,14 @@ export default defineConfig({
         "src/cache/cache-service.ts",
         // Notification channels (external service integrations) — url-guard.ts is intentionally
         // NOT excluded here so its SSRF-guard logic counts toward coverage thresholds.
-        "src/services/notification/channels/email.ts",
-        "src/services/notification/channels/msteams.ts",
-        "src/services/notification/channels/webhook.ts",
-        "src/services/notification/notification-dispatcher.ts",
-        // Alert worker (long-running background process)
-        "src/services/alert/alert-evaluation-worker.ts",
+        // channels/email.ts, channels/msteams.ts, channels/webhook.ts,
+        // notification-dispatcher.ts are now covered by unit tests; see #92 + PR residuals.
         // Streaming service (requires live WS connections)
         "src/services/streaming/streaming-service.ts",
         // Subscription service (event-bus wrappers)
         "src/services/subscription/subscription-service.ts",
         // Alert/team/issue/log-view services (require live DB/Prisma connections)
-        "src/services/alert/alert-service.ts",
+        // alert-service.ts and alert-evaluation-worker.ts are now covered by unit tests.
         "src/services/team/team-service.ts",
         "src/services/issue/issue-service.ts",
         "src/services/log-view/log-view-service.ts",
