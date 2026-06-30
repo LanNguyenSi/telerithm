@@ -108,3 +108,28 @@ jobs:
       - name: Build
         working-directory: frontend
         run: npm run build
+
+  sdk-js:
+    name: SDK JS
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/sdk-js/package-lock.json
+
+      - name: Install dependencies
+        working-directory: packages/sdk-js
+        run: npm ci
+
+      - name: Type check
+        working-directory: packages/sdk-js
+        run: npx tsc --noEmit
+
+      - name: Tests with coverage
+        working-directory: packages/sdk-js
+        run: npx vitest run --coverage --coverage.reporter=json-summary --coverage.thresholds.lines=94 --coverage.thresholds.statements=92 --coverage.thresholds.functions=92 --coverage.thresholds.branches=85
