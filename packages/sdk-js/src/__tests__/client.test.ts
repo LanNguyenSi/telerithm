@@ -426,3 +426,39 @@ describe("TelerithmClient — close()", () => {
     expect(mockSendBatch).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Constructor wiring: autoCapture + breadcrumbs defaults (integration)
+// ---------------------------------------------------------------------------
+
+describe("TelerithmClient — autoCapture/breadcrumbs wiring", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  it("registers global error handlers + instruments console on construct, and close() unwinds both", async () => {
+    const beforeUncaught = process.listenerCount("uncaughtException");
+    const beforeRejection = process.listenerCount("unhandledRejection");
+    const origConsoleError = console.error;
+
+    // autoCapture + breadcrumbs default to true (both omitted here), unlike
+    // BASE_OPTIONS which disables them. Exercises client.ts constructor wiring.
+    const c = new TelerithmClient({
+      dsn: BASE_OPTIONS.dsn,
+      flushIntervalMs: 60_000,
+    });
+
+    // Constructor wired the Node global-error handlers and patched console.
+    expect(process.listenerCount("uncaughtException")).toBe(beforeUncaught + 1);
+    expect(process.listenerCount("unhandledRejection")).toBe(beforeRejection + 1);
+    expect(console.error).not.toBe(origConsoleError);
+
+    await c.close();
+
+    // close() must run teardownErrorHandlers() AND breadcrumbTracker.teardown().
+    expect(process.listenerCount("uncaughtException")).toBe(beforeUncaught);
+    expect(process.listenerCount("unhandledRejection")).toBe(beforeRejection);
+    expect(console.error).toBe(origConsoleError);
+  });
+});

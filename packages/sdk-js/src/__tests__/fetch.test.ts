@@ -13,6 +13,7 @@ const PAYLOAD: LogPayload = {
 describe("sendBatch", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("POSTs to the endpoint with correct headers and body, returns true on ok", async () => {
@@ -51,20 +52,27 @@ describe("sendBatch", () => {
     expect(result).toBe(false);
   });
 
-  it("passes AbortSignal.timeout from config to fetch", async () => {
+  it("passes the configured timeout value to AbortSignal.timeout", async () => {
     const mockFetch = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", mockFetch);
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+
     await sendBatch({ ...TRANSPORT, timeout: 3000 }, PAYLOAD);
+
+    // The exact value must reach AbortSignal.timeout — not just "a signal exists".
+    expect(timeoutSpy).toHaveBeenCalledWith(3000);
     const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(options.signal).toBeDefined();
   });
 
-  it("uses default 10 000 ms timeout when none is configured", async () => {
+  it("defaults to a 10 000 ms timeout when none is configured", async () => {
     const mockFetch = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", mockFetch);
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout");
+
     await sendBatch(TRANSPORT, PAYLOAD); // timeout omitted
-    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-    // AbortSignal.timeout(10_000) is always set; we just verify a signal is present
-    expect(options.signal).toBeDefined();
+
+    // Pins the documented default; breaking `?? 10_000` must fail this test.
+    expect(timeoutSpy).toHaveBeenCalledWith(10_000);
   });
 });
