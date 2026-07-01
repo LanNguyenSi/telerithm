@@ -133,3 +133,20 @@ jobs:
       - name: Tests with coverage
         working-directory: packages/sdk-js
         run: npx vitest run --coverage --coverage.reporter=json-summary --coverage.thresholds.lines=94 --coverage.thresholds.statements=92 --coverage.thresholds.functions=92 --coverage.thresholds.branches=85
+
+  cli:
+    name: CLI
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install bats
+        run: npm install -g bats
+
+      - name: Run bats tests
+        run: bats packages/cli/logforge-pipe.bats
