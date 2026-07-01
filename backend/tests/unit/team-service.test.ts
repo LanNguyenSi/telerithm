@@ -237,6 +237,19 @@ describe("TeamService.acceptInvite", () => {
     expect(mockTransaction).not.toHaveBeenCalled();
   });
 
+  it("rejects an already-used invite (usedAt set) and never creates a membership", async () => {
+    // usedAt is checked before expiresAt in the source; a used-but-unexpired
+    // invite must still be rejected. Guards against invite-token replay.
+    const invite = makeInvite({ usedAt: new Date("2026-06-01T00:00:00.000Z") });
+    mockTeamInviteFindUnique.mockResolvedValue(invite);
+
+    await expect(service.acceptInvite(invite.token, USER_ID)).rejects.toThrow(
+      "Invite already used",
+    );
+    expect(mockTeamMemberFindUnique).not.toHaveBeenCalled();
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
   it("rejects an expired invite and never creates a membership", async () => {
     const invite = makeInvite({ expiresAt: new Date(Date.now() - 1000) });
     mockTeamInviteFindUnique.mockResolvedValue(invite);
