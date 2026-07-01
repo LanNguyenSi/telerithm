@@ -33,13 +33,10 @@ export default defineConfig({
         // Subscription service (event-bus wrappers)
         "src/services/subscription/subscription-service.ts",
         // Alert/team/issue/log-view services (require live DB/Prisma connections)
-        // alert-service.ts and alert-evaluation-worker.ts are now covered by unit tests.
-        "src/services/team/team-service.ts",
+        // alert-service.ts, alert-evaluation-worker.ts, and team-service.ts are now covered by unit tests.
         "src/services/issue/issue-service.ts",
         "src/services/log-view/log-view-service.ts",
-        // Ingestion service and fingerprinting (require live ClickHouse)
-        "src/ingestion/ingestion-service.ts",
-        "src/services/ingestion/fingerprint.ts",
+        // Ingestion service and fingerprinting are now covered by unit tests (mocked ClickHouse deps).
         // Dashboard service (requires live DB)
         "src/services/dashboard/dashboard-service.ts",
         // REST router (integration-tested, not unit-tested)
