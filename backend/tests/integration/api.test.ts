@@ -1090,10 +1090,80 @@ describe("API Routes", () => {
   });
 
   describe("GET /api/v1/query/jobs/:id", () => {
+    const MEMBERSHIP = {
+      id: "member-1",
+      teamId: "t1",
+      userId: "user-1",
+      role: "MEMBER",
+      joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+    };
+
     it("returns 404 for unknown job", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       const res = await app.get("/api/v1/query/jobs/unknown-job").set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(404);
+    });
+
+    // The job registry is real (not mocked) in this suite, so we start a genuine
+    // async job as a member of t1 and then poll it as an outsider — the exact
+    // cross-tenant read the fix closes (task 9d86d755).
+    async function startFacetsJobForTeamT1(): Promise<string> {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(MEMBERSHIP);
+      mockedClickhouse.query.mockResolvedValueOnce(
+        makeClickhouseResult([{ field: "level", value: "error", count: 3 }]),
+      );
+
+      const started = await app
+        .post("/api/v1/logs/facets")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", async: true, fields: ["level"] });
+
+      expect(started.status).toBe(202);
+      expect(started.body.requestId).toBeTruthy();
+      return started.body.requestId as string;
+    }
+
+    it("rejects a non-member polling another team's job (403) and leaks no data", async () => {
+      const requestId = await startFacetsJobForTeamT1();
+
+      // Outsider: authenticated, but not a member of t1.
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(
+        makeSession({ userId: "outsider-1" }),
+      );
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+      const res = await app
+        .get(`/api/v1/query/jobs/${requestId}`)
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(403);
+      expect(res.body.data).toBeUndefined();
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenLastCalledWith({
+        where: { teamId_userId: { teamId: "t1", userId: "outsider-1" } },
+      });
+    });
+
+    it("serves the completed payload to a member of its team and does not expose teamId", async () => {
+      const requestId = await startFacetsJobForTeamT1();
+      // Let the producer settle, so this pins the payload actually reaching the
+      // member — asserting only on status would pass even if data were dropped.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(MEMBERSHIP);
+
+      const res = await app
+        .get(`/api/v1/query/jobs/${requestId}`)
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(200);
+      expect(res.body.requestId).toBe(requestId);
+      expect(res.body.status).toBe("completed");
+      expect(res.body.data.facets[0].field).toBe("level");
+      expect(res.body.data.facets[0].buckets[0]).toEqual({ value: "error", count: 3 });
+      // teamId is an internal authz attribute, not part of the public payload.
+      expect(res.body.teamId).toBeUndefined();
     });
   });
 

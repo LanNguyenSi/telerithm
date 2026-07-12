@@ -510,6 +510,8 @@ describe("QueryService — validateGeneratedFilters (via natural search)", () =>
   });
 });
 
+const OWNER_TEAM = "t1";
+
 describe("QueryService — async jobs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -517,7 +519,7 @@ describe("QueryService — async jobs", () => {
 
   it("startAsyncJob returns requestId immediately", () => {
     const service = new QueryService();
-    const result = service.startAsyncJob(() => Promise.resolve({ data: "test" }));
+    const result = service.startAsyncJob(OWNER_TEAM, () => Promise.resolve({ data: "test" }));
     expect(result.requestId).toBeTruthy();
     expect(result.partial).toBe(true);
     expect(result.cached).toBe(false);
@@ -528,9 +530,34 @@ describe("QueryService — async jobs", () => {
     expect(service.getAsyncJob("non-existent-id")).toBeNull();
   });
 
+  it("carries the owning teamId on the job so the route can authorize it (9d86d755)", () => {
+    const service = new QueryService();
+    const { requestId } = service.startAsyncJob("team-owner", () => new Promise(() => {}));
+
+    expect(service.getAsyncJob(requestId)!.teamId).toBe("team-owner");
+  });
+
+  it("keeps the teamId across the completed and failed transitions", async () => {
+    const service = new QueryService();
+    const ok = service.startAsyncJob("team-a", () =>
+      Promise.resolve({ data: "result" }),
+    );
+    const bad = service.startAsyncJob("team-b", () =>
+      Promise.reject(new Error("boom")),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    // The teamId must survive the record rewrite in .then/.catch, otherwise the
+    // route would lose its authorization anchor exactly when data exists.
+    expect(service.getAsyncJob(ok.requestId)!.status).toBe("completed");
+    expect(service.getAsyncJob(ok.requestId)!.teamId).toBe("team-a");
+    expect(service.getAsyncJob(bad.requestId)!.status).toBe("failed");
+    expect(service.getAsyncJob(bad.requestId)!.teamId).toBe("team-b");
+  });
+
   it("getAsyncJob returns pending status right after start", () => {
     const service = new QueryService();
-    const { requestId } = service.startAsyncJob(() => new Promise(() => {}));
+    const { requestId } = service.startAsyncJob(OWNER_TEAM, () => new Promise(() => {}));
     const job = service.getAsyncJob(requestId);
     expect(job).not.toBeNull();
     expect(job!.status).toBe("pending");
@@ -539,7 +566,7 @@ describe("QueryService — async jobs", () => {
 
   it("getAsyncJob returns completed status after resolution", async () => {
     const service = new QueryService();
-    const { requestId } = service.startAsyncJob(() => Promise.resolve({ data: "result" }));
+    const { requestId } = service.startAsyncJob(OWNER_TEAM, () => Promise.resolve({ data: "result" }));
     await new Promise((resolve) => setTimeout(resolve, 10));
     const job = service.getAsyncJob(requestId);
     expect(job!.status).toBe("completed");
@@ -548,7 +575,7 @@ describe("QueryService — async jobs", () => {
 
   it("getAsyncJob returns failed status after rejection", async () => {
     const service = new QueryService();
-    const { requestId } = service.startAsyncJob(() => Promise.reject(new Error("job failed")));
+    const { requestId } = service.startAsyncJob(OWNER_TEAM, () => Promise.reject(new Error("job failed")));
     await new Promise((resolve) => setTimeout(resolve, 10));
     const job = service.getAsyncJob(requestId);
     expect(job!.status).toBe("failed");

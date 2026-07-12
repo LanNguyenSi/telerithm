@@ -30,6 +30,12 @@ type PrunedFilter = {
 };
 type AsyncJobRecord = {
   requestId: string;
+  // The team whose logs produced this job's data: the payload is team-scoped
+  // log data, so the route serving it must be able to authorize against a team.
+  // Membership is checked at poll time, deliberately not ownership of the job:
+  // any member can re-derive the same payload by re-running the query, and
+  // owner-gating would keep letting a user who has since left the team poll it.
+  teamId: string;
   status: AsyncStatus;
   createdAt: number;
   data?: unknown;
@@ -148,27 +154,26 @@ export class QueryService {
     return this.logRepo.getPatterns(query);
   }
 
-  startAsyncJob<T>(producer: () => Promise<T>): { requestId: string; partial: true; cached: false } {
+  startAsyncJob<T>(
+    teamId: string,
+    producer: () => Promise<T>,
+  ): { requestId: string; partial: true; cached: false } {
     this.cleanupAsyncJobs();
     const requestId = randomUUID();
-    this.asyncJobs.set(requestId, {
+    const base = {
       requestId,
-      status: "pending",
+      teamId,
       createdAt: Date.now(),
-    });
+    };
+    this.asyncJobs.set(requestId, { ...base, status: "pending" });
 
     void producer()
       .then((data) => {
-        this.asyncJobs.set(requestId, {
-          requestId,
-          status: "completed",
-          createdAt: Date.now(),
-          data,
-        });
+        this.asyncJobs.set(requestId, { ...base, status: "completed", createdAt: Date.now(), data });
       })
       .catch((error) => {
         this.asyncJobs.set(requestId, {
-          requestId,
+          ...base,
           status: "failed",
           createdAt: Date.now(),
           error: error instanceof Error ? error.message : "Async job failed",
@@ -178,14 +183,22 @@ export class QueryService {
     return { requestId, partial: true, cached: false };
   }
 
-  getAsyncJob(
-    requestId: string,
-  ): { requestId: string; status: AsyncStatus; data?: unknown; error?: string } | null {
+  // Returns the raw record including teamId so the caller can authorize before
+  // handing out the payload. Callers must not serialize this straight to the
+  // client (see the route, which projects the public fields).
+  getAsyncJob(requestId: string): {
+    requestId: string;
+    teamId: string;
+    status: AsyncStatus;
+    data?: unknown;
+    error?: string;
+  } | null {
     this.cleanupAsyncJobs();
     const job = this.asyncJobs.get(requestId);
     if (!job) return null;
     return {
       requestId: job.requestId,
+      teamId: job.teamId,
       status: job.status,
       data: job.data,
       error: job.error,
