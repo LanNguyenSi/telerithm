@@ -2028,6 +2028,11 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(403);
       expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
+      // The gate must authorize against the RULE's team, not anything the
+      // caller supplies.
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "t1", userId: "user-1" } },
+      });
     });
 
     it("unmute: 404 when the rule does not exist, no update", async () => {
