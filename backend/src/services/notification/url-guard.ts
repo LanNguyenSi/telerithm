@@ -67,6 +67,15 @@ function isBlockedAddress(ip: string): boolean {
   // IPv4-mapped (::ffff:a.b.c.d): re-check the embedded v4 address.
   const mapped = v6.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (mapped) return isBlockedAddress(mapped[1]);
+  // IPv4-mapped in compressed-hex form (::ffff:a00:1 == 10.0.0.1): the WHATWG
+  // URL parser and resolvers normalise the dotted form away, so convert the
+  // two hex groups back to dotted decimal and re-check the embedded ranges.
+  const hexMapped = v6.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (hexMapped) {
+    const hi = parseInt(hexMapped[1], 16);
+    const lo = parseInt(hexMapped[2], 16);
+    return isBlockedAddress(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+  }
   if (v6.startsWith("fe80")) return true; // link-local
   if (v6.startsWith("fc") || v6.startsWith("fd")) return true; // fc00::/7 ULA
   if (v6.startsWith("ff")) return true; // multicast
@@ -99,11 +108,17 @@ export async function assertSafeUrl(rawUrl: string): Promise<void> {
     throw new Error("Webhook host is not in the allow-list");
   }
 
+  // WHATWG URL keeps the brackets on IPv6 literal hostnames ("[::1]"), which
+  // isIP does not accept; strip one surrounding pair so IPv6 literals hit the
+  // real range check below instead of being "blocked" only by a failing DNS
+  // lookup.
+  const bareHost = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+
   // If the host is a literal IP, check it directly. Otherwise resolve all
   // addresses and reject if ANY of them is blocked (avoids a partial-block
   // bypass where one A record is public and another is private).
-  if (isIP(host) !== 0) {
-    if (isBlockedAddress(host)) {
+  if (isIP(bareHost) !== 0) {
+    if (isBlockedAddress(bareHost)) {
       throw new Error("Webhook host resolves to a blocked address range");
     }
     return;
@@ -111,7 +126,7 @@ export async function assertSafeUrl(rawUrl: string): Promise<void> {
 
   let addresses: { address: string }[];
   try {
-    addresses = await lookup(host, { all: true });
+    addresses = await lookup(bareHost, { all: true });
   } catch {
     throw new Error("Webhook host could not be resolved");
   }
