@@ -843,12 +843,38 @@ apiRouter.post(
   }),
 );
 
+// Resolve a maintenance window's team and require the caller's membership on
+// it, otherwise any authenticated user could delete another team's window by
+// enumerating its id, re-arming that team's alerting mid-maintenance
+// (cross-tenant IDOR). Returns the teamId, or null when a 404/403 response has
+// already been sent. Mirrors requireRuleTeam / requireIncidentTeam.
+async function requireMaintenanceWindowTeam(
+  windowId: string,
+  userId: string,
+  res: Response,
+): Promise<string | null> {
+  const window = await prisma.maintenanceWindow.findUnique({
+    where: { id: windowId },
+    select: { teamId: true },
+  });
+  if (!window) {
+    res.status(404).json({ error: "Maintenance window not found" });
+    return null;
+  }
+  if ((await requireTeamRole(userId, window.teamId, res)) === null) return null;
+  return window.teamId;
+}
+
 apiRouter.delete(
   "/maintenance-windows/:id",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const windowId = String(req.params.id);
+    const teamId = await requireMaintenanceWindowTeam(windowId, userId, res);
+    if (teamId === null) return;
     try {
-      await prisma.maintenanceWindow.delete({ where: { id: String(req.params.id) } });
+      await prisma.maintenanceWindow.delete({ where: { id: windowId, teamId } });
       res.status(204).end();
     } catch (error) {
       if (handlePrismaError(error, res, { notFound: "Maintenance window not found" })) return;
