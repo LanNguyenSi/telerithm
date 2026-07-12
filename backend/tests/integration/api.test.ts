@@ -79,6 +79,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
     },
     alertRule: {
       findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
       update: vi.fn(),
     },
     alertIncident: {
@@ -197,6 +198,7 @@ const mockedPrisma = prisma as typeof prisma & {
   };
   alertRule: {
     findMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
   };
   alertIncident: {
@@ -348,6 +350,7 @@ beforeEach(() => {
   );
   mockedPrisma.logView.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.alertRule.findMany.mockResolvedValue([]);
+  mockedPrisma.alertRule.findUnique.mockResolvedValue(null);
   mockedPrisma.alertIncident.findMany.mockResolvedValue([]);
   mockedPrisma.issue.findMany.mockResolvedValue([]);
   mockedPrisma.issue.count.mockResolvedValue(0);
@@ -508,7 +511,18 @@ describe("API Routes", () => {
 
   describe("Prisma error mapping", () => {
     it("maps P2025 on an update to 404 (POST /alerts/rules/:id/mute)", async () => {
+      // The rule resolves and the caller is a member (so the authz gate passes),
+      // but the row vanishes before the update — the P2025 mapping is what turns
+      // that race into a 404.
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
       const notFound = Object.assign(new Error("Record to update not found."), { code: "P2025" });
       mockedPrisma.alertRule.update.mockRejectedValueOnce(notFound);
 
@@ -1933,6 +1947,134 @@ describe("API Routes", () => {
           where: { incidentId: "inc-1", incident: { rule: { teamId: "t1" } } },
         }),
       );
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Alert rules — mute/unmute authz scoping (task d290bcbc)
+  // ---------------------------------------------------------------------------
+
+  describe("alert-rule mute/unmute — authz scoping", () => {
+    const MEMBERSHIP = {
+      id: "member-1",
+      teamId: "t1",
+      userId: "user-1",
+      role: "MEMBER",
+      joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+    };
+
+    function seedRule(teamId = "t1") {
+      mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId });
+    }
+
+    it("mute: 404 when the rule does not exist, no update", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+
+      const res = await app
+        .post("/api/v1/alerts/rules/missing/mute")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ durationMinutes: 30 });
+
+      expect(res.status).toBe(404);
+      expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
+    });
+
+    it("mute: 403 for a non-member of the rule's team, no update (cross-tenant alert suppression)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      seedRule("t1");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+      const res = await app
+        .post("/api/v1/alerts/rules/rule-1/mute")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ durationMinutes: 30 });
+
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "t1", userId: "user-1" } },
+      });
+    });
+
+    it("mute: 200 for a team member, update team-scoped", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      seedRule("t1");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(MEMBERSHIP);
+      mockedPrisma.alertRule.update.mockResolvedValueOnce({
+        id: "rule-1",
+        muteUntil: new Date("2026-07-12T01:00:00.000Z"),
+      });
+
+      const res = await app
+        .post("/api/v1/alerts/rules/rule-1/mute")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ durationMinutes: 30 });
+
+      expect(res.status).toBe(200);
+      expect(res.body.rule.id).toBe("rule-1");
+      expect(mockedPrisma.alertRule.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "rule-1", teamId: "t1" } }),
+      );
+    });
+
+    it("unmute: 403 for a non-member of the rule's team, no update", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      seedRule("t1");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+      const res = await app
+        .post("/api/v1/alerts/rules/rule-1/unmute")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
+      // The gate must authorize against the RULE's team, not anything the
+      // caller supplies.
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "t1", userId: "user-1" } },
+      });
+    });
+
+    it("unmute: 404 when the rule does not exist, no update", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+
+      const res = await app
+        .post("/api/v1/alerts/rules/missing/unmute")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(404);
+      expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
+    });
+
+    it("unmute: 200 for a team member, update team-scoped, muteUntil cleared", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      seedRule("t1");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(MEMBERSHIP);
+      mockedPrisma.alertRule.update.mockResolvedValueOnce({ id: "rule-1", muteUntil: null });
+
+      const res = await app
+        .post("/api/v1/alerts/rules/rule-1/unmute")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(200);
+      expect(res.body.rule.muteUntil).toBeNull();
+      expect(mockedPrisma.alertRule.update).toHaveBeenCalledWith({
+        where: { id: "rule-1", teamId: "t1" },
+        data: { muteUntil: null },
+      });
+    });
+
+    it("mute: a malformed body is still rejected with 400 before any authz work", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+
+      const res = await app
+        .post("/api/v1/alerts/rules/rule-1/mute")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ durationMinutes: "forever" });
+
+      expect(res.status).toBe(400);
+      expect(mockedPrisma.alertRule.findUnique).not.toHaveBeenCalled();
+      expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
     });
   });
 });

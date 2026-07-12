@@ -729,19 +729,40 @@ apiRouter.get(
 
 // --- Mute / Unmute ---
 
+// Resolve an alert rule's team and require the caller's membership on it,
+// otherwise any authenticated user could mute another team's rule by
+// enumerating its id and silence their alerting (cross-tenant IDOR). Returns
+// the teamId, or null when a 404/403 response has already been sent. Mirrors
+// requireIncidentTeam.
+async function requireRuleTeam(ruleId: string, userId: string, res: Response): Promise<string | null> {
+  const rule = await prisma.alertRule.findUnique({
+    where: { id: ruleId },
+    select: { teamId: true },
+  });
+  if (!rule) {
+    res.status(404).json({ error: "Alert rule not found" });
+    return null;
+  }
+  if ((await requireTeamRole(userId, rule.teamId, res)) === null) return null;
+  return rule.teamId;
+}
+
 apiRouter.post(
   "/alerts/rules/:id/mute",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const parsed = muteRuleSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    const teamId = await requireRuleTeam(String(req.params.id), userId, res);
+    if (teamId === null) return;
     const muteUntil = new Date(Date.now() + parsed.data.durationMinutes * 60_000);
     try {
       const rule = await prisma.alertRule.update({
-        where: { id: String(req.params.id) },
+        where: { id: String(req.params.id), teamId },
         data: { muteUntil },
       });
       res.json({ rule: { id: rule.id, muteUntil: rule.muteUntil } });
@@ -755,10 +776,13 @@ apiRouter.post(
 apiRouter.post(
   "/alerts/rules/:id/unmute",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const teamId = await requireRuleTeam(String(req.params.id), userId, res);
+    if (teamId === null) return;
     try {
       const rule = await prisma.alertRule.update({
-        where: { id: String(req.params.id) },
+        where: { id: String(req.params.id), teamId },
         data: { muteUntil: null },
       });
       res.json({ rule: { id: rule.id, muteUntil: null } });
