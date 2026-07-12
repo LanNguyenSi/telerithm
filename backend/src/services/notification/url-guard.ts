@@ -41,7 +41,14 @@ function ipToBytes(ip: string): number[] | null {
   return null;
 }
 
-/** True if the address is in a private, loopback, link-local, ULA, or metadata range. */
+/**
+ * True if the address is in a private, loopback, link-local, ULA, or
+ * metadata range.
+ *
+ * Assumes `ip` is already a canonical/normalised IP string (the form
+ * `net.isIP` accepts and DNS resolvers / the WHATWG URL parser hand back),
+ * not raw user input — callers must not skip that normalisation.
+ */
 function isBlockedAddress(ip: string): boolean {
   const family = isIP(ip);
   if (family === 0) return true; // not a parseable IP, fail closed
@@ -74,6 +81,39 @@ function isBlockedAddress(ip: string): boolean {
   if (hexMapped) {
     const hi = parseInt(hexMapped[1], 16);
     const lo = parseInt(hexMapped[2], 16);
+    return isBlockedAddress(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+  }
+  // NAT64 (64:ff9b::/96, RFC 6052): the low 32 bits are the embedded IPv4
+  // address. Accept both the dotted-quad and hex-compressed spellings, since
+  // resolvers/normalisers may hand back either.
+  const nat64Dotted = v6.match(/^64:ff9b::(\d+\.\d+\.\d+\.\d+)$/);
+  if (nat64Dotted) return isBlockedAddress(nat64Dotted[1]);
+  const nat64Hex = v6.match(/^64:ff9b::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (nat64Hex) {
+    const hi = parseInt(nat64Hex[1], 16);
+    const lo = parseInt(nat64Hex[2], 16);
+    return isBlockedAddress(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+  }
+  // 6to4 (2002::/16, RFC 3056): the 32 bits immediately after the 2002
+  // prefix are the embedded IPv4 address, regardless of the SLA ID /
+  // interface-identifier bits that follow.
+  const sixToFour = v6.match(/^2002:([0-9a-f]{1,4}):([0-9a-f]{1,4})(:|$)/);
+  if (sixToFour) {
+    const hi = parseInt(sixToFour[1], 16);
+    const lo = parseInt(sixToFour[2], 16);
+    return isBlockedAddress(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+  }
+  // IPv4-compatible (::a.b.c.d, deprecated RFC 4291 form, no "ffff" marker):
+  // the low 32 bits are the embedded IPv4 address. Accept both the
+  // dotted-quad and hex-compressed spellings (::c0a8:101 == ::192.168.1.1).
+  // This intentionally does not match the "::ffff:..." mapped forms above,
+  // which are handled (and already returned) by the two branches before it.
+  const v4CompatDotted = v6.match(/^::(\d+\.\d+\.\d+\.\d+)$/);
+  if (v4CompatDotted) return isBlockedAddress(v4CompatDotted[1]);
+  const v4CompatHex = v6.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (v4CompatHex) {
+    const hi = parseInt(v4CompatHex[1], 16);
+    const lo = parseInt(v4CompatHex[2], 16);
     return isBlockedAddress(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
   }
   if (v6.startsWith("fe80")) return true; // link-local
