@@ -444,7 +444,7 @@ apiRouter.post(
       return;
     }
     if (parsed.data.async) {
-      const asyncStart = queryService.startAsyncJob(() =>
+      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
         queryService.getFacets({ ...parsed.data, async: undefined }),
       );
       res.status(202).json({ ...asyncStart, status: "pending" });
@@ -452,7 +452,7 @@ apiRouter.post(
     }
     const syncResult = await runWithSyncBudget(() => queryService.getFacets(parsed.data));
     if (syncResult === SYNC_TIMEOUT) {
-      const asyncStart = queryService.startAsyncJob(() =>
+      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
         queryService.getFacets({ ...parsed.data, async: undefined }),
       );
       res.status(202).json({ ...asyncStart, status: "pending" });
@@ -480,7 +480,7 @@ apiRouter.post(
       return;
     }
     if (parsed.data.async) {
-      const asyncStart = queryService.startAsyncJob(() =>
+      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
         queryService.getHistogram({ ...parsed.data, async: undefined }),
       );
       res.status(202).json({ ...asyncStart, status: "pending" });
@@ -488,7 +488,7 @@ apiRouter.post(
     }
     const syncResult = await runWithSyncBudget(() => queryService.getHistogram(parsed.data));
     if (syncResult === SYNC_TIMEOUT) {
-      const asyncStart = queryService.startAsyncJob(() =>
+      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
         queryService.getHistogram({ ...parsed.data, async: undefined }),
       );
       res.status(202).json({ ...asyncStart, status: "pending" });
@@ -516,7 +516,7 @@ apiRouter.post(
       return;
     }
     if (parsed.data.async) {
-      const asyncStart = queryService.startAsyncJob(() =>
+      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
         queryService.getPatterns({ ...parsed.data, async: undefined }),
       );
       res.status(202).json({ ...asyncStart, status: "pending" });
@@ -524,7 +524,7 @@ apiRouter.post(
     }
     const syncResult = await runWithSyncBudget(() => queryService.getPatterns(parsed.data));
     if (syncResult === SYNC_TIMEOUT) {
-      const asyncStart = queryService.startAsyncJob(() =>
+      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
         queryService.getPatterns({ ...parsed.data, async: undefined }),
       );
       res.status(202).json({ ...asyncStart, status: "pending" });
@@ -538,13 +538,24 @@ apiRouter.post(
 apiRouter.get(
   "/query/jobs/:id",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
     const job = queryService.getAsyncJob(String(req.params.id));
     if (!job) {
       res.status(404).json({ error: "Job not found" });
       return;
     }
-    res.json(job);
+    // The payload is team-scoped log data, so authorize against the job's own
+    // team before handing it out: requireAuth alone let any authenticated user
+    // read another team's query results (IDOR).
+    if ((await requireTeamRole(userId, job.teamId, res)) === null) return;
+    // Project only the public fields; teamId is an internal authz attribute.
+    res.json({
+      requestId: job.requestId,
+      status: job.status,
+      data: job.data,
+      error: job.error,
+    });
   }),
 );
 
