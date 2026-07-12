@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   mockAlertRuleFindMany,
   mockAlertIncidentFindMany,
+  mockAlertIncidentFindFirst,
   mockAlertIncidentUpdate,
   mockIncidentEventCreate,
   mockIncidentEventFindMany,
@@ -14,6 +15,7 @@ const {
 } = vi.hoisted(() => ({
   mockAlertRuleFindMany: vi.fn(),
   mockAlertIncidentFindMany: vi.fn(),
+  mockAlertIncidentFindFirst: vi.fn(),
   mockAlertIncidentUpdate: vi.fn(),
   mockIncidentEventCreate: vi.fn(),
   mockIncidentEventFindMany: vi.fn(),
@@ -27,6 +29,7 @@ vi.mock("../../src/repositories/prisma.js", () => ({
     },
     alertIncident: {
       findMany: mockAlertIncidentFindMany,
+      findFirst: mockAlertIncidentFindFirst,
       update: mockAlertIncidentUpdate,
     },
     incidentEvent: {
@@ -91,6 +94,9 @@ describe("AlertService.listRules", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: the incident exists inside the caller's team; the cross-team
+    // tests override this with null.
+    mockAlertIncidentFindFirst.mockResolvedValue({ id: "inc-1" });
     service = new AlertService();
   });
 
@@ -167,6 +173,9 @@ describe("AlertService.listIncidents", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: the incident exists inside the caller's team; the cross-team
+    // tests override this with null.
+    mockAlertIncidentFindFirst.mockResolvedValue({ id: "inc-1" });
     service = new AlertService();
   });
 
@@ -228,6 +237,9 @@ describe("AlertService.acknowledgeIncident", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: the incident exists inside the caller's team; the cross-team
+    // tests override this with null.
+    mockAlertIncidentFindFirst.mockResolvedValue({ id: "inc-1" });
     service = new AlertService();
   });
 
@@ -241,11 +253,11 @@ describe("AlertService.acknowledgeIncident", () => {
       async (ops: Array<Promise<unknown>>) => Promise.all(ops),
     );
 
-    const result = await service.acknowledgeIncident("inc-1", "user-1", "ack comment");
+    const result = await service.acknowledgeIncident("inc-1", TEAM_ID, "user-1", "ack comment");
 
     expect(mockTransaction).toHaveBeenCalledOnce();
     expect(mockAlertIncidentUpdate).toHaveBeenCalledWith({
-      where: { id: "inc-1" },
+      where: { id: "inc-1", rule: { teamId: TEAM_ID } },
       data: { status: "ACKNOWLEDGED" },
     });
     expect(mockIncidentEventCreate).toHaveBeenCalledWith({
@@ -268,7 +280,7 @@ describe("AlertService.acknowledgeIncident", () => {
       async (ops: Array<Promise<unknown>>) => Promise.all(ops),
     );
 
-    await service.acknowledgeIncident("inc-1", "user-1");
+    await service.acknowledgeIncident("inc-1", TEAM_ID, "user-1");
 
     expect(mockIncidentEventCreate).toHaveBeenCalledWith({
       data: {
@@ -285,9 +297,24 @@ describe("AlertService.acknowledgeIncident", () => {
     mockIncidentEventCreate.mockResolvedValue({});
     mockTransaction.mockRejectedValue(new Error("Record to update not found (P2025)"));
 
-    await expect(service.acknowledgeIncident("missing-id", "user-1")).rejects.toThrow(
+    await expect(service.acknowledgeIncident("missing-id", TEAM_ID, "user-1")).rejects.toThrow(
       "P2025",
     );
+  });
+
+  it("rejects a cross-team incident id before any mutation (scoped existence check)", async () => {
+    mockAlertIncidentFindFirst.mockResolvedValue(null);
+
+    await expect(
+      service.acknowledgeIncident("inc-1", "team-other", "user-1"),
+    ).rejects.toThrow("Incident not found");
+
+    expect(mockAlertIncidentFindFirst).toHaveBeenCalledExactlyOnceWith({
+      where: { id: "inc-1", rule: { teamId: "team-other" } },
+      select: { id: true },
+    });
+    expect(mockTransaction).not.toHaveBeenCalled();
+    expect(mockAlertIncidentUpdate).not.toHaveBeenCalled();
   });
 });
 
@@ -300,6 +327,9 @@ describe("AlertService.resolveIncident", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: the incident exists inside the caller's team; the cross-team
+    // tests override this with null.
+    mockAlertIncidentFindFirst.mockResolvedValue({ id: "inc-1" });
     service = new AlertService();
   });
 
@@ -311,10 +341,10 @@ describe("AlertService.resolveIncident", () => {
       async (ops: Array<Promise<unknown>>) => Promise.all(ops),
     );
 
-    const result = await service.resolveIncident("inc-1", "user-1", "resolved");
+    const result = await service.resolveIncident("inc-1", TEAM_ID, "user-1", "resolved");
 
     expect(mockAlertIncidentUpdate).toHaveBeenCalledWith({
-      where: { id: "inc-1" },
+      where: { id: "inc-1", rule: { teamId: TEAM_ID } },
       data: { status: "RESOLVED" },
     });
     expect(mockIncidentEventCreate).toHaveBeenCalledWith({
@@ -333,7 +363,16 @@ describe("AlertService.resolveIncident", () => {
     mockIncidentEventCreate.mockResolvedValue({});
     mockTransaction.mockRejectedValue(new Error("Record to update not found (P2025)"));
 
-    await expect(service.resolveIncident("missing-id", "user-1")).rejects.toThrow("P2025");
+    await expect(service.resolveIncident("missing-id", TEAM_ID, "user-1")).rejects.toThrow("P2025");
+  });
+
+  it("rejects a cross-team incident id before any mutation (scoped existence check)", async () => {
+    mockAlertIncidentFindFirst.mockResolvedValue(null);
+
+    await expect(service.resolveIncident("inc-1", "team-other", "user-1")).rejects.toThrow(
+      "Incident not found",
+    );
+    expect(mockTransaction).not.toHaveBeenCalled();
   });
 });
 
@@ -346,6 +385,9 @@ describe("AlertService.reopenIncident", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: the incident exists inside the caller's team; the cross-team
+    // tests override this with null.
+    mockAlertIncidentFindFirst.mockResolvedValue({ id: "inc-1" });
     service = new AlertService();
   });
 
@@ -357,10 +399,10 @@ describe("AlertService.reopenIncident", () => {
       async (ops: Array<Promise<unknown>>) => Promise.all(ops),
     );
 
-    const result = await service.reopenIncident("inc-1", "user-1", "reopened");
+    const result = await service.reopenIncident("inc-1", TEAM_ID, "user-1", "reopened");
 
     expect(mockAlertIncidentUpdate).toHaveBeenCalledWith({
-      where: { id: "inc-1" },
+      where: { id: "inc-1", rule: { teamId: TEAM_ID } },
       data: { status: "OPEN" },
     });
     expect(mockIncidentEventCreate).toHaveBeenCalledWith({
@@ -379,7 +421,16 @@ describe("AlertService.reopenIncident", () => {
     mockIncidentEventCreate.mockResolvedValue({});
     mockTransaction.mockRejectedValue(new Error("Record to update not found (P2025)"));
 
-    await expect(service.reopenIncident("missing-id", "user-1")).rejects.toThrow("P2025");
+    await expect(service.reopenIncident("missing-id", TEAM_ID, "user-1")).rejects.toThrow("P2025");
+  });
+
+  it("rejects a cross-team incident id before any mutation (scoped existence check)", async () => {
+    mockAlertIncidentFindFirst.mockResolvedValue(null);
+
+    await expect(service.reopenIncident("inc-1", "team-other", "user-1")).rejects.toThrow(
+      "Incident not found",
+    );
+    expect(mockTransaction).not.toHaveBeenCalled();
   });
 });
 
@@ -392,17 +443,20 @@ describe("AlertService.getIncidentTimeline", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: the incident exists inside the caller's team; the cross-team
+    // tests override this with null.
+    mockAlertIncidentFindFirst.mockResolvedValue({ id: "inc-1" });
     service = new AlertService();
   });
 
   it("calls prisma.incidentEvent.findMany with incidentId filter", async () => {
     mockIncidentEventFindMany.mockResolvedValue([]);
 
-    await service.getIncidentTimeline("inc-1");
+    await service.getIncidentTimeline("inc-1", TEAM_ID);
 
     expect(mockIncidentEventFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: { incidentId: "inc-1" },
+        where: { incidentId: "inc-1", incident: { rule: { teamId: TEAM_ID } } },
       }),
     );
   });
@@ -410,7 +464,7 @@ describe("AlertService.getIncidentTimeline", () => {
   it("orders events ascending by createdAt", async () => {
     mockIncidentEventFindMany.mockResolvedValue([]);
 
-    await service.getIncidentTimeline("inc-1");
+    await service.getIncidentTimeline("inc-1", TEAM_ID);
 
     expect(mockIncidentEventFindMany).toHaveBeenCalledWith(
       expect.objectContaining({ orderBy: { createdAt: "asc" } }),
@@ -420,7 +474,7 @@ describe("AlertService.getIncidentTimeline", () => {
   it("includes user details in the query", async () => {
     mockIncidentEventFindMany.mockResolvedValue([]);
 
-    await service.getIncidentTimeline("inc-1");
+    await service.getIncidentTimeline("inc-1", TEAM_ID);
 
     expect(mockIncidentEventFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -435,7 +489,7 @@ describe("AlertService.getIncidentTimeline", () => {
     ];
     mockIncidentEventFindMany.mockResolvedValue(events);
 
-    const result = await service.getIncidentTimeline("inc-1");
+    const result = await service.getIncidentTimeline("inc-1", TEAM_ID);
 
     expect(result).toEqual(events);
   });
@@ -443,7 +497,7 @@ describe("AlertService.getIncidentTimeline", () => {
   it("returns empty array when there are no events", async () => {
     mockIncidentEventFindMany.mockResolvedValue([]);
 
-    const result = await service.getIncidentTimeline("inc-1");
+    const result = await service.getIncidentTimeline("inc-1", TEAM_ID);
 
     expect(result).toEqual([]);
   });

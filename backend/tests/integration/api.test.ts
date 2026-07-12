@@ -83,7 +83,15 @@ vi.mock("../../src/repositories/prisma.js", () => {
     },
     alertIncident: {
       findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      update: vi.fn(),
     },
+    incidentEvent: {
+      create: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    $transaction: vi.fn(),
     maintenanceWindow: {
       findMany: vi.fn(),
       create: vi.fn(),
@@ -193,7 +201,15 @@ const mockedPrisma = prisma as typeof prisma & {
   };
   alertIncident: {
     findMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
   };
+  incidentEvent: {
+    create: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+  };
+  $transaction: ReturnType<typeof vi.fn>;
   maintenanceWindow: {
     findMany: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
@@ -324,6 +340,12 @@ beforeEach(() => {
   mockedPrisma.logView.findMany.mockResolvedValue([]);
   mockedPrisma.teamInvite.findMany.mockResolvedValue([]);
   mockedPrisma.teamInvite.findUnique.mockResolvedValue(null);
+  mockedPrisma.alertIncident.findUnique.mockResolvedValue(null);
+  mockedPrisma.alertIncident.findFirst.mockResolvedValue(null);
+  mockedPrisma.incidentEvent.findMany.mockResolvedValue([]);
+  mockedPrisma.$transaction.mockImplementation(async (ops: Array<Promise<unknown>>) =>
+    Promise.all(ops),
+  );
   mockedPrisma.logView.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.alertRule.findMany.mockResolvedValue([]);
   mockedPrisma.alertIncident.findMany.mockResolvedValue([]);
@@ -1784,6 +1806,133 @@ describe("API Routes", () => {
           where: { id: "inv-1", teamId: "t1" },
         });
       });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Alert incidents — authz scoping (task a31d9526)
+  // ---------------------------------------------------------------------------
+
+  describe("alert incidents — authz scoping", () => {
+    const MEMBERSHIP = {
+      id: "member-1",
+      teamId: "t1",
+      userId: "user-1",
+      role: "MEMBER",
+      joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+    };
+
+    function seedIncident(teamId = "t1") {
+      mockedPrisma.alertIncident.findUnique.mockResolvedValueOnce({ rule: { teamId } });
+    }
+
+    it("acknowledge: 404 when the incident does not exist", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+
+      const res = await app
+        .post("/api/v1/alerts/incidents/missing/acknowledge")
+        .set("Authorization", "Bearer sess_admin")
+        .send({});
+
+      expect(res.status).toBe(404);
+      expect(mockedPrisma.alertIncident.update).not.toHaveBeenCalled();
+    });
+
+    it("acknowledge: 403 for a non-member of the incident's team, no mutation (cross-tenant IDOR)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      seedIncident("t1");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+      const res = await app
+        .post("/api/v1/alerts/incidents/inc-1/acknowledge")
+        .set("Authorization", "Bearer sess_admin")
+        .send({});
+
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.alertIncident.update).not.toHaveBeenCalled();
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "t1", userId: "user-1" } },
+      });
+    });
+
+    it("acknowledge: 200 for a team member, mutation runs", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      seedIncident("t1");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(MEMBERSHIP);
+      mockedPrisma.alertIncident.findFirst.mockResolvedValueOnce({ id: "inc-1" });
+      mockedPrisma.alertIncident.update.mockResolvedValueOnce({ id: "inc-1", status: "ACKNOWLEDGED" });
+      mockedPrisma.incidentEvent.create.mockResolvedValueOnce({ id: "ev-1" });
+
+      const res = await app
+        .post("/api/v1/alerts/incidents/inc-1/acknowledge")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ comment: "on it" });
+
+      expect(res.status).toBe(200);
+      expect(res.body.incident.status).toBe("ACKNOWLEDGED");
+      expect(mockedPrisma.alertIncident.findFirst).toHaveBeenCalledWith({
+        where: { id: "inc-1", rule: { teamId: "t1" } },
+        select: { id: true },
+      });
+    });
+
+    it("resolve: 403 for a non-member, no mutation", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      seedIncident("t1");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+      const res = await app
+        .post("/api/v1/alerts/incidents/inc-1/resolve")
+        .set("Authorization", "Bearer sess_admin")
+        .send({});
+
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.alertIncident.update).not.toHaveBeenCalled();
+    });
+
+    it("reopen: 403 for a non-member, no mutation", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      seedIncident("t1");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+      const res = await app
+        .post("/api/v1/alerts/incidents/inc-1/reopen")
+        .set("Authorization", "Bearer sess_admin")
+        .send({});
+
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.alertIncident.update).not.toHaveBeenCalled();
+    });
+
+    it("timeline: 403 for a non-member, events never queried (cross-tenant disclosure)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      seedIncident("t1");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+      const res = await app
+        .get("/api/v1/alerts/incidents/inc-1/timeline")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
+    });
+
+    it("timeline: 200 for a team member with the team-scoped where clause", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      seedIncident("t1");
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(MEMBERSHIP);
+      mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce([]);
+
+      const res = await app
+        .get("/api/v1/alerts/incidents/inc-1/timeline")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(200);
+      expect(mockedPrisma.incidentEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { incidentId: "inc-1", incident: { rule: { teamId: "t1" } } },
+        }),
+      );
     });
   });
 });
