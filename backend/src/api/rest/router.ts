@@ -1216,6 +1216,14 @@ apiRouter.put(
 
 // --- Team Invites ---
 
+// Invite management is restricted to OWNER/ADMIN of the affected team: an
+// invite grants membership up to role ADMIN, and the list payload carries the
+// join token, so mere membership must not be enough (cross-tenant IDOR /
+// privilege escalation otherwise).
+function canManageInvites(role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER"): boolean {
+  return role === "OWNER" || role === "ADMIN";
+}
+
 apiRouter.post(
   "/teams/:id/invites",
   asyncHandler(async (req, res) => {
@@ -1226,13 +1234,15 @@ apiRouter.post(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
+    const teamId = String(req.params.id);
+    const role = await requireTeamRole(userId, teamId, res);
+    if (role === null) return;
+    if (!canManageInvites(role)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
     try {
-      const invite = await teamService.createInvite(
-        String(req.params.id),
-        userId,
-        parsed.data.role,
-        parsed.data.email,
-      );
+      const invite = await teamService.createInvite(teamId, userId, parsed.data.role, parsed.data.email);
       res.status(201).json({ invite });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
@@ -1243,8 +1253,16 @@ apiRouter.post(
 apiRouter.get(
   "/teams/:id/invites",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
-    const invites = await teamService.listInvites(String(req.params.id));
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const teamId = String(req.params.id);
+    const role = await requireTeamRole(userId, teamId, res);
+    if (role === null) return;
+    if (!canManageInvites(role)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    const invites = await teamService.listInvites(teamId);
     res.json({ invites });
   }),
 );
@@ -1266,9 +1284,25 @@ apiRouter.post(
 apiRouter.delete(
   "/invites/:id",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    // Resolve the invite's team first and authorize against it, otherwise any
+    // authenticated user could revoke any team's invite by enumerating ids
+    // (cross-tenant IDOR).
+    const inviteId = String(req.params.id);
+    const invite = await prisma.teamInvite.findUnique({ where: { id: inviteId } });
+    if (!invite) {
+      res.status(404).json({ error: "Invite not found" });
+      return;
+    }
+    const role = await requireTeamRole(userId, invite.teamId, res);
+    if (role === null) return;
+    if (!canManageInvites(role)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
     try {
-      await teamService.revokeInvite(String(req.params.id));
+      await teamService.revokeInvite(inviteId, invite.teamId);
       res.status(204).end();
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });

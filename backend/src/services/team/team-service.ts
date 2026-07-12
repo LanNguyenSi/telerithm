@@ -300,9 +300,15 @@ export class TeamService {
     return invites.map((i) => this.mapInvite(i));
   }
 
-  async revokeInvite(inviteId: string): Promise<void> {
-    await prisma.teamInvite.delete({ where: { id: inviteId } });
-    log.info({ inviteId }, "Invite revoked");
+  // teamId is a required scope, not a hint: the delete must never match an
+  // invite outside the caller's already-authorized team (defence in depth
+  // under the router's role check).
+  async revokeInvite(inviteId: string, teamId: string): Promise<void> {
+    const result = await prisma.teamInvite.deleteMany({ where: { id: inviteId, teamId } });
+    if (result.count === 0) {
+      throw new Error("Invite not found");
+    }
+    log.info({ inviteId, teamId }, "Invite revoked");
   }
 
   private mapInvite(invite: {
