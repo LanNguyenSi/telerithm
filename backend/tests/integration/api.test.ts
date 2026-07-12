@@ -95,6 +95,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
     $transaction: vi.fn(),
     maintenanceWindow: {
       findMany: vi.fn(),
+      findUnique: vi.fn(),
       create: vi.fn(),
       delete: vi.fn(),
     },
@@ -214,6 +215,7 @@ const mockedPrisma = prisma as typeof prisma & {
   $transaction: ReturnType<typeof vi.fn>;
   maintenanceWindow: {
     findMany: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
   };
@@ -351,6 +353,7 @@ beforeEach(() => {
   mockedPrisma.logView.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.alertRule.findMany.mockResolvedValue([]);
   mockedPrisma.alertRule.findUnique.mockResolvedValue(null);
+  mockedPrisma.maintenanceWindow.findUnique.mockResolvedValue(null);
   mockedPrisma.alertIncident.findMany.mockResolvedValue([]);
   mockedPrisma.issue.findMany.mockResolvedValue([]);
   mockedPrisma.issue.count.mockResolvedValue(0);
@@ -2075,6 +2078,82 @@ describe("API Routes", () => {
       expect(res.status).toBe(400);
       expect(mockedPrisma.alertRule.findUnique).not.toHaveBeenCalled();
       expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Maintenance windows — delete authz scoping (task b8ffcdfa)
+  // ---------------------------------------------------------------------------
+
+  describe("maintenance-window delete — authz scoping", () => {
+    const MEMBERSHIP = {
+      id: "member-1",
+      teamId: "t1",
+      userId: "user-1",
+      role: "MEMBER",
+      joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+    };
+
+    it("404 when the window does not exist, no delete", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+
+      const res = await app
+        .delete("/api/v1/maintenance-windows/missing")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(404);
+      expect(mockedPrisma.maintenanceWindow.delete).not.toHaveBeenCalled();
+    });
+
+    it("403 for a non-member of the window's team, no delete (cross-tenant deletion)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.maintenanceWindow.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+      const res = await app
+        .delete("/api/v1/maintenance-windows/mw-1")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.maintenanceWindow.delete).not.toHaveBeenCalled();
+      // The gate must authorize against the WINDOW's team, not anything the
+      // caller supplies.
+      expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+        where: { teamId_userId: { teamId: "t1", userId: "user-1" } },
+      });
+    });
+
+    it("204 for a member of the window's team, delete team-scoped", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.maintenanceWindow.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(MEMBERSHIP);
+      mockedPrisma.maintenanceWindow.delete.mockResolvedValueOnce({ id: "mw-1" });
+
+      const res = await app
+        .delete("/api/v1/maintenance-windows/mw-1")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(204);
+      expect(mockedPrisma.maintenanceWindow.delete).toHaveBeenCalledWith({
+        where: { id: "mw-1", teamId: "t1" },
+      });
+    });
+
+    it("maps P2025 to 404 when the window vanishes between the check and the delete", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.maintenanceWindow.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(MEMBERSHIP);
+      const notFound = Object.assign(new Error("Record to delete does not exist."), {
+        code: "P2025",
+      });
+      mockedPrisma.maintenanceWindow.delete.mockRejectedValueOnce(notFound);
+
+      const res = await app
+        .delete("/api/v1/maintenance-windows/mw-1")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Maintenance window not found");
     });
   });
 });
