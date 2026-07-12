@@ -960,14 +960,38 @@ function handlePrismaError(
   return false;
 }
 
+// Resolve an incident's team (via its rule) and require the caller's
+// membership on it, otherwise any authenticated user could mutate or read any
+// incident by enumerating its id (cross-tenant IDOR). Returns the teamId, or
+// null when a 404/403 response has already been sent.
+async function requireIncidentTeam(
+  incidentId: string,
+  userId: string,
+  res: Response,
+): Promise<string | null> {
+  const incident = await prisma.alertIncident.findUnique({
+    where: { id: incidentId },
+    select: { rule: { select: { teamId: true } } },
+  });
+  if (!incident) {
+    res.status(404).json({ error: "Incident not found" });
+    return null;
+  }
+  const teamId = incident.rule.teamId;
+  if ((await requireTeamRole(userId, teamId, res)) === null) return null;
+  return teamId;
+}
+
 apiRouter.post(
   "/alerts/incidents/:id/acknowledge",
   asyncHandler(async (req, res) => {
     const userId = await requireAuth(req, res);
     if (userId === null) return;
+    const teamId = await requireIncidentTeam(String(req.params.id), userId, res);
+    if (teamId === null) return;
     const parsed = incidentActionSchema.safeParse(req.body);
     const comment = parsed.success ? parsed.data.comment : undefined;
-    const incident = await alertService.acknowledgeIncident(String(req.params.id), userId, comment);
+    const incident = await alertService.acknowledgeIncident(String(req.params.id), teamId, userId, comment);
     res.json({ incident });
   }),
 );
@@ -977,9 +1001,11 @@ apiRouter.post(
   asyncHandler(async (req, res) => {
     const userId = await requireAuth(req, res);
     if (userId === null) return;
+    const teamId = await requireIncidentTeam(String(req.params.id), userId, res);
+    if (teamId === null) return;
     const parsed = incidentActionSchema.safeParse(req.body);
     const comment = parsed.success ? parsed.data.comment : undefined;
-    const incident = await alertService.resolveIncident(String(req.params.id), userId, comment);
+    const incident = await alertService.resolveIncident(String(req.params.id), teamId, userId, comment);
     res.json({ incident });
   }),
 );
@@ -989,9 +1015,11 @@ apiRouter.post(
   asyncHandler(async (req, res) => {
     const userId = await requireAuth(req, res);
     if (userId === null) return;
+    const teamId = await requireIncidentTeam(String(req.params.id), userId, res);
+    if (teamId === null) return;
     const parsed = incidentActionSchema.safeParse(req.body);
     const comment = parsed.success ? parsed.data.comment : undefined;
-    const incident = await alertService.reopenIncident(String(req.params.id), userId, comment);
+    const incident = await alertService.reopenIncident(String(req.params.id), teamId, userId, comment);
     res.json({ incident });
   }),
 );
@@ -999,8 +1027,11 @@ apiRouter.post(
 apiRouter.get(
   "/alerts/incidents/:id/timeline",
   asyncHandler(async (req, res) => {
-    if ((await requireAuth(req, res)) === null) return;
-    const events = await alertService.getIncidentTimeline(String(req.params.id));
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const teamId = await requireIncidentTeam(String(req.params.id), userId, res);
+    if (teamId === null) return;
+    const events = await alertService.getIncidentTimeline(String(req.params.id), teamId);
     res.json({ events });
   }),
 );
