@@ -1242,12 +1242,7 @@ apiRouter.post(
       return;
     }
     try {
-      const invite = await teamService.createInvite(
-        teamId,
-        userId,
-        parsed.data.role,
-        parsed.data.email,
-      );
+      const invite = await teamService.createInvite(teamId, userId, parsed.data.role, parsed.data.email);
       res.status(201).json({ invite });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
