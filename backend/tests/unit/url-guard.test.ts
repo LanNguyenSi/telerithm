@@ -4,17 +4,14 @@
  * Implementation note — Node.js URL.hostname and IPv6 brackets:
  *   Node.js's WHATWG URL implementation preserves brackets when serialising
  *   IPv6 hostnames, so `new URL("https://[::1]/hook").hostname` returns
- *   "[::1]", not "::1".  As a consequence, isIP("[::1]") returns 0 (not 6),
- *   and the literal-IP branch is never taken for IPv6 literal addresses;
- *   instead they fall through to the DNS resolution path.
- *
- *   In real usage this still blocks the request — DNS fails to resolve
- *   "[::1]" → the guard throws "could not be resolved". In tests we simulate
- *   that DNS failure by having mockLookup reject.
+ *   "[::1]", not "::1". assertSafeUrl strips one surrounding bracket pair
+ *   before isIP, so IPv6 literal URLs take the literal-IP branch and are
+ *   rejected by the range check itself (task 2830e452; previously they were
+ *   only blocked as a side effect of DNS failing on the bracketed name).
  *
  *   IPv6 addresses returned BY DNS (without brackets, e.g. from AAAA records)
- *   ARE correctly checked by isBlockedAddress; those cases are covered in the
- *   "DNS resolution" describe block.
+ *   are checked by isBlockedAddress, including the hex IPv4-mapped form
+ *   (::ffff:a00:1) that resolvers and the URL parser normalise to.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -178,13 +175,13 @@ describe("assertSafeUrl — IPv4 blocked ranges (literal IP, no DNS)", () => {
 
 /**
  * IPv6 literal URL behaviour:
- *   Node.js preserves brackets in URL.hostname for IPv6, so isIP("[::1]") = 0.
- *   The code falls through to DNS lookup, which rejects (ENOTFOUND) for these
- *   bracket-wrapped addresses, and the guard throws "could not be resolved".
- *   The requests are correctly blocked — just via the DNS path, not the IP-range
- *   check.  We simulate the DNS failure with mockDnsFail().
+ *   Node.js preserves brackets in URL.hostname for IPv6 ("[::1]").
+ *   assertSafeUrl strips one surrounding bracket pair before isIP, so these
+ *   literals are rejected by the real IP-range check ("blocked address
+ *   range") with NO DNS involved — mockLookup stays uncalled. Previously they
+ *   were only blocked as a side effect of DNS failing on the bracketed name.
  */
-describe("assertSafeUrl — IPv6 literal URLs (blocked via DNS-failure path)", () => {
+describe("assertSafeUrl — IPv6 literal URLs (blocked via IP-range check, no DNS)", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     delete process.env.WEBHOOK_HOST_ALLOWLIST;
@@ -194,39 +191,87 @@ describe("assertSafeUrl — IPv6 literal URLs (blocked via DNS-failure path)", (
     delete process.env.WEBHOOK_HOST_ALLOWLIST;
   });
 
-  it("blocks https://[::1] (IPv6 loopback — DNS failure)", async () => {
-    mockDnsFail();
-    await expect(assertSafeUrl("https://[::1]/hook")).rejects.toThrow("could not be resolved");
+  it("blocks https://[::1] (IPv6 loopback) via the range check without DNS", async () => {
+    await expect(assertSafeUrl("https://[::1]/hook")).rejects.toThrow("blocked address range");
+    expect(mockLookup).not.toHaveBeenCalled();
   });
 
-  it("blocks https://[::] (IPv6 unspecified — DNS failure)", async () => {
-    mockDnsFail();
-    await expect(assertSafeUrl("https://[::]/hook")).rejects.toThrow("could not be resolved");
+  it("blocks https://[::] (IPv6 unspecified)", async () => {
+    await expect(assertSafeUrl("https://[::]/hook")).rejects.toThrow("blocked address range");
   });
 
-  it("blocks https://[fe80::1] (IPv6 link-local — DNS failure)", async () => {
-    mockDnsFail();
-    await expect(assertSafeUrl("https://[fe80::1]/hook")).rejects.toThrow("could not be resolved");
+  it("blocks https://[fe80::1] (IPv6 link-local)", async () => {
+    await expect(assertSafeUrl("https://[fe80::1]/hook")).rejects.toThrow("blocked address range");
   });
 
-  it("blocks https://[fc00::1] (IPv6 ULA — DNS failure)", async () => {
-    mockDnsFail();
-    await expect(assertSafeUrl("https://[fc00::1]/hook")).rejects.toThrow("could not be resolved");
+  it("blocks https://[fc00::1] (IPv6 ULA)", async () => {
+    await expect(assertSafeUrl("https://[fc00::1]/hook")).rejects.toThrow("blocked address range");
   });
 
-  it("blocks https://[fd00::1] (IPv6 ULA — DNS failure)", async () => {
-    mockDnsFail();
-    await expect(assertSafeUrl("https://[fd00::1]/hook")).rejects.toThrow("could not be resolved");
+  it("blocks https://[fd00::1] (IPv6 ULA)", async () => {
+    await expect(assertSafeUrl("https://[fd00::1]/hook")).rejects.toThrow("blocked address range");
   });
 
-  it("blocks https://[ff02::1] (IPv6 multicast — DNS failure)", async () => {
-    mockDnsFail();
-    await expect(assertSafeUrl("https://[ff02::1]/hook")).rejects.toThrow("could not be resolved");
+  it("blocks https://[ff02::1] (IPv6 multicast)", async () => {
+    await expect(assertSafeUrl("https://[ff02::1]/hook")).rejects.toThrow("blocked address range");
   });
 
-  it("blocks https://[::ffff:192.168.1.1] (IPv4-mapped — DNS failure)", async () => {
+  it("blocks https://[::ffff:192.168.1.1] (IPv4-mapped literal; URL normalises it to hex form)", async () => {
+    // new URL(...) rewrites the hostname to "[::ffff:c0a8:101]", so this
+    // exercises the hex IPv4-mapped branch end-to-end.
+    await expect(assertSafeUrl("https://[::ffff:192.168.1.1]/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Hex-form IPv4-mapped IPv6 (::ffff:a00:1 == 10.0.0.1): resolvers and the
+ * WHATWG URL parser normalise the dotted-decimal form away, so the guard must
+ * decode the two hex groups back to IPv4 and re-check the embedded ranges.
+ */
+describe("assertSafeUrl — hex IPv4-mapped IPv6 (AAAA records)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+
+  afterEach(() => {
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+
+  it("blocks AAAA record ::ffff:c0a8:101 (192.168.1.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "::ffff:c0a8:101", family: 6 }] as never);
+    await expect(assertSafeUrl("https://hexmapped.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks AAAA record ::ffff:7f00:1 (127.0.0.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "::ffff:7f00:1", family: 6 }] as never);
+    await expect(assertSafeUrl("https://hexmapped.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks AAAA record ::ffff:a00:1 (10.0.0.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "::ffff:a00:1", family: 6 }] as never);
+    await expect(assertSafeUrl("https://hexmapped.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("does NOT over-block a public hex IPv4-mapped address (::ffff:808:808 = 8.8.8.8)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "::ffff:808:808", family: 6 }] as never);
+    await expect(assertSafeUrl("https://hexmapped.example.com/hook")).resolves.toBeUndefined();
+  });
+
+  it("still fails closed when DNS cannot resolve a hostname", async () => {
     mockDnsFail();
-    await expect(assertSafeUrl("https://[::ffff:192.168.1.1]/hook")).rejects.toThrow("could not be resolved");
+    await expect(assertSafeUrl("https://unresolvable.example.com/hook")).rejects.toThrow(
+      "could not be resolved",
+    );
   });
 });
 
