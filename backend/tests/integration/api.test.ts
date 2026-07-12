@@ -96,6 +96,13 @@ vi.mock("../../src/repositories/prisma.js", () => {
       count: vi.fn().mockResolvedValue(0),
       upsert: vi.fn(),
     },
+    teamInvite: {
+      create: vi.fn(),
+      findUnique: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      update: vi.fn(),
+      deleteMany: vi.fn(),
+    },
   };
   return {
     prisma: mockPrisma,
@@ -198,6 +205,13 @@ const mockedPrisma = prisma as typeof prisma & {
     update: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
     upsert: ReturnType<typeof vi.fn>;
+  };
+  teamInvite: {
+    create: ReturnType<typeof vi.fn>;
+    findUnique: ReturnType<typeof vi.fn>;
+    findMany: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    deleteMany: ReturnType<typeof vi.fn>;
   };
 };
 const mockedClickhouse = clickhouse as typeof clickhouse & {
@@ -308,6 +322,8 @@ beforeEach(() => {
   mockedPrisma.logSource.findMany.mockResolvedValue([]);
   mockedPrisma.logSource.count.mockResolvedValue(0);
   mockedPrisma.logView.findMany.mockResolvedValue([]);
+  mockedPrisma.teamInvite.findMany.mockResolvedValue([]);
+  mockedPrisma.teamInvite.findUnique.mockResolvedValue(null);
   mockedPrisma.logView.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.alertRule.findMany.mockResolvedValue([]);
   mockedPrisma.alertIncident.findMany.mockResolvedValue([]);
@@ -1596,6 +1612,177 @@ describe("API Routes", () => {
       expect(res.status).toBe(403);
       expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
         where: { teamId_userId: { teamId: "other-team", userId: "user-1" } },
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Team invites — IDOR scoping (task 8d46bc7b)
+  // ---------------------------------------------------------------------------
+
+  describe("team invites — authz scoping", () => {
+    function makeTeamInvite(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "inv-1",
+        teamId: "t1",
+        email: null,
+        token: "inv_abcdef0123456789abcdef01",
+        role: "MEMBER",
+        createdBy: "admin-1",
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        usedAt: null,
+        createdAt: new Date("2026-03-23T00:00:00.000Z"),
+        ...overrides,
+      };
+    }
+
+    function authAs(userId: string, membership: { teamId: string; role: string } | null) {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(
+        membership === null
+          ? null
+          : {
+              id: "member-1",
+              teamId: membership.teamId,
+              userId,
+              role: membership.role,
+              joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+            },
+      );
+    }
+
+    describe("GET /api/v1/teams/:id/invites", () => {
+      it("rejects a non-member with 403 and never queries the invites (cross-tenant list IDOR)", async () => {
+        authAs("outsider-1", null);
+
+        const res = await app.get("/api/v1/teams/t1/invites").set("Authorization", "Bearer sess_admin");
+
+        expect(res.status).toBe(403);
+        expect(mockedPrisma.teamInvite.findMany).not.toHaveBeenCalled();
+      });
+
+      it("rejects a plain MEMBER with 403 (invite payload carries the join token)", async () => {
+        authAs("member-1", { teamId: "t1", role: "MEMBER" });
+
+        const res = await app.get("/api/v1/teams/t1/invites").set("Authorization", "Bearer sess_admin");
+
+        expect(res.status).toBe(403);
+        expect(mockedPrisma.teamInvite.findMany).not.toHaveBeenCalled();
+      });
+
+      it("returns the team's invites for an ADMIN", async () => {
+        authAs("admin-1", { teamId: "t1", role: "ADMIN" });
+        mockedPrisma.teamInvite.findMany.mockResolvedValueOnce([makeTeamInvite()]);
+
+        const res = await app.get("/api/v1/teams/t1/invites").set("Authorization", "Bearer sess_admin");
+
+        expect(res.status).toBe(200);
+        expect(res.body.invites).toHaveLength(1);
+        expect(mockedPrisma.teamInvite.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ where: expect.objectContaining({ teamId: "t1" }) }),
+        );
+      });
+    });
+
+    describe("POST /api/v1/teams/:id/invites", () => {
+      it("rejects a non-member with 403 and never creates an invite (cross-tenant takeover vector)", async () => {
+        mockedConfig.multiTenant = true;
+        authAs("outsider-1", null);
+
+        const res = await app
+          .post("/api/v1/teams/t1/invites")
+          .set("Authorization", "Bearer sess_admin")
+          .send({ role: "ADMIN" });
+
+        expect(res.status).toBe(403);
+        expect(mockedPrisma.teamInvite.create).not.toHaveBeenCalled();
+      });
+
+      it("rejects a plain MEMBER with 403", async () => {
+        mockedConfig.multiTenant = true;
+        authAs("member-1", { teamId: "t1", role: "MEMBER" });
+
+        const res = await app
+          .post("/api/v1/teams/t1/invites")
+          .set("Authorization", "Bearer sess_admin")
+          .send({ role: "MEMBER" });
+
+        expect(res.status).toBe(403);
+        expect(mockedPrisma.teamInvite.create).not.toHaveBeenCalled();
+      });
+
+      it("creates an invite for an OWNER", async () => {
+        mockedConfig.multiTenant = true;
+        authAs("owner-1", { teamId: "t1", role: "OWNER" });
+        mockedPrisma.teamInvite.create.mockResolvedValueOnce(makeTeamInvite({ createdBy: "owner-1" }));
+
+        const res = await app
+          .post("/api/v1/teams/t1/invites")
+          .set("Authorization", "Bearer sess_admin")
+          .send({ role: "MEMBER" });
+
+        expect(res.status).toBe(201);
+        expect(res.body.invite.teamId).toBe("t1");
+      });
+    });
+
+    describe("DELETE /api/v1/invites/:id", () => {
+      it("returns 404 when the invite does not exist", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(null);
+
+        const res = await app.delete("/api/v1/invites/missing").set("Authorization", "Bearer sess_admin");
+
+        expect(res.status).toBe(404);
+        expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it("rejects a caller who is not a member of the invite's team with 403 and never deletes (cross-tenant revoke IDOR)", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "outsider-1" }));
+        mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeTeamInvite({ teamId: "t1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+        const res = await app.delete("/api/v1/invites/inv-1").set("Authorization", "Bearer sess_admin");
+
+        expect(res.status).toBe(403);
+        expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it("rejects a plain MEMBER of the invite's team with 403", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "member-1" }));
+        mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeTeamInvite({ teamId: "t1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+          id: "member-1",
+          teamId: "t1",
+          userId: "member-1",
+          role: "MEMBER",
+          joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+        });
+
+        const res = await app.delete("/api/v1/invites/inv-1").set("Authorization", "Bearer sess_admin");
+
+        expect(res.status).toBe(403);
+        expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it("revokes the invite for an ADMIN of the invite's team, scoped to that team", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "admin-1" }));
+        mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeTeamInvite({ teamId: "t1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+          id: "member-1",
+          teamId: "t1",
+          userId: "admin-1",
+          role: "ADMIN",
+          joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+        });
+        mockedPrisma.teamInvite.deleteMany.mockResolvedValueOnce({ count: 1 });
+
+        const res = await app.delete("/api/v1/invites/inv-1").set("Authorization", "Bearer sess_admin");
+
+        expect(res.status).toBe(204);
+        expect(mockedPrisma.teamInvite.deleteMany).toHaveBeenCalledWith({
+          where: { id: "inv-1", teamId: "t1" },
+        });
       });
     });
   });

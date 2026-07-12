@@ -10,6 +10,7 @@ const {
   mockTeamInviteUpdate,
   mockTeamInviteFindMany,
   mockTeamInviteDelete,
+  mockTeamInviteDeleteMany,
   mockTeamMemberFindUnique,
   mockTeamMemberCreate,
   mockTeamMemberDelete,
@@ -28,6 +29,7 @@ const {
   mockTeamInviteUpdate: vi.fn(),
   mockTeamInviteFindMany: vi.fn(),
   mockTeamInviteDelete: vi.fn(),
+  mockTeamInviteDeleteMany: vi.fn(),
   mockTeamMemberFindUnique: vi.fn(),
   mockTeamMemberCreate: vi.fn(),
   mockTeamMemberDelete: vi.fn(),
@@ -64,6 +66,7 @@ vi.mock("../../src/repositories/prisma.js", () => ({
       update: mockTeamInviteUpdate,
       findMany: mockTeamInviteFindMany,
       delete: mockTeamInviteDelete,
+      deleteMany: mockTeamInviteDeleteMany,
     },
     teamMember: {
       findUnique: mockTeamMemberFindUnique,
@@ -341,18 +344,33 @@ describe("TeamService.revokeInvite", () => {
     service = new TeamService();
   });
 
-  it("deletes exactly the given inviteId", async () => {
-    mockTeamInviteDelete.mockResolvedValue({ id: "invite-1" });
+  it("deletes the invite scoped to BOTH inviteId and teamId (never an unscoped delete)", async () => {
+    mockTeamInviteDeleteMany.mockResolvedValue({ count: 1 });
 
-    await service.revokeInvite("invite-1");
+    await service.revokeInvite("invite-1", TEAM_A);
 
-    expect(mockTeamInviteDelete).toHaveBeenCalledExactlyOnceWith({ where: { id: "invite-1" } });
+    expect(mockTeamInviteDeleteMany).toHaveBeenCalledExactlyOnceWith({
+      where: { id: "invite-1", teamId: TEAM_A },
+    });
   });
 
-  it("propagates the error when the invite does not exist (already revoked / wrong id)", async () => {
-    mockTeamInviteDelete.mockRejectedValue(new Error("Record to delete does not exist (P2025)"));
+  it("throws when no row matches — missing invite", async () => {
+    mockTeamInviteDeleteMany.mockResolvedValue({ count: 0 });
 
-    await expect(service.revokeInvite("missing-invite")).rejects.toThrow("P2025");
+    await expect(service.revokeInvite("missing-invite", TEAM_A)).rejects.toThrow(
+      "Invite not found",
+    );
+  });
+
+  it("throws when the invite belongs to a different team (cross-tenant revoke stays a no-op)", async () => {
+    // The scoped where clause means a TEAM_A invite id paired with TEAM_B
+    // matches zero rows; the service must surface that, not silently succeed.
+    mockTeamInviteDeleteMany.mockResolvedValue({ count: 0 });
+
+    await expect(service.revokeInvite("invite-1", TEAM_B)).rejects.toThrow("Invite not found");
+    expect(mockTeamInviteDeleteMany).toHaveBeenCalledExactlyOnceWith({
+      where: { id: "invite-1", teamId: TEAM_B },
+    });
   });
 });
 
