@@ -219,16 +219,12 @@ describe("assertSafeUrl — IPv6 literal URLs (blocked via IP-range check, no DN
   it("blocks https://[::ffff:192.168.1.1] (IPv4-mapped literal; URL normalises it to hex form)", async () => {
     // new URL(...) rewrites the hostname to "[::ffff:c0a8:101]", so this
     // exercises the hex IPv4-mapped branch end-to-end.
-    await expect(assertSafeUrl("https://[::ffff:192.168.1.1]/hook")).rejects.toThrow(
-      "blocked address range",
-    );
+    await expect(assertSafeUrl("https://[::ffff:192.168.1.1]/hook")).rejects.toThrow("blocked address range");
     expect(mockLookup).not.toHaveBeenCalled();
   });
 
   it("accepts https://[public-v6]/ (public IPv6 literal) via the range check without DNS", async () => {
-    await expect(
-      assertSafeUrl("https://[2606:2800:220:1:248:1893:25c8:1946]/hook"),
-    ).resolves.toBeUndefined();
+    await expect(assertSafeUrl("https://[2606:2800:220:1:248:1893:25c8:1946]/hook")).resolves.toBeUndefined();
     expect(mockLookup).not.toHaveBeenCalled();
   });
 });
@@ -303,9 +299,7 @@ describe("assertSafeUrl — non-::ffff IPv4-in-IPv6 embeddings (AAAA records)", 
 
   it("blocks NAT64 64:ff9b::c0a8:101 (embedded 192.168.1.1)", async () => {
     mockLookup.mockResolvedValueOnce([{ address: "64:ff9b::c0a8:101", family: 6 }] as never);
-    await expect(assertSafeUrl("https://nat64.example.com/hook")).rejects.toThrow(
-      "blocked address range",
-    );
+    await expect(assertSafeUrl("https://nat64.example.com/hook")).rejects.toThrow("blocked address range");
   });
 
   it("blocks NAT64 64:ff9b::10.0.0.1 (dotted-quad embedded form, 10.0.0.1)", async () => {
@@ -375,17 +369,23 @@ describe("assertSafeUrl — IPv6 DNS-resolved addresses (blocked via IP-range ch
 
   it("blocks AAAA record ::1 (loopback)", async () => {
     mockLookup.mockResolvedValueOnce([{ address: "::1", family: 6 }] as never);
-    await expect(assertSafeUrl("https://ipv6-loopback.example.com/hook")).rejects.toThrow("blocked address range");
+    await expect(assertSafeUrl("https://ipv6-loopback.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
   });
 
   it("blocks AAAA record :: (unspecified)", async () => {
     mockLookup.mockResolvedValueOnce([{ address: "::", family: 6 }] as never);
-    await expect(assertSafeUrl("https://ipv6-unspecified.example.com/hook")).rejects.toThrow("blocked address range");
+    await expect(assertSafeUrl("https://ipv6-unspecified.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
   });
 
   it("blocks AAAA record fe80::1 (link-local)", async () => {
     mockLookup.mockResolvedValueOnce([{ address: "fe80::1", family: 6 }] as never);
-    await expect(assertSafeUrl("https://ipv6-link-local.example.com/hook")).rejects.toThrow("blocked address range");
+    await expect(assertSafeUrl("https://ipv6-link-local.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
   });
 
   it("blocks AAAA record fc00::1 (ULA, fc00::/7 lower)", async () => {
@@ -395,22 +395,30 @@ describe("assertSafeUrl — IPv6 DNS-resolved addresses (blocked via IP-range ch
 
   it("blocks AAAA record fd00::1 (ULA, fc00::/7 upper)", async () => {
     mockLookup.mockResolvedValueOnce([{ address: "fd00::1", family: 6 }] as never);
-    await expect(assertSafeUrl("https://ipv6-ula2.example.com/hook")).rejects.toThrow("blocked address range");
+    await expect(assertSafeUrl("https://ipv6-ula2.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
   });
 
   it("blocks AAAA record ff02::1 (multicast)", async () => {
     mockLookup.mockResolvedValueOnce([{ address: "ff02::1", family: 6 }] as never);
-    await expect(assertSafeUrl("https://ipv6-multicast.example.com/hook")).rejects.toThrow("blocked address range");
+    await expect(assertSafeUrl("https://ipv6-multicast.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
   });
 
   it("blocks AAAA record ::ffff:192.168.1.1 (IPv4-mapped private, dotted-decimal)", async () => {
     mockLookup.mockResolvedValueOnce([{ address: "::ffff:192.168.1.1", family: 6 }] as never);
-    await expect(assertSafeUrl("https://ipv4-mapped.example.com/hook")).rejects.toThrow("blocked address range");
+    await expect(assertSafeUrl("https://ipv4-mapped.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
   });
 
   it("blocks AAAA record ::ffff:127.0.0.1 (IPv4-mapped loopback, dotted-decimal)", async () => {
     mockLookup.mockResolvedValueOnce([{ address: "::ffff:127.0.0.1", family: 6 }] as never);
-    await expect(assertSafeUrl("https://ipv4-loopback-mapped.example.com/hook")).rejects.toThrow("blocked address range");
+    await expect(assertSafeUrl("https://ipv4-loopback-mapped.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
   });
 });
 
@@ -531,14 +539,166 @@ describe("assertSafeUrl — defensive fail-closed + public IPv6 accept", () => {
     // (isBlockedAddress fail-closed default at family === 0).
     mockLookup.mockResolvedValueOnce([{ address: "garbage-not-ip", family: 4 }] as never);
     await expect(assertSafeUrl("https://malformed-dns.example.com/hook")).rejects.toThrow(
-      "blocked address range"
+      "blocked address range",
     );
   });
 
   it("accepts a hostname resolving to a public IPv6 (AAAA) address", async () => {
-    mockLookup.mockResolvedValueOnce([
-      { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
-    ] as never);
+    mockLookup.mockResolvedValueOnce([{ address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 }] as never);
     await expect(assertSafeUrl("https://ipv6-public.example.com/hook")).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * SSRF residuals surfaced by review of PR #103 (task b5829887): the 0.0.x.x
+ * single-group collapse (NAT64 + IPv4-compatible), operator-specific NAT64
+ * prefixes, and Teredo. See the comments above isBlockedAddress in
+ * url-guard.ts for the RFC references and decode reasoning.
+ */
+describe("assertSafeUrl — 0.0.x.x single-group collapse (RFC 5952 compression)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+  afterEach(() => {
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+
+  it("blocks NAT64 single-group 64:ff9b::1 (embedded 0.0.0.1, collapse of 64:ff9b::0.0.0.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b::1", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nat64-single.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks NAT64 single-group 64:ff9b::102 (embedded 0.0.1.2, collapse of 64:ff9b::0.0.1.2)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b::102", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nat64-single2.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks IPv4-compatible single-group ::5 (embedded 0.0.0.5, collapse of ::0.0.0.5)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "::5", family: 6 }] as never);
+    await expect(assertSafeUrl("https://v4compat-single.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks IPv4-compatible single-group ::102 (embedded 0.0.1.2, collapse of ::0.0.1.2)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "::102", family: 6 }] as never);
+    await expect(assertSafeUrl("https://v4compat-single2.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("does NOT match an unrelated prefix that merely starts like the well-known NAT64 prefix (64:ff9b:1::1, no additional prefix configured)", async () => {
+    // "64:ff9b:1::1" is NOT "64:ff9b::1": the well-known-prefix regex is
+    // anchored to exactly "64:ff9b::" and must not over-match this. Without
+    // WEBHOOK_NAT64_ADDITIONAL_PREFIXES configured, this AAAA record is not
+    // decoded at all and is treated as an ordinary (accepted) IPv6 address.
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b:1::1", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nat64-lookalike.example.com/hook")).resolves.toBeUndefined();
+  });
+});
+
+describe("assertSafeUrl — operator-specific NAT64 prefixes (WEBHOOK_NAT64_ADDITIONAL_PREFIXES)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+    delete process.env.WEBHOOK_NAT64_ADDITIONAL_PREFIXES;
+  });
+  afterEach(() => {
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+    delete process.env.WEBHOOK_NAT64_ADDITIONAL_PREFIXES;
+  });
+
+  it("blocks a configured prefix embedding a private address (hex form, 192.168.1.1)", async () => {
+    process.env.WEBHOOK_NAT64_ADDITIONAL_PREFIXES = "64:ff9b:1::,2001:db8:64::";
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b:1::c0a8:101", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nsp-private.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks a configured prefix embedding loopback (dotted form, 127.0.0.1)", async () => {
+    process.env.WEBHOOK_NAT64_ADDITIONAL_PREFIXES = "64:ff9b:1::,2001:db8:64::";
+    mockLookup.mockResolvedValueOnce([{ address: "2001:db8:64::127.0.0.1", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nsp-loopback.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks a configured prefix embedding the 0.0.x.x single-group collapse (0.0.0.5)", async () => {
+    process.env.WEBHOOK_NAT64_ADDITIONAL_PREFIXES = "64:ff9b:1::";
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b:1::5", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nsp-single.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("does NOT over-block a configured prefix embedding a public address (8.8.8.8)", async () => {
+    process.env.WEBHOOK_NAT64_ADDITIONAL_PREFIXES = "64:ff9b:1::,2001:db8:64::";
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b:1::808:808", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nsp-public.example.com/hook")).resolves.toBeUndefined();
+  });
+
+  it("normalizes prefix list entries: trims whitespace and lowercases", async () => {
+    process.env.WEBHOOK_NAT64_ADDITIONAL_PREFIXES = "  64:FF9B:1::  ";
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b:1::c0a8:101", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nsp-normalize.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("ignores a malformed prefix entry that does not end in '::' (fails closed to not-decoded, not a crash)", async () => {
+    // "64:ff9b:1" without the trailing "::" is dropped by envNat64Prefixes,
+    // so this AAAA record is not decoded via the additional-prefix path,
+    // same (documented) residual as leaving the env var unset entirely.
+    process.env.WEBHOOK_NAT64_ADDITIONAL_PREFIXES = "64:ff9b:1";
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b:1::c0a8:101", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nsp-malformed.example.com/hook")).resolves.toBeUndefined();
+  });
+
+  it("does NOT decode an operator-specific prefix when WEBHOOK_NAT64_ADDITIONAL_PREFIXES is unset (documented default)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b:1::c0a8:101", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nsp-unset.example.com/hook")).resolves.toBeUndefined();
+  });
+});
+
+describe("assertSafeUrl — Teredo (2001:0::/32, RFC 4380, client v4 bit-inverted)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+  afterEach(() => {
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+
+  // Groups 3-6 (server v4 "c000:237", flags "0", obfuscated port "1") are
+  // arbitrary, isBlockedAddress ignores them and only decodes groups 7-8.
+  // Groups 7-8 are the client v4 XORed with 0xffffffff (equivalently, each
+  // 16-bit half XORed with 0xffff):
+  //   10.0.0.1  -> hi 0x0a00^0xffff=0xf5ff, lo 0x0001^0xffff=0xfffe
+  //   127.0.0.1 -> hi 0x7f00^0xffff=0x80ff, lo 0x0001^0xffff=0xfffe
+  //   8.8.8.8   -> hi 0x0808^0xffff=0xf7f7, lo 0x0808^0xffff=0xf7f7
+
+  it("blocks Teredo embedding a private client address (10.0.0.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2001:0:c000:237:0:1:f5ff:fffe", family: 6 }] as never);
+    await expect(assertSafeUrl("https://teredo-private.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks Teredo embedding a loopback client address (127.0.0.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2001:0:c000:237:0:1:80ff:fffe", family: 6 }] as never);
+    await expect(assertSafeUrl("https://teredo-loopback.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("does NOT over-block Teredo embedding a public client address (8.8.8.8)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2001:0:c000:237:0:1:f7f7:f7f7", family: 6 }] as never);
+    await expect(assertSafeUrl("https://teredo-public.example.com/hook")).resolves.toBeUndefined();
   });
 });
