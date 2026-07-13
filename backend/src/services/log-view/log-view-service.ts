@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../repositories/prisma.js";
 import type { SavedLogView, SavedLogViewDefinition } from "../../types/domain.js";
+import { ForbiddenError, NotFoundError } from "../../errors.js";
 
 function mapView(view: {
   id: string;
@@ -84,10 +85,10 @@ export class LogViewService {
   ): Promise<SavedLogView> {
     const existing = await prisma.logView.findUnique({ where: { id } });
     if (!existing || existing.teamId !== input.teamId) {
-      throw new Error("Saved view not found");
+      throw new NotFoundError("Saved view not found");
     }
     if (!this.canMutate(existing, input.userId, input.canManageShared)) {
-      throw new Error("Forbidden");
+      throw new ForbiddenError("Forbidden");
     }
 
     if (input.isDefault === true) {
@@ -115,10 +116,10 @@ export class LogViewService {
   ): Promise<SavedLogView> {
     const existing = await prisma.logView.findUnique({ where: { id } });
     if (!existing || existing.teamId !== input.teamId) {
-      throw new Error("Saved view not found");
+      throw new NotFoundError("Saved view not found");
     }
     if (!this.canRead(existing, input.userId)) {
-      throw new Error("Forbidden");
+      throw new ForbiddenError("Forbidden");
     }
     const duplicate = await prisma.logView.create({
       data: {
@@ -139,10 +140,10 @@ export class LogViewService {
   ): Promise<void> {
     const existing = await prisma.logView.findUnique({ where: { id } });
     if (!existing || existing.teamId !== input.teamId) {
-      throw new Error("Saved view not found");
+      throw new NotFoundError("Saved view not found");
     }
     if (!this.canMutate(existing, input.userId, input.canManageShared)) {
-      throw new Error("Forbidden");
+      throw new ForbiddenError("Forbidden");
     }
     await prisma.logView.delete({ where: { id } });
   }

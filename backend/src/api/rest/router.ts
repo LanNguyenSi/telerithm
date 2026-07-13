@@ -12,6 +12,7 @@ import { IssueService } from "../../services/issue/issue-service.js";
 import { SubscriptionService } from "../../services/subscription/subscription-service.js";
 import { assertSafeUrl } from "../../services/notification/url-guard.js";
 import { TeamService } from "../../services/team/team-service.js";
+import { ForbiddenError, NotFoundError } from "../../errors.js";
 import {
   addUserToTeamSchema,
   createInviteSchema,
@@ -615,13 +616,18 @@ apiRouter.put(
     }
     const role = await requireTeamRole(userId, teamId, res);
     if (role === null) return;
-    const view = await logViewService.update(String(req.params.id), {
-      teamId,
-      userId,
-      canManageShared: role === "OWNER" || role === "ADMIN",
-      ...parsed.data,
-    });
-    res.json({ view });
+    try {
+      const view = await logViewService.update(String(req.params.id), {
+        teamId,
+        userId,
+        canManageShared: role === "OWNER" || role === "ADMIN",
+        ...parsed.data,
+      });
+      res.json({ view });
+    } catch (error) {
+      if (handleServiceError(error, res)) return;
+      throw error;
+    }
   }),
 );
 
@@ -638,13 +644,18 @@ apiRouter.post(
     const name = typeof req.body?.name === "string" ? req.body.name : undefined;
     const role = await requireTeamRole(userId, teamId, res);
     if (role === null) return;
-    const view = await logViewService.duplicate(String(req.params.id), {
-      teamId,
-      userId,
-      canManageShared: role === "OWNER" || role === "ADMIN",
-      name,
-    });
-    res.status(201).json({ view });
+    try {
+      const view = await logViewService.duplicate(String(req.params.id), {
+        teamId,
+        userId,
+        canManageShared: role === "OWNER" || role === "ADMIN",
+        name,
+      });
+      res.status(201).json({ view });
+    } catch (error) {
+      if (handleServiceError(error, res)) return;
+      throw error;
+    }
   }),
 );
 
@@ -660,12 +671,17 @@ apiRouter.delete(
     }
     const role = await requireTeamRole(userId, teamId, res);
     if (role === null) return;
-    await logViewService.remove(String(req.params.id), {
-      teamId,
-      userId,
-      canManageShared: role === "OWNER" || role === "ADMIN",
-    });
-    res.status(204).end();
+    try {
+      await logViewService.remove(String(req.params.id), {
+        teamId,
+        userId,
+        canManageShared: role === "OWNER" || role === "ADMIN",
+      });
+      res.status(204).end();
+    } catch (error) {
+      if (handleServiceError(error, res)) return;
+      throw error;
+    }
   }),
 );
 
@@ -1021,6 +1037,22 @@ function handlePrismaError(
   return false;
 }
 
+// Maps typed service-layer errors (NotFoundError/ForbiddenError) to an HTTP
+// response, mirroring handlePrismaError's return-true-if-handled contract so
+// callers can `return` on a hit or rethrow (and fall through to the central
+// error middleware) on a miss.
+function handleServiceError(error: unknown, res: Response): boolean {
+  if (error instanceof NotFoundError) {
+    res.status(404).json({ error: error.message });
+    return true;
+  }
+  if (error instanceof ForbiddenError) {
+    res.status(403).json({ error: error.message });
+    return true;
+  }
+  return false;
+}
+
 // Resolve an incident's team (via its rule) and require the caller's
 // membership on it, otherwise any authenticated user could mutate or read any
 // incident by enumerating its id (cross-tenant IDOR). Returns the teamId, or
@@ -1174,8 +1206,13 @@ apiRouter.put(
       res.status(400).json({ error: webhookError });
       return;
     }
-    const subscription = await subscriptionService.update(String(req.params.id), userId, parsed.data);
-    res.json({ subscription });
+    try {
+      const subscription = await subscriptionService.update(String(req.params.id), userId, parsed.data);
+      res.json({ subscription });
+    } catch (error) {
+      if (handlePrismaError(error, res, { notFound: "Subscription not found" })) return;
+      throw error;
+    }
   }),
 );
 
@@ -1184,8 +1221,13 @@ apiRouter.delete(
   asyncHandler(async (req, res) => {
     const userId = await requireAuth(req, res);
     if (userId === null) return;
-    await subscriptionService.delete(String(req.params.id), userId);
-    res.status(204).end();
+    try {
+      await subscriptionService.delete(String(req.params.id), userId);
+      res.status(204).end();
+    } catch (error) {
+      if (handlePrismaError(error, res, { notFound: "Subscription not found" })) return;
+      throw error;
+    }
   }),
 );
 

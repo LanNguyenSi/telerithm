@@ -113,6 +113,12 @@ vi.mock("../../src/repositories/prisma.js", () => {
       update: vi.fn(),
       deleteMany: vi.fn(),
     },
+    alertSubscription: {
+      findMany: vi.fn().mockResolvedValue([]),
+      create: vi.fn(),
+      update: vi.fn(),
+      delete: vi.fn(),
+    },
   };
   return {
     prisma: mockPrisma,
@@ -233,6 +239,12 @@ const mockedPrisma = prisma as typeof prisma & {
     update: ReturnType<typeof vi.fn>;
     deleteMany: ReturnType<typeof vi.fn>;
   };
+  alertSubscription: {
+    findMany: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
+  };
 };
 const mockedClickhouse = clickhouse as typeof clickhouse & {
   query: ReturnType<typeof vi.fn>;
@@ -347,9 +359,7 @@ beforeEach(() => {
   mockedPrisma.alertIncident.findUnique.mockResolvedValue(null);
   mockedPrisma.alertIncident.findFirst.mockResolvedValue(null);
   mockedPrisma.incidentEvent.findMany.mockResolvedValue([]);
-  mockedPrisma.$transaction.mockImplementation(async (ops: Array<Promise<unknown>>) =>
-    Promise.all(ops),
-  );
+  mockedPrisma.$transaction.mockImplementation(async (ops: Array<Promise<unknown>>) => Promise.all(ops));
   mockedPrisma.logView.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.alertRule.findMany.mockResolvedValue([]);
   mockedPrisma.alertRule.findUnique.mockResolvedValue(null);
@@ -562,6 +572,36 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(409);
       expect(res.body.error).toBe("Maintenance window already exists");
+    });
+
+    it("maps P2025 on an update to 404 (PUT /subscriptions/:id)", async () => {
+      // Regression: this route had no try/catch at all, so a P2025 from the
+      // service's `where: { id, userId }` update fell through to the global
+      // error handler as a 500 instead of a 404.
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const notFound = Object.assign(new Error("Record to update not found."), { code: "P2025" });
+      mockedPrisma.alertSubscription.update.mockRejectedValueOnce(notFound);
+
+      const res = await app
+        .put("/api/v1/subscriptions/missing-sub")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ enabled: false });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Subscription not found");
+    });
+
+    it("maps P2025 on a delete to 404 (DELETE /subscriptions/:id)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const notFound = Object.assign(new Error("Record to delete does not exist."), { code: "P2025" });
+      mockedPrisma.alertSubscription.delete.mockRejectedValueOnce(notFound);
+
+      const res = await app
+        .delete("/api/v1/subscriptions/missing-sub")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Subscription not found");
     });
   });
 
@@ -1128,14 +1168,10 @@ describe("API Routes", () => {
       const requestId = await startFacetsJobForTeamT1();
 
       // Outsider: authenticated, but not a member of t1.
-      mockedPrisma.session.findUnique.mockResolvedValueOnce(
-        makeSession({ userId: "outsider-1" }),
-      );
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "outsider-1" }));
       mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
 
-      const res = await app
-        .get(`/api/v1/query/jobs/${requestId}`)
-        .set("Authorization", "Bearer sess_admin");
+      const res = await app.get(`/api/v1/query/jobs/${requestId}`).set("Authorization", "Bearer sess_admin");
 
       expect(res.status).toBe(403);
       expect(res.body.data).toBeUndefined();
@@ -1153,9 +1189,7 @@ describe("API Routes", () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(MEMBERSHIP);
 
-      const res = await app
-        .get(`/api/v1/query/jobs/${requestId}`)
-        .set("Authorization", "Bearer sess_admin");
+      const res = await app.get(`/api/v1/query/jobs/${requestId}`).set("Authorization", "Bearer sess_admin");
 
       expect(res.status).toBe(200);
       expect(res.body.requestId).toBe(requestId);
@@ -1304,6 +1338,79 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(204);
       expect(mockedPrisma.logView.delete).toHaveBeenCalledWith({ where: { id: "view-4" } });
+    });
+
+    it("maps a missing saved view to 404 (PUT /logs/views/:id)", async () => {
+      // Regression: log-view-service threw a plain Error("Saved view not
+      // found") that the router never caught, so this fell through to a 500.
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.findUnique.mockResolvedValueOnce(null);
+
+      const res = await app
+        .put("/api/v1/logs/views/missing-view?teamId=t1")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ name: "New name" });
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Saved view not found");
+    });
+
+    it("maps a duplicate of another user's private view to 403 (POST /logs/views/:id/duplicate)", async () => {
+      // Regression: log-view-service threw a plain Error("Forbidden") that
+      // the router never caught, so this fell through to a 500.
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-2" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-2",
+        teamId: "t1",
+        userId: "user-2",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.findUnique.mockResolvedValueOnce({
+        id: "view-5",
+        teamId: "t1",
+        ownerUserId: "user-1",
+        name: "Private view",
+        isShared: false,
+        isDefault: false,
+        definition: { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 },
+        createdAt: new Date("2026-03-23T00:00:00.000Z"),
+        updatedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+
+      const res = await app
+        .post("/api/v1/logs/views/view-5/duplicate")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1" });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error).toBe("Forbidden");
+    });
+
+    it("maps a missing saved view to 404 (DELETE /logs/views/:id)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.findUnique.mockResolvedValueOnce(null);
+
+      const res = await app
+        .delete("/api/v1/logs/views/missing-view?teamId=t1")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Saved view not found");
     });
   });
 
