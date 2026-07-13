@@ -44,23 +44,30 @@ function ipToBytes(ip: string): number[] | null {
 }
 
 /**
- * Additional NAT64 /96 prefixes (besides the RFC 6052 well-known
- * 64:ff9b::/96, which isBlockedAddress always decodes) whose embedded IPv4
- * address should also be decoded and range-checked. Real NAT64 deployments
- * often run on a Network-Specific Prefix from their own allocation, or on
- * the RFC 8215 local-use prefix 64:ff9b:1::/48; both are deployment-specific,
- * so neither is hardcoded, opt in per deployment via this env var instead.
+ * Additional NAT64 prefixes (besides the RFC 6052 well-known 64:ff9b::/96,
+ * which isBlockedAddress always decodes) whose embedded IPv4 address should
+ * also be decoded and range-checked. Real NAT64 deployments often run on a
+ * Network-Specific Prefix from their own allocation (RFC 6052 sec 2.1)
+ * instead of the well-known prefix; that prefix is deployment-specific, so
+ * it is not hardcoded, opt in per deployment via this env var instead.
  *
- * WEBHOOK_NAT64_ADDITIONAL_PREFIXES: comma-separated list of /96 prefixes,
- * each written as the fixed 96-bit head in RFC 5952 canonical (lowercase,
- * "::"-compressed) form, e.g. "64:ff9b:1::,2001:db8:64::". Entries that do
- * not end in "::" are dropped (fail closed against a malformed entry
- * silently over-matching via a plain string prefix, e.g. "64:ff9b:1"
- * matching "64:ff9b:123::..." too). Empty by default: additional prefixes
- * are NOT decoded unless explicitly configured. Only /96-length prefixes are
- * supported here: shorter RFC 6052 prefix lengths (/32, /40, /48, /56,
- * /64) interleave a reserved "u" octet with the v4 bits and need a different
- * decoder; deployments using those lengths are not covered by this guard.
+ * WEBHOOK_NAT64_ADDITIONAL_PREFIXES: comma-separated list of prefixes, each
+ * written as the fixed 96-bit head in RFC 5952 canonical (lowercase,
+ * "::"-compressed) form, e.g. "64:ff9b:1::,2001:db8:64::". Only /96-aligned
+ * prefixes are meaningful here: this decoder treats the embedded v4 as the
+ * literal last 32 bits of the address, so any configured prefix must be
+ * given in its effective /96-aligned form, not its nominal RFC 6052 prefix
+ * length. For example, the RFC 8215 local-use prefix 64:ff9b:1::/48 is used
+ * with /96-style embedding in practice, so it is configured here as
+ * "64:ff9b:1::" (the RFC 5952 canonical form of the /96-aligned prefix
+ * 64:ff9b:1:0:0:0::/96). RFC 6052 prefix lengths that do NOT reduce to a
+ * /96-aligned embedding (/32, /40, /48, /56, /64 used with their native
+ * "u"-octet interleaving instead of a /96-style layout) are out of scope
+ * and not covered by this guard; deployments using those need a different
+ * decoder. Entries that do not end in "::" are dropped (fail closed against
+ * a malformed entry silently over-matching via a plain string prefix, e.g.
+ * "64:ff9b:1" matching "64:ff9b:123::..." too). Empty by default: additional
+ * prefixes are NOT decoded unless explicitly configured.
  */
 function envNat64Prefixes(): string[] {
   const raw = process.env.WEBHOOK_NAT64_ADDITIONAL_PREFIXES;
@@ -82,7 +89,9 @@ function envNat64Prefixes(): string[] {
  *     see envNat64Prefixes),
  *   - 6to4 (2002::/16, RFC 3056),
  *   - Teredo (2001:0::/32, RFC 4380: the client v4 is bit-inverted on the
- *     wire and is un-inverted before the range check),
+ *     wire and is un-inverted before the range check; both the explicit
+ *     8-group form and the flags/port-compressed 6-group form are decoded,
+ *     see the comments above the two Teredo regexes below),
  *   - the deprecated IPv4-compatible form (::a.b.c.d).
  * For the NAT64 and IPv4-compatible forms, an embedded v4 whose first two
  * octets are both zero collapses under RFC 5952 canonical compression to a
@@ -151,10 +160,12 @@ function isBlockedAddress(ip: string): boolean {
     const lo = parseInt(nat64Single[1], 16);
     return isBlockedAddress(`0.0.${lo >> 8}.${lo & 0xff}`);
   }
-  // Operator-specific NAT64 /96 prefixes (Network-Specific Prefix, RFC 6052
-  // sec 2.1, or the RFC 8215 local-use prefix 64:ff9b:1::/48): not hardcoded
-  // since they are deployment-specific, see envNat64Prefixes. No-op (empty
-  // loop) unless WEBHOOK_NAT64_ADDITIONAL_PREFIXES is set.
+  // Operator-specific NAT64 prefixes, given in their /96-aligned canonical
+  // form (Network-Specific Prefix, RFC 6052 sec 2.1, or the RFC 8215
+  // local-use prefix 64:ff9b:1::/48 configured as its /96-aligned
+  // "64:ff9b:1::"): not hardcoded since the prefix is deployment-specific,
+  // see envNat64Prefixes. No-op (empty loop) unless
+  // WEBHOOK_NAT64_ADDITIONAL_PREFIXES is set.
   for (const prefix of envNat64Prefixes()) {
     if (!v6.startsWith(prefix)) continue;
     const suffix = v6.slice(prefix.length);
@@ -184,15 +195,12 @@ function isBlockedAddress(ip: string): boolean {
     return isBlockedAddress(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
   }
   // Teredo (2001:0::/32, RFC 4380): groups 3-4 are the Teredo server's IPv4
-  // address, group 5 is flags, group 6 is the obfuscated UDP port, and
-  // groups 7-8 are the CLIENT's IPv4 address, bit-inverted (XOR 0xffffffff,
-  // i.e. one's complement) on the wire, un-invert it before the range
-  // check. The lone "0" in "2001:0:" is never compressed by itself (RFC 5952
-  // forbids "::" for a single zero group), so the explicit 8-group form
-  // below covers every real-world Teredo address. The one theoretical
-  // exception, flags and obfuscated port both exactly 0x0000 (an adjacent
-  // zero-pair that WOULD compress), is accepted as negligible: it requires
-  // flags 0 and true client port 65535, not seen in real deployments.
+  // address, group 5 is flags, group 6 is the obfuscated UDP port, and the
+  // last 32 bits are the CLIENT's IPv4 address, bit-inverted (XOR
+  // 0xffffffff, i.e. one's complement) on the wire; un-invert it before the
+  // range check. The lone "0" in "2001:0:" is never compressed by itself
+  // (RFC 5952 forbids "::" for a single zero group), so the explicit
+  // 8-group form below covers most real-world Teredo addresses.
   const teredo = v6.match(
     /^2001:0:[0-9a-f]{1,4}:[0-9a-f]{1,4}:[0-9a-f]{1,4}:[0-9a-f]{1,4}:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/,
   );
@@ -201,6 +209,25 @@ function isBlockedAddress(ip: string): boolean {
     const lo = parseInt(teredo[2], 16) ^ 0xffff;
     return isBlockedAddress(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
   }
+  // Teredo compressed form: flags and the obfuscated port are attacker
+  // controlled (chosen by whoever crafts the AAAA record), so "flags 0 and
+  // port 65535" is not a safe bound to dismiss as unlikely. When both are
+  // exactly 0x0000, that adjacent zero pair (positions 5-6) is a length-2
+  // run, which RFC 5952 canonical compression prefers over the lone
+  // (length-1, never-compressed-alone) zero at position 2, producing
+  // "2001:0:<srv-hi>:<srv-lo>::<client-hi>:<client-lo>" instead of the
+  // explicit 8-group form above. Decode that too.
+  const teredoCompressed = v6.match(/^2001:0:[0-9a-f]{1,4}:[0-9a-f]{1,4}::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (teredoCompressed) {
+    const hi = parseInt(teredoCompressed[1], 16) ^ 0xffff;
+    const lo = parseInt(teredoCompressed[2], 16) ^ 0xffff;
+    return isBlockedAddress(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+  }
+  // Any further Teredo compression variant not covered by either regex above
+  // (e.g. additional zero groups inside the server address triggering a
+  // different compression choice) is not decoded. That residual is
+  // exploitable only if Teredo tunneling is active on the host making the
+  // outbound webhook fetch, which is not this service's deployment posture.
   // IPv4-compatible (::a.b.c.d, deprecated RFC 4291 form, no "ffff" marker):
   // the low 32 bits are the embedded IPv4 address. Accept both the
   // dotted-quad and hex-compressed spellings (::c0a8:101 == ::192.168.1.1).

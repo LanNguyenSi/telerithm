@@ -679,13 +679,21 @@ describe("assertSafeUrl — Teredo (2001:0::/32, RFC 4380, client v4 bit-inverte
   // arbitrary, isBlockedAddress ignores them and only decodes groups 7-8.
   // Groups 7-8 are the client v4 XORed with 0xffffffff (equivalently, each
   // 16-bit half XORed with 0xffff):
-  //   10.0.0.1  -> hi 0x0a00^0xffff=0xf5ff, lo 0x0001^0xffff=0xfffe
-  //   127.0.0.1 -> hi 0x7f00^0xffff=0x80ff, lo 0x0001^0xffff=0xfffe
-  //   8.8.8.8   -> hi 0x0808^0xffff=0xf7f7, lo 0x0808^0xffff=0xf7f7
+  //   10.0.0.1    -> hi 0x0a00^0xffff=0xf5ff, lo 0x0001^0xffff=0xfffe
+  //   172.16.0.1  -> hi 0xac10^0xffff=0x53ef, lo 0x0001^0xffff=0xfffe
+  //   127.0.0.1   -> hi 0x7f00^0xffff=0x80ff, lo 0x0001^0xffff=0xfffe
+  //   8.8.8.8     -> hi 0x0808^0xffff=0xf7f7, lo 0x0808^0xffff=0xf7f7
 
-  it("blocks Teredo embedding a private client address (10.0.0.1)", async () => {
-    mockLookup.mockResolvedValueOnce([{ address: "2001:0:c000:237:0:1:f5ff:fffe", family: 6 }] as never);
+  it("blocks Teredo embedding a private client address (172.16.0.1); mutation-tight because the un-inverted wire bytes (83.239.255.254) are themselves public, so a bug that drops the XOR flips this test", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2001:0:c000:237:0:1:53ef:fffe", family: 6 }] as never);
     await expect(assertSafeUrl("https://teredo-private.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks Teredo embedding a private client address (10.0.0.1, additional coverage; not mutation-tight alone since the un-inverted wire bytes 245.255.255.254 are already reserved-blocked)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2001:0:c000:237:0:1:f5ff:fffe", family: 6 }] as never);
+    await expect(assertSafeUrl("https://teredo-private-10.example.com/hook")).rejects.toThrow(
       "blocked address range",
     );
   });
@@ -700,5 +708,64 @@ describe("assertSafeUrl — Teredo (2001:0::/32, RFC 4380, client v4 bit-inverte
   it("does NOT over-block Teredo embedding a public client address (8.8.8.8)", async () => {
     mockLookup.mockResolvedValueOnce([{ address: "2001:0:c000:237:0:1:f7f7:f7f7", family: 6 }] as never);
     await expect(assertSafeUrl("https://teredo-public.example.com/hook")).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * Teredo compressed form: when flags (group 5) and the obfuscated port
+ * (group 6) are both exactly 0x0000, that adjacent zero pair is a length-2
+ * run that RFC 5952 canonical compression prefers over the lone
+ * (never-compressed-alone) zero at group 2, collapsing
+ * "2001:0:<srv-hi>:<srv-lo>:0:0:<chi>:<clo>" to
+ * "2001:0:<srv-hi>:<srv-lo>::<chi>:<clo>". Both fields are attacker-chosen
+ * (set via the crafted AAAA record), so this is reachable, not a
+ * theoretical corner case.
+ */
+describe("assertSafeUrl — Teredo compressed form (flags=0, obfuscated port=0)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+  afterEach(() => {
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+
+  it("blocks the compressed form embedding a private client address (172.16.0.1); mutation-tight for the same reason as the explicit-form case above", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2001:0:c000:237::53ef:fffe", family: 6 }] as never);
+    await expect(assertSafeUrl("https://teredo-compressed-private.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("does NOT over-block the compressed form embedding a public client address (8.8.8.8)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2001:0:c000:237::f7f7:f7f7", family: 6 }] as never);
+    await expect(assertSafeUrl("https://teredo-compressed-public.example.com/hook")).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * Anchor-lock regression tests: the well-known NAT64 prefix regexes are all
+ * anchored with ^ to require the address to literally START WITH
+ * "64:ff9b::". Both near-miss strings below merely contain "64:ff9b::" as a
+ * substring (not at position 0), so an un-anchored regex would incorrectly
+ * decode and block them. They must remain accepted.
+ */
+describe("assertSafeUrl — NAT64 well-known-prefix anchor lock (near-miss addresses)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+  afterEach(() => {
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+
+  it("accepts 2064:ff9b::1 (first group is 2064, not 64; ^-anchor must not over-match)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2064:ff9b::1", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nat64-nearmiss-1.example.com/hook")).resolves.toBeUndefined();
+  });
+
+  it("accepts 164:ff9b::1 (contains '64:ff9b::' as a substring starting at index 1, not index 0; ^-anchor must not over-match)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "164:ff9b::1", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nat64-nearmiss-2.example.com/hook")).resolves.toBeUndefined();
   });
 });
