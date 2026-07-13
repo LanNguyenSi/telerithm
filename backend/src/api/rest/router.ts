@@ -999,14 +999,18 @@ async function requireTeamRole(
 // its owning team via `loadTeamId`, and requires the caller's membership on
 // that team before the route is allowed to touch it. Otherwise any
 // authenticated user could mutate another team's resource by enumerating its
-// id (cross-tenant IDOR) — this is the exact bug class fixed across four
-// routes on 2026-07-12 (invites, incident actions/timeline, alert-rule
-// mute/unmute, maintenance-window delete), where three of the fixes had each
-// hand-rolled a near-identical "load by id, check team" helper. Configuring
-// a new by-id resource is one call: point `loadTeamId` at a lookup that
-// resolves the resource's teamId (or null when the resource does not
-// exist). Returns the teamId on success, or null once a 404/403 has already
-// been sent.
+// id (cross-tenant IDOR) — this is the exact bug class fixed across four PRs
+// on 2026-07-12: #97 (invites), #98 (incident actions/timeline), #100
+// (alert-rule mute/unmute), #101 (maintenance-window delete). Three of the
+// four (#98, #100, #101) had each hand-rolled a near-identical "load by id,
+// check team" helper; #97 (invites) used inline per-route checks instead. A
+// related fix landed the same day for a read path with no by-id write route
+// (#102, async query-job polling; tracked separately as agent-tasks
+// 9d86d755, a listed dependency of this guard) — out of scope here.
+// Configuring a new by-id resource is one call: point `loadTeamId` at a
+// lookup that resolves the resource's teamId (or null when the resource does
+// not exist). Returns the teamId on success, or null once a 404/403 has
+// already been sent.
 //
 // This factory alone does not stop a future route from skipping the check
 // entirely — nothing forces a handler to call it. The structural enforcement

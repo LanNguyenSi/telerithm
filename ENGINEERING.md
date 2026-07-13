@@ -36,3 +36,8 @@ erzwungen:
   ist die Prüfung, nicht ein bestimmtes Implementierungsdetail. Mutation-
   verifiziert: ein temporärer Revert eines Team-Checks lässt den Test
   fehlschlagen.
+- Der Guard deckt nur Routen ab, die die Ressourcen-id als Pfadparameter
+  (`:id`) tragen. State-changing Routen, die eine Ressourcen-id stattdessen
+  aus Body oder Query ziehen, fallen nicht unter diesen automatisierten
+  Schutz und müssen weiterhin von Hand team-gescoped und im Review geprüft
+  werden.
