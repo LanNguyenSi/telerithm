@@ -224,6 +224,13 @@ describe("assertSafeUrl — IPv6 literal URLs (blocked via IP-range check, no DN
     );
     expect(mockLookup).not.toHaveBeenCalled();
   });
+
+  it("accepts https://[public-v6]/ (public IPv6 literal) via the range check without DNS", async () => {
+    await expect(
+      assertSafeUrl("https://[2606:2800:220:1:248:1893:25c8:1946]/hook"),
+    ).resolves.toBeUndefined();
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -272,6 +279,83 @@ describe("assertSafeUrl — hex IPv4-mapped IPv6 (AAAA records)", () => {
     await expect(assertSafeUrl("https://unresolvable.example.com/hook")).rejects.toThrow(
       "could not be resolved",
     );
+  });
+});
+
+/**
+ * Non-::ffff IPv4-in-IPv6 embeddings: NAT64 (64:ff9b::/96), 6to4 (2002::/16),
+ * and the deprecated IPv4-compatible form (::a.b.c.d). isBlockedAddress must
+ * decode the embedded v4 address out of each of these and re-check it,
+ * otherwise a private v4 target can be smuggled past the guard as a AAAA
+ * record in one of these forms (task 6a363c72; found in review of task
+ * 2830e452 / PR #99, which only closed the ::ffff-hex + bracketed-literal
+ * gaps).
+ */
+describe("assertSafeUrl — non-::ffff IPv4-in-IPv6 embeddings (AAAA records)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+
+  afterEach(() => {
+    delete process.env.WEBHOOK_HOST_ALLOWLIST;
+  });
+
+  it("blocks NAT64 64:ff9b::c0a8:101 (embedded 192.168.1.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b::c0a8:101", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nat64.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks NAT64 64:ff9b::10.0.0.1 (dotted-quad embedded form, 10.0.0.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b::10.0.0.1", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nat64-dotted.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("does NOT over-block NAT64 64:ff9b::808:808 (embedded public 8.8.8.8)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b::808:808", family: 6 }] as never);
+    await expect(assertSafeUrl("https://nat64-public.example.com/hook")).resolves.toBeUndefined();
+  });
+
+  it("blocks 6to4 2002:c0a8:101:: (embedded 192.168.1.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2002:c0a8:101::", family: 6 }] as never);
+    await expect(assertSafeUrl("https://sixtofour.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks 6to4 2002:7f00:1:: (embedded loopback 127.0.0.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2002:7f00:1::", family: 6 }] as never);
+    await expect(assertSafeUrl("https://sixtofour-loopback.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("does NOT over-block 6to4 2002:808:808:: (embedded public 8.8.8.8)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2002:808:808::", family: 6 }] as never);
+    await expect(assertSafeUrl("https://sixtofour-public.example.com/hook")).resolves.toBeUndefined();
+  });
+
+  it("blocks IPv4-compatible ::c0a8:101 (hex form, embedded 192.168.1.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "::c0a8:101", family: 6 }] as never);
+    await expect(assertSafeUrl("https://v4compat-hex.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("blocks IPv4-compatible ::10.0.0.1 (dotted form, embedded 10.0.0.1)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "::10.0.0.1", family: 6 }] as never);
+    await expect(assertSafeUrl("https://v4compat-dotted.example.com/hook")).rejects.toThrow(
+      "blocked address range",
+    );
+  });
+
+  it("does NOT over-block IPv4-compatible ::808:808 (embedded public 8.8.8.8)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "::808:808", family: 6 }] as never);
+    await expect(assertSafeUrl("https://v4compat-public.example.com/hook")).resolves.toBeUndefined();
   });
 });
 
