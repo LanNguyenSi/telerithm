@@ -758,21 +758,15 @@ apiRouter.get(
 
 // Resolve an alert rule's team and require the caller's membership on it,
 // otherwise any authenticated user could mute another team's rule by
-// enumerating its id and silence their alerting (cross-tenant IDOR). Returns
-// the teamId, or null when a 404/403 response has already been sent. Mirrors
-// requireIncidentTeam.
-async function requireRuleTeam(ruleId: string, userId: string, res: Response): Promise<string | null> {
-  const rule = await prisma.alertRule.findUnique({
-    where: { id: ruleId },
-    select: { teamId: true },
-  });
-  if (!rule) {
-    res.status(404).json({ error: "Alert rule not found" });
-    return null;
-  }
-  if ((await requireTeamRole(userId, rule.teamId, res)) === null) return null;
-  return rule.teamId;
-}
+// enumerating its id and silence their alerting (cross-tenant IDOR). Built on
+// requireResourceTeam (see its doc comment below for the shared pattern).
+const requireRuleTeam = requireResourceTeam(
+  (ruleId) =>
+    prisma.alertRule
+      .findUnique({ where: { id: ruleId }, select: { teamId: true } })
+      .then((rule) => rule?.teamId ?? null),
+  "Alert rule not found",
+);
 
 apiRouter.post(
   "/alerts/rules/:id/mute",
@@ -873,24 +867,14 @@ apiRouter.post(
 // Resolve a maintenance window's team and require the caller's membership on
 // it, otherwise any authenticated user could delete another team's window by
 // enumerating its id, re-arming that team's alerting mid-maintenance
-// (cross-tenant IDOR). Returns the teamId, or null when a 404/403 response has
-// already been sent. Mirrors requireRuleTeam / requireIncidentTeam.
-async function requireMaintenanceWindowTeam(
-  windowId: string,
-  userId: string,
-  res: Response,
-): Promise<string | null> {
-  const window = await prisma.maintenanceWindow.findUnique({
-    where: { id: windowId },
-    select: { teamId: true },
-  });
-  if (!window) {
-    res.status(404).json({ error: "Maintenance window not found" });
-    return null;
-  }
-  if ((await requireTeamRole(userId, window.teamId, res)) === null) return null;
-  return window.teamId;
-}
+// (cross-tenant IDOR). Built on requireResourceTeam.
+const requireMaintenanceWindowTeam = requireResourceTeam(
+  (windowId) =>
+    prisma.maintenanceWindow
+      .findUnique({ where: { id: windowId }, select: { teamId: true } })
+      .then((window) => window?.teamId ?? null),
+  "Maintenance window not found",
+);
 
 apiRouter.delete(
   "/maintenance-windows/:id",
@@ -1011,6 +995,41 @@ async function requireTeamRole(
   }
 }
 
+// Structural guard for by-id write routes: loads a resource by id, derives
+// its owning team via `loadTeamId`, and requires the caller's membership on
+// that team before the route is allowed to touch it. Otherwise any
+// authenticated user could mutate another team's resource by enumerating its
+// id (cross-tenant IDOR) — this is the exact bug class fixed across four
+// routes on 2026-07-12 (invites, incident actions/timeline, alert-rule
+// mute/unmute, maintenance-window delete), where three of the fixes had each
+// hand-rolled a near-identical "load by id, check team" helper. Configuring
+// a new by-id resource is one call: point `loadTeamId` at a lookup that
+// resolves the resource's teamId (or null when the resource does not
+// exist). Returns the teamId on success, or null once a 404/403 has already
+// been sent.
+//
+// This factory alone does not stop a future route from skipping the check
+// entirely — nothing forces a handler to call it. The structural enforcement
+// (every state-changing by-id route must call one of these, or be in a
+// documented, justified allowlist) lives in
+// tests/unit/router-team-scoping.test.ts, not in this file; that test reads
+// this file's route table via the TypeScript AST, so it fails on any new
+// by-id write route that isn't classified there.
+function requireResourceTeam(
+  loadTeamId: (id: string) => Promise<string | null>,
+  notFoundMessage: string,
+): (id: string, userId: string, res: Response) => Promise<string | null> {
+  return async (id, userId, res) => {
+    const teamId = await loadTeamId(id);
+    if (teamId === null) {
+      res.status(404).json({ error: notFoundMessage });
+      return null;
+    }
+    if ((await requireTeamRole(userId, teamId, res)) === null) return null;
+    return teamId;
+  };
+}
+
 // Maps a Prisma known-request error to an HTTP response:
 //   P2025 (record not found)  -> 404
 //   P2002 (unique constraint) -> 409
@@ -1055,25 +1074,15 @@ function handleServiceError(error: unknown, res: Response): boolean {
 
 // Resolve an incident's team (via its rule) and require the caller's
 // membership on it, otherwise any authenticated user could mutate or read any
-// incident by enumerating its id (cross-tenant IDOR). Returns the teamId, or
-// null when a 404/403 response has already been sent.
-async function requireIncidentTeam(
-  incidentId: string,
-  userId: string,
-  res: Response,
-): Promise<string | null> {
-  const incident = await prisma.alertIncident.findUnique({
-    where: { id: incidentId },
-    select: { rule: { select: { teamId: true } } },
-  });
-  if (!incident) {
-    res.status(404).json({ error: "Incident not found" });
-    return null;
-  }
-  const teamId = incident.rule.teamId;
-  if ((await requireTeamRole(userId, teamId, res)) === null) return null;
-  return teamId;
-}
+// incident by enumerating its id (cross-tenant IDOR). Built on
+// requireResourceTeam.
+const requireIncidentTeam = requireResourceTeam(
+  (incidentId) =>
+    prisma.alertIncident
+      .findUnique({ where: { id: incidentId }, select: { rule: { select: { teamId: true } } } })
+      .then((incident) => incident?.rule.teamId ?? null),
+  "Incident not found",
+);
 
 apiRouter.post(
   "/alerts/incidents/:id/acknowledge",
@@ -1307,6 +1316,15 @@ apiRouter.get(
   }),
 );
 
+// Resolve an issue's team and require the caller's membership on it,
+// otherwise any authenticated user could change status of or reassign any
+// issue by enumerating its id (cross-tenant IDOR). Built on
+// requireResourceTeam.
+const requireIssueTeam = requireResourceTeam(
+  (issueId) => issueService.getById(issueId).then((issue) => issue?.teamId ?? null),
+  "Issue not found",
+);
+
 apiRouter.put(
   "/issues/:id",
   asyncHandler(async (req, res) => {
@@ -1317,15 +1335,8 @@ apiRouter.put(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
-    // Load the target issue first and authorize against its team before any
-    // mutation, otherwise any authenticated user could change status of or
-    // reassign any issue by enumerating its id (cross-tenant IDOR).
-    const existing = await issueService.getById(String(req.params.id));
-    if (!existing) {
-      res.status(404).json({ error: "Issue not found" });
-      return;
-    }
-    if ((await requireTeamRole(userId, existing.teamId, res)) === null) return;
+    const teamId = await requireIssueTeam(String(req.params.id), userId, res);
+    if (teamId === null) return;
     let issue;
     if (parsed.data.status) {
       issue = await issueService.updateStatus(String(req.params.id), parsed.data.status);
@@ -1335,7 +1346,7 @@ apiRouter.put(
       // or non-member user ids.
       if (parsed.data.assigneeId !== null) {
         const assigneeMembership = await prisma.teamMember.findUnique({
-          where: { teamId_userId: { teamId: existing.teamId, userId: parsed.data.assigneeId } },
+          where: { teamId_userId: { teamId, userId: parsed.data.assigneeId } },
         });
         if (!assigneeMembership) {
           res.status(400).json({ error: "Assignee is not a member of the issue's team" });
