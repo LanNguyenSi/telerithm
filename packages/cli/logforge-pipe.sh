@@ -35,15 +35,21 @@ BUFFER=()
 # was the root cause of a flaky CLI test: a fresh batch could get split into
 # two POSTs before BATCH_SIZE lines had even been read. On the fallback path
 # we therefore compare with strict ">" instead of ">=", which can delay a
-# time-based flush by up to ~1 extra second but never fires it early.
+# time-based flush by up to ~1-2 extra seconds but never fires it early.
 HAVE_SUBSECOND_CLOCK=0
 [ -n "${EPOCHREALTIME:-}" ] && HAVE_SUBSECOND_CLOCK=1
 FLUSH_INTERVAL_US=$(( FLUSH_INTERVAL * 1000000 ))
 
 now_us() {
   if [ -n "${EPOCHREALTIME:-}" ]; then
-    local whole="${EPOCHREALTIME%.*}"
-    local frac="${EPOCHREALTIME#*.}"
+    # $EPOCHREALTIME honors LC_NUMERIC's radix character: on comma-decimal
+    # locales (e.g. LC_NUMERIC=de_DE.UTF-8) it is "<sec>,<usec>", not
+    # "<sec>.<usec>". Normalize the separator to '.' before splitting, or a
+    # literal-dot pattern silently fails to split and the resulting
+    # concatenation is parsed as garbage.
+    local ert="${EPOCHREALTIME/,/.}"
+    local whole="${ert%%[.,]*}"
+    local frac="${ert#*[.,]}"
     printf '%d\n' "$((10#${whole}${frac}))"
   else
     printf '%d\n' "$(( $(date +%s) * 1000000 ))"
