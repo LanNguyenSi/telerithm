@@ -1,4 +1,5 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Server } from "node:http";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import supertest from "supertest";
 
 // Mock external dependencies before importing app
@@ -159,6 +160,7 @@ import { prisma } from "../../src/repositories/prisma.js";
 import { redis } from "../../src/repositories/redis.js";
 
 let app: supertest.Agent;
+let server: Server;
 
 const mockedConfig = config;
 const mockedPrisma = prisma as typeof prisma & {
@@ -287,7 +289,41 @@ function makeClickhouseResult<T>(rows: T[]) {
 
 beforeAll(async () => {
   const { createApp } = await import("../../src/app.js");
-  app = supertest(createApp());
+  // Bind ONE real listening server for the whole suite instead of handing
+  // supertest the bare Express app. supertest(app) with a plain handler
+  // function creates a brand-new http.Server + listen(0) + close() for
+  // *every single request* (node_modules/supertest/lib/test.js: the Test
+  // constructor wraps a function app in http.createServer, serverAddress
+  // then calls `this._server = app.listen(0)` because that fresh server's
+  // address() is still null, and Test#end closes that server again once
+  // the response is read). With ~120+ requests in this file, that's 120+
+  // ephemeral listen/close cycles. Under CPU load (slower event loop, more
+  // time between the old ephemeral server's close and the new one's listen),
+  // this widens the window in which the OS can hand the next listen(0) call
+  // a just-freed port while a stray byte from the previous connection is
+  // still in flight; the next client socket's HTTP parser then chokes on
+  // whatever arrives first ("Parse Error: Expected HTTP/, RTSP/ or ICE/").
+  // Binding a single persistent server up front (mirroring how
+  // src/server.ts starts the app in production) removes the per-request
+  // listen/close churn entirely: supertest sees an already-listening server
+  // (`app.address()` is truthy) and skips its own listen/close cycle, so
+  // every request in the suite reuses the same one bind() for its whole
+  // lifetime instead of racing a fresh one in and out on every call.
+  server = await new Promise<Server>((resolve, reject) => {
+    const s = createApp().listen(0);
+    s.once("listening", () => resolve(s));
+    s.once("error", reject);
+  });
+  app = supertest(server);
+});
+
+afterAll(async () => {
+  // If beforeAll failed before `server` was assigned, the setup error is the
+  // real signal; don't mask it with a secondary TypeError from close().
+  if (!server) return;
+  await new Promise<void>((resolve, reject) => {
+    server.close((err) => (err ? reject(err) : resolve()));
+  });
 });
 
 beforeEach(() => {
