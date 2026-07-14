@@ -292,9 +292,10 @@ beforeAll(async () => {
   // Bind ONE real listening server for the whole suite instead of handing
   // supertest the bare Express app. supertest(app) with a plain handler
   // function creates a brand-new http.Server + listen(0) + close() for
-  // *every single request* (node_modules/supertest/lib/test.js:
-  // Test#serverAddress does `this._server = app.listen(0)` whenever
-  // `typeof app === "function"`, and Test#end closes that server again once
+  // *every single request* (node_modules/supertest/lib/test.js: the Test
+  // constructor wraps a function app in http.createServer, serverAddress
+  // then calls `this._server = app.listen(0)` because that fresh server's
+  // address() is still null, and Test#end closes that server again once
   // the response is read). With ~120+ requests in this file, that's 120+
   // ephemeral listen/close cycles. Under CPU load (slower event loop, more
   // time between the old ephemeral server's close and the new one's listen),
@@ -317,6 +318,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  // If beforeAll failed before `server` was assigned, the setup error is the
+  // real signal; don't mask it with a secondary TypeError from close().
+  if (!server) return;
   await new Promise<void>((resolve, reject) => {
     server.close((err) => (err ? reject(err) : resolve()));
   });
