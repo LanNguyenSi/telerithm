@@ -144,6 +144,57 @@ teardown() {
   [ "$call_count" -le 4 ]
 
   # No lines lost or duplicated across the periodic flushes.
-  total_lines="$(grep -o '"line [0-9]"' "$CAPTURE_FILE" | wc -l | tr -d ' ')"
+  total_lines="$(grep -o '"line [0-9][0-9]*"' "$CAPTURE_FILE" | wc -l | tr -d ' ')"
   [ "$total_lines" -eq 6 ]
+}
+
+@test "handles an unterminated final line without spinning (deterministic EOF trigger)" {
+  # Deterministic regression test for agent-tasks 73da842f. The trickle
+  # test above reproduces the busy-loop only when the periodic buffer
+  # happens to be non-empty at the exact moment the pipe closes (racy: the
+  # pre-fix script only spins if `flush` runs with a non-empty BUFFER right
+  # as EOF hits). An EOF where the final line has no trailing newline is
+  # not racy at all: `read` itself immediately assigns that pending partial
+  # content to `line` the moment it fails, before any flush ever runs, so
+  # the pre-fix script's loop condition goes true unconditionally on the
+  # very first EOF hit, every time. This hits the busy-loop 6/6 on the
+  # pre-fix script (350+ spurious POSTs, verified separately). It also pins
+  # a second bug found while implementing the fix: the unterminated tail
+  # must survive to be flushed exactly once, not get silently dropped by
+  # the fixed script's own retry/backoff bookkeeping.
+  export TELERITHM_SOURCE_ID="src123"
+  export TELERITHM_API_KEY="key123"
+  export TELERITHM_URL="http://fake-host:4000"
+  export BATCH_SIZE=100
+  export FLUSH_INTERVAL=1
+  export PATH="$FAKE_BIN_DIR:$PATH"
+
+  printf 'a\nb\nTAIL' | bash "$SCRIPT" &
+  script_pid=$!
+
+  # Safety watchdog: this test's whole point is that the script must NOT
+  # spin/hang here. Kill it rather than wedging the suite if that regresses;
+  # the assertions below still fail either way.
+  (
+    sleep 8
+    kill -9 "$script_pid" 2>/dev/null
+  ) &
+  watchdog_pid=$!
+
+  wait "$script_pid"
+  status=$?
+
+  kill "$watchdog_pid" 2>/dev/null
+
+  [ "$status" -eq 0 ]
+  [ -s "$CAPTURE_FILE" ]
+
+  call_count="$(grep -c '^CALL$' "$CAPTURE_FILE")"
+  [ "$call_count" -ge 1 ]
+  [ "$call_count" -le 4 ]
+
+  # All three lines, including the unterminated "TAIL", captured exactly once.
+  [ "$(grep -o '"a"' "$CAPTURE_FILE" | wc -l | tr -d ' ')" -eq 1 ]
+  [ "$(grep -o '"b"' "$CAPTURE_FILE" | wc -l | tr -d ' ')" -eq 1 ]
+  [ "$(grep -o '"TAIL"' "$CAPTURE_FILE" | wc -l | tr -d ' ')" -eq 1 ]
 }

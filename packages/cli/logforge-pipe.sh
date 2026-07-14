@@ -98,13 +98,29 @@ trap flush EXIT
 #
 # The previous `while read -t ... || { flush; [ -n "$line" ]; }` structure
 # could not tell a genuine timeout apart from EOF: both make `read` return
-# non-zero, and bash never clears `line` when a read fails, so it kept
-# whatever value it held from the last successful read. At real EOF that
-# left a stale non-empty `line` behind forever, so `[ -n "$line" ]` stayed
-# true, the while-condition kept evaluating true, and the loop body kept
-# re-appending that same stale value to BUFFER and re-flushing on every
-# spin, as fast as the CPU could iterate (no read ever blocked again, since
-# a closed fd returns immediately). That is the busy-loop/flush-storm.
+# non-zero. On a clean EOF (final line WAS newline-terminated) or a genuine
+# mid-stream timeout (input still open, just idle), `read` itself DOES
+# clear `line` to empty on failure - verified directly, not a stale value.
+# The actual trigger was `flush`'s own `for line in "${BUFFER[@]}"` (not
+# declared `local`), which reuses that same global `line`: whenever the
+# `||` branch called `flush` and BUFFER still held un-sent lines at that
+# exact moment, its loop silently overwrote `line` back to the buffer's
+# last element right after `read` had cleared it, so `[ -n "$line" ]`
+# read true again regardless of what `read` actually saw. Two ways that
+# showed up in practice:
+#   - Deterministic: an EOF where the final line has no trailing newline.
+#     `read` assigns that pending partial content to `line` itself, before
+#     `flush` ever runs, so the loop condition is true unconditionally on
+#     the very first EOF hit, every time.
+#   - Racy: a clean EOF or a plain idle timeout, where `line` starts out
+#     correctly empty, but manifests only if BUFFER happens to be
+#     non-empty right when that read fails (timing-dependent on when
+#     earlier lines were last flushed).
+# Either way, once BUFFER stays non-empty, every following pass re-clobbers
+# `line` the same way, so the loop body keeps re-appending that value and
+# re-flushing on every spin, as fast as the CPU can iterate (no read ever
+# blocks again, since a closed fd returns immediately). That is the
+# busy-loop/flush-storm.
 #
 # The fix needs to tell "genuine timeout, more input may still come" apart
 # from "EOF/error, no more input is coming" without ever spinning. `read`'s
