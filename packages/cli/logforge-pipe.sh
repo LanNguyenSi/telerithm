@@ -93,30 +93,150 @@ flush() {
 
 trap flush EXIT
 
-while IFS= read -r -t "$FLUSH_INTERVAL" line || {
-  # Timeout: flush buffered lines
-  flush
-  [ -n "${line:-}" ]
-}; do
+# Main read loop, restructured to avoid a busy-loop/flush-storm under a slow
+# trickle of input that ends near a read timeout (agent-tasks 73da842f).
+#
+# The previous `while read -t ... || { flush; [ -n "$line" ]; }` structure
+# could not tell a genuine timeout apart from EOF: both make `read` return
+# non-zero. On a clean EOF (final line WAS newline-terminated) or a genuine
+# mid-stream timeout (input still open, just idle), `read` itself DOES
+# clear `line` to empty on failure - verified directly, not a stale value.
+# The actual trigger was `flush`'s own `for line in "${BUFFER[@]}"` (not
+# declared `local`), which reuses that same global `line`: whenever the
+# `||` branch called `flush` and BUFFER still held un-sent lines at that
+# exact moment, its loop silently overwrote `line` back to the buffer's
+# last element right after `read` had cleared it, so `[ -n "$line" ]`
+# read true again regardless of what `read` actually saw. Two ways that
+# showed up in practice:
+#   - Deterministic: an EOF where the final line has no trailing newline.
+#     `read` assigns that pending partial content to `line` itself, before
+#     `flush` ever runs, so the loop condition is true unconditionally on
+#     the very first EOF hit, every time.
+#   - Racy: a clean EOF or a plain idle timeout, where `line` starts out
+#     correctly empty, but manifests only if BUFFER happens to be
+#     non-empty right when that read fails (timing-dependent on when
+#     earlier lines were last flushed).
+# Either way, once BUFFER stays non-empty, every following pass re-clobbers
+# `line` the same way, so the loop body keeps re-appending that value and
+# re-flushing on every spin, as fast as the CPU can iterate (no read ever
+# blocks again, since a closed fd returns immediately). That is the
+# busy-loop/flush-storm.
+#
+# The fix needs to tell "genuine timeout, more input may still come" apart
+# from "EOF/error, no more input is coming" without ever spinning. `read`'s
+# own exit status is NOT a reliable way to do that: bash is documented to
+# return > 128 for an expired -t timeout, but that is not honored
+# consistently across builds. Measured directly on macOS's system bash 3.2,
+# a genuine mid-stream timeout (input still open, just idle) and a true EOF
+# both return plain status 1, indistinguishable by exit code alone.
+#
+# Instead this measures how long the failed `read` call itself actually
+# took. A `read -t N` timeout is defined to cost at least N seconds of real
+# wall time before it can fail that way; EOF (or another read error) on an
+# already-exhausted/closed descriptor fails immediately, every time, since
+# there is nothing left to wait for. That timing difference is a property
+# of what `read -t` does, not of any version's exit-code convention, so it
+# holds on bash 3.2 and bash 5 alike:
+#   - read succeeds:              a line arrived; buffer it.
+#   - failed, took >= FLUSH_INTERVAL: a genuine timeout. Flush (if there is
+#     anything buffered) and loop back to another real, bounded read. This
+#     cannot spin: every pass through this branch is preceded by an actual
+#     wait of roughly FLUSH_INTERVAL seconds.
+#   - failed, took far less than FLUSH_INTERVAL: can only happen once the
+#     input is exhausted, since a genuine timeout always costs real time.
+#     Buffer whatever partial final line `read` may have captured before
+#     failing (see below), then eventually stop reading for good instead
+#     of looping forever.
+#
+# On the whole-second fallback clock (no $EPOCHREALTIME, e.g. macOS's
+# system bash), that per-read duration is floor-rounded like the periodic
+# flush check below, so a near-instant EOF read can occasionally look like
+# it took a full second if it happens to straddle a wall-clock second
+# boundary. INSTANT_FAIL_CAP bounds how many consecutive near-instant
+# failures get the benefit of the doubt before this concludes EOF anyway:
+# each such retry is itself a real `read -t` call bounded by FLUSH_INTERVAL,
+# so the loop can never take more than INSTANT_FAIL_CAP consecutive
+# near-instant passes without either reading a line or hitting a genuine
+# timeout, which rules out an unbounded spin regardless of clock
+# resolution.
+#
+# `line` is reset before every read so a failed read never leaves a stale
+# value behind to be misread as a pending partial line. `read` only
+# populates `line` on a failed call at true EOF with a final,
+# newline-less line; a genuine mid-stream timeout that catches a partial
+# line never does (verified: bash silently drops those in-flight bytes
+# instead, a separate pre-existing `read -t` limitation this fix does not
+# change). So that partial content, whenever present, is captured
+# immediately below, before the near-instant retry/backoff logic runs, or
+# a later retry resetting `line` to empty would discard it.
+INSTANT_FAIL_CAP=3
+instant_fail_streak=0
+
+while true; do
+  line=""
+  read_start_us=$(now_us)
+  if IFS= read -r -t "$FLUSH_INTERVAL" line; then
+    read_status=0
+  else
+    read_status=$?
+  fi
+
+  if [ "$read_status" -eq 0 ]; then
+    instant_fail_streak=0
+    BUFFER+=("$line")
+
+    if [ ${#BUFFER[@]} -ge "$BATCH_SIZE" ]; then
+      flush
+    elif [ ${#BUFFER[@]} -gt 0 ]; then
+      # Lines can keep trickling in faster than FLUSH_INTERVAL, so `read`
+      # may never actually time out even though a full interval has passed
+      # since the last flush. Only bother checking when there is something
+      # buffered to flush.
+      elapsed_us=$(( $(now_us) - LAST_FLUSH ))
+      if [ "$HAVE_SUBSECOND_CLOCK" -eq 1 ]; then
+        if (( elapsed_us >= FLUSH_INTERVAL_US )); then
+          flush
+        fi
+      else
+        if (( elapsed_us > FLUSH_INTERVAL_US )); then
+          flush
+        fi
+      fi
+    fi
+    continue
+  fi
+
+  # `read` only ever populates `line` on a *failed* call when it has hit
+  # true EOF with a final line that had no trailing newline (verified: a
+  # genuine mid-stream timeout that catches a partial, not-yet-terminated
+  # line does NOT populate `line` here - bash silently drops those partial
+  # bytes instead, a separate pre-existing `read -t` limitation unrelated
+  # to this fix). So a non-empty `line` at this point is buffered
+  # immediately, before the retry/backoff logic below runs, or it would be
+  # discarded the moment a following retry resets `line` to empty.
   if [ -n "$line" ]; then
     BUFFER+=("$line")
   fi
 
-  if [ ${#BUFFER[@]} -ge "$BATCH_SIZE" ]; then
-    flush
+  read_elapsed_us=$(( $(now_us) - read_start_us ))
+
+  if [ "$read_elapsed_us" -ge "$FLUSH_INTERVAL_US" ]; then
+    # Genuine timeout: this read call just performed a real bounded wait.
+    instant_fail_streak=0
+    if [ ${#BUFFER[@]} -gt 0 ]; then
+      flush
+    fi
+    continue
   fi
 
-  # Check time-based flush
-  elapsed_us=$(( $(now_us) - LAST_FLUSH ))
-  if [ "$HAVE_SUBSECOND_CLOCK" -eq 1 ]; then
-    if (( elapsed_us >= FLUSH_INTERVAL_US )); then
-      flush
-    fi
-  else
-    if (( elapsed_us > FLUSH_INTERVAL_US )); then
-      flush
-    fi
+  instant_fail_streak=$((instant_fail_streak + 1))
+  if [ "$instant_fail_streak" -lt "$INSTANT_FAIL_CAP" ]; then
+    continue
   fi
+
+  # Confirmed end of input: only a truly exhausted/closed stream can
+  # produce this many consecutive near-instant read failures in a row.
+  break
 done
 
 # Final flush
