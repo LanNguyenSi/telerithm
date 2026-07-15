@@ -1,0 +1,44 @@
+<!--
+    Retention for ClickHouse's INTERNAL system log tables. Without this,
+    system.text_log grows unbounded: on 2026-07-15 it held 133 GiB /
+    2.5 billion rows on VPS-01 (~80% of the whole disk) while the actual
+    telerithm data stayed tiny.
+
+    text_log duplicates the server's stderr log into a MergeTree table and
+    is pure ClickHouse-internal diagnostics; we disable it outright. The
+    remaining system logs are kept 7 days via TTL so short-window debugging
+    stays possible.
+
+    NOTE: a TTL config change only applies to NEWLY created tables. On the
+    first restart with this file, ClickHouse renames each existing table to
+    <name>_N and creates a fresh one with the TTL; the renamed leftovers can
+    be dropped manually if they ever matter for disk (after the 2026-07-15
+    truncate they are empty).
+-->
+<clickhouse>
+    <text_log remove="1"/>
+    <query_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </query_log>
+    <query_thread_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </query_thread_log>
+    <metric_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </metric_log>
+    <asynchronous_metric_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </asynchronous_metric_log>
+    <trace_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </trace_log>
+    <processors_profile_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </processors_profile_log>
+    <part_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </part_log>
+    <error_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </error_log>
+</clickhouse>

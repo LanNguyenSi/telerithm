@@ -1,7 +1,16 @@
+# Bounded container logs: without this the json-file driver grows unbounded
+# (same class of problem as the ClickHouse system.text_log incident 2026-07-15).
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:15
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: telerithm
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telerithm}
@@ -22,10 +31,12 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24
     restart: unless-stopped
+    logging: *default-logging
     volumes:
       - chdata:/var/lib/clickhouse
       - ./backend/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
       - ./backend/clickhouse/limits.xml:/etc/clickhouse-server/config.d/limits.xml:ro
+      - ./backend/clickhouse/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
     deploy:
       resources:
         limits:
@@ -40,6 +51,7 @@ services:
   redis:
     image: redis:7
     restart: unless-stopped
+    logging: *default-logging
     command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     volumes:
       - redisdata:/data
@@ -58,6 +70,7 @@ services:
     build:
       context: ./backend
     restart: unless-stopped
+    logging: *default-logging
     environment:
       HOST: 0.0.0.0
       PORT: 4000
@@ -102,6 +115,7 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:4000/api/v1}
     restart: unless-stopped
+    logging: *default-logging
     environment:
       INTERNAL_API_BASE_URL: http://backend:4000/api/v1
       NEXT_PUBLIC_API_BASE_URL: ${PUBLIC_API_URL:-http://localhost:4000/api/v1}
