@@ -3,7 +3,7 @@ type: overview
 title: Ingestion pipeline — where it's documented, and the source types
 description: Pointer doc — the ingestion pipeline (single POST /ingest/:sourceId entrypoint, IngestionService normalisation, inline issue grouping) is authoritatively documented in docs/architecture.md's "Ingestion pipeline" section and docs/configuration.md's "Ingestion sources" table; this entry only points there and cross-references the API-key-per-source tenant binding.
 tags: [ingestion, sources, pointer]
-timestamp: 2026-07-16T03:21:00Z
+timestamp: 2026-07-16T06:09:28Z
 sources:
   - docs/architecture.md
   - docs/configuration.md
