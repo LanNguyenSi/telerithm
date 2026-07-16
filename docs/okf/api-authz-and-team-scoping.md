@@ -6,6 +6,7 @@ tags: [authz, team-scoping, router, idor, security]
 timestamp: 2026-07-16T03:05:00Z
 sources:
   - backend/src/api/rest/router.ts
+  - backend/src/services/log-view/log-view-service.ts
   - backend/tests/unit/router-team-scoping.test.ts
   - backend/prisma/schema.prisma
   - ENGINEERING.md
