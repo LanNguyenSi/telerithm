@@ -105,5 +105,5 @@ For production with Traefik + Let's Encrypt, see [../DEPLOYMENT.md](../DEPLOYMEN
 cp .env.production.example .env.production
 # edit .env.production
 docker compose -f docker-compose.traefik.yml --env-file .env.production up -d --build
-docker compose -f docker-compose.traefik.yml exec backend npx prisma migrate deploy
+docker compose -f docker-compose.traefik.yml exec backend npx prisma db push
 ```
