@@ -105,12 +105,12 @@ Key design choices:
 ## Storage
 
 - **ClickHouse** holds log rows. Append-only, columnar, partitioned by day. Search and histogram queries hit ClickHouse directly.
-- **Postgres** holds tenancy state: teams, users, sources, alert rules, incidents, saved views, invites, escalation policies. Managed by Prisma.
+- **Postgres** holds tenancy state: teams, users, sources, alert rules, incidents, saved views, invites, escalation policies (schema only, see Alerting). Managed by Prisma.
 - **Redis** caches facet hints, holds SSE subscriber state, and rate-limits ingestion.
 
 ## Alerting
 
-`AlertEvaluationWorker` polls active rules on a fixed cadence, runs each rule's threshold query against ClickHouse, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Maintenance windows suppress dispatch without suppressing incident creation. Escalation policies advance through configured steps until the incident is acknowledged or resolved.
+`AlertEvaluationWorker` polls active rules on a fixed cadence, runs each rule's threshold query against ClickHouse, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Maintenance windows suppress dispatch without suppressing incident creation. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
 
 ## Streaming
 
