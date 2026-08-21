@@ -78,14 +78,14 @@ The frontend renders this as editable filter chips plus a timeline view, so you 
 - Real-time SSE log streaming, Today view, log detail with surrounding context
 - Saved views, faceted search, histograms, automatic pattern clustering
 - Multi-source ingestion: HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
-- Alert rules + incidents, escalation policies, maintenance windows
+- Alert rules + incidents, maintenance windows
 - Notification channels: Email, Webhook, Slack, Microsoft Teams
 - Error grouping with fingerprinting and assignment workflow
 - Team management with RBAC (Owner, Admin, Member, Viewer), invites, admin API
 - Single-tenant by default, optional multi-tenant via config flag
 - Prometheus metrics endpoint (`/metrics`) covering HTTP, ingest, alert, SSE, and NLQ stats
 
-**Planned:** AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, retention policies, `telerithm` CLI.
+**Planned:** escalation policies (schema exists, evaluation not yet wired), AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, retention policies, `telerithm` CLI.
 
 ## API at a glance
 

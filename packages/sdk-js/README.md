@@ -33,7 +33,7 @@ try {
 }
 ```
 
-The default client batches logs in memory and flushes them to the configured ingest endpoint at `flushIntervalMs` or when `batchSize` is reached. `process.exit` and `beforeunload` are handled for you when `autoCapture` is enabled (default).
+The default client batches logs in memory and flushes them to the configured ingest endpoint at `flushIntervalMs` or when `batchSize` is reached. There is no automatic flush on shutdown: call `await client.close()` before your process exits (or on `beforeunload` in the browser), otherwise logs still in the buffer are lost. `autoCapture` (default) installs uncaught-exception/unhandled-rejection handlers only.
 
 ## Configuration
 

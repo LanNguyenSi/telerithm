@@ -110,7 +110,7 @@ Key design choices:
 
 ## Alerting
 
-`AlertEvaluationWorker` polls active rules on a fixed cadence, runs each rule's threshold query against ClickHouse, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Maintenance windows suppress dispatch without suppressing incident creation. Escalation policies advance through configured steps until the incident is acknowledged or resolved.
+`AlertEvaluationWorker` polls active rules on a fixed cadence, runs each rule's threshold query against ClickHouse, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Maintenance windows suppress dispatch without suppressing incident creation. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
 
 ## Streaming
 
