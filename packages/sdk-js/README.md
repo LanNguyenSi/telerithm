@@ -51,9 +51,10 @@ init({
 });
 ```
 
-`endpoint` is the backend base URL (no path); the SDK appends
-`/api/v1/ingest/<sourceId>` itself. Do not include that path in
-`endpoint` or requests will double it.
+`endpoint` is the backend base URL (no path, no trailing slash); the
+SDK appends `/api/v1/ingest/<sourceId>` itself. Do not include that
+path in `endpoint` or requests will double it, and a trailing slash
+on `endpoint` will double the slash in the built URL.
 
 ### Options
 

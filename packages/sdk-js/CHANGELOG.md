@@ -47,7 +47,8 @@ payload may change between minor versions until v1.0.0.
 [^1]:
     Correction (2026-08-22): `maxBreadcrumbs` has always defaulted
     to `20`, not `100`. The `100` figure above was wrong at release
-    time; the code and the current README have always used `20`. Left
-    uncorrected in place per Keep a Changelog practice (this entry
-    documents the 0.1.0 release as published); see the current
-    README for the accurate default.
+    time; the code has always defaulted to `20`, but the README
+    carried the same wrong `100` default until it was corrected on
+    2026-08-22. Left uncorrected in place per Keep a Changelog
+    practice (this entry documents the 0.1.0 release as published);
+    see the current README for the accurate default.

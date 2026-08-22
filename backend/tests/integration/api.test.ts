@@ -2,7 +2,18 @@ import type { Server } from "node:http";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import supertest from "supertest";
 
+// Hoisted so the vi.mock factory below (itself hoisted above imports) can
+// close over it; reset/re-seeded like every other mock in beforeEach.
+const { mockDispatch } = vi.hoisted(() => ({ mockDispatch: vi.fn() }));
+
 // Mock external dependencies before importing app
+vi.mock("../../src/services/notification/notification-dispatcher.js", () => ({
+  NotificationDispatcher: vi.fn().mockImplementation(function NotificationDispatcher(this: {
+    dispatch: typeof mockDispatch;
+  }) {
+    this.dispatch = mockDispatch;
+  }),
+}));
 vi.mock("../../src/config/index.js", () => ({
   config: {
     port: 4000,
@@ -97,6 +108,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
     maintenanceWindow: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       create: vi.fn(),
       delete: vi.fn(),
     },
@@ -225,6 +237,7 @@ const mockedPrisma = prisma as typeof prisma & {
   maintenanceWindow: {
     findMany: ReturnType<typeof vi.fn>;
     findUnique: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
   };
@@ -402,11 +415,13 @@ beforeEach(() => {
   mockedPrisma.alertRule.findMany.mockResolvedValue([]);
   mockedPrisma.alertRule.findUnique.mockResolvedValue(null);
   mockedPrisma.maintenanceWindow.findUnique.mockResolvedValue(null);
+  mockedPrisma.maintenanceWindow.findFirst.mockResolvedValue(null);
   mockedPrisma.alertIncident.findMany.mockResolvedValue([]);
   mockedPrisma.issue.findMany.mockResolvedValue([]);
   mockedPrisma.issue.count.mockResolvedValue(0);
   mockedPrisma.alertSubscription.findMany.mockResolvedValue([]);
   mockedPrisma.alertSubscription.findFirst.mockResolvedValue(null);
+  mockDispatch.mockResolvedValue(undefined);
 });
 
 describe("API Routes", () => {
@@ -713,9 +728,11 @@ describe("API Routes", () => {
         config: {},
         user: { id: "user-1", email: "user@test.com", name: "Test User" },
       });
-      // An active maintenance window for the team, to show it has no
-      // bearing on this route: it never queries maintenanceWindow at all.
-      mockedPrisma.maintenanceWindow.findUnique.mockResolvedValueOnce({
+      // An active maintenance window for the team (AlertEvaluationWorker's
+      // real suppression check queries maintenanceWindow.findFirst, see
+      // alert-evaluation-worker.ts), to show it has no bearing on this
+      // route: it never queries maintenanceWindow at all.
+      mockedPrisma.maintenanceWindow.findFirst.mockResolvedValueOnce({
         id: "mw-1",
         teamId: "t1",
         startsAt: new Date("2020-01-01T00:00:00.000Z"),
@@ -728,6 +745,16 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ ok: true, message: "Test notification sent" });
+      // Observes dispatch itself, not just the HTTP response, so removing
+      // the dispatcher.dispatch() call from the route would fail this test.
+      expect(mockDispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ruleId: "rule-1",
+          teamId: "t1",
+          message: "This is a test notification from Telerithm",
+        }),
+      );
+      expect(mockedPrisma.maintenanceWindow.findFirst).not.toHaveBeenCalled();
       expect(mockedPrisma.maintenanceWindow.findUnique).not.toHaveBeenCalled();
       expect(mockedPrisma.maintenanceWindow.findMany).not.toHaveBeenCalled();
     });

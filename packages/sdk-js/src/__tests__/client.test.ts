@@ -184,11 +184,7 @@ describe("TelerithmClient — log()", () => {
   });
 
   it("attaches _release and _environment when options are set", async () => {
-    const c = new TelerithmClient({
-      ...BASE_OPTIONS,
-      release: "1.2.3",
-      environment: "staging",
-    });
+    const c = new TelerithmClient({ ...BASE_OPTIONS, release: "1.2.3", environment: "staging" });
     c.log("info", "msg");
     await c.flush();
     await c.close();
@@ -352,9 +348,7 @@ describe("TelerithmClient — captureError()", () => {
 
     const fields = mockSendBatch.mock.calls[0][1].logs[0].fields!;
     expect(typeof fields["_breadcrumbs"]).toBe("string");
-    const crumbs = JSON.parse(fields["_breadcrumbs"] as string) as Array<{
-      message: string;
-    }>;
+    const crumbs = JSON.parse(fields["_breadcrumbs"] as string) as Array<{ message: string }>;
     expect(crumbs[0].message).toBe("clicked button");
   });
 
@@ -481,9 +475,7 @@ describe("TelerithmClient — autoCapture/breadcrumbs wiring", () => {
 
     // Constructor wired the Node global-error handlers and patched console.
     expect(process.listenerCount("uncaughtException")).toBe(beforeUncaught + 1);
-    expect(process.listenerCount("unhandledRejection")).toBe(
-      beforeRejection + 1,
-    );
+    expect(process.listenerCount("unhandledRejection")).toBe(beforeRejection + 1);
     expect(console.error).not.toBe(origConsoleError);
 
     await c.close();
