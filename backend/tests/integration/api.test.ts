@@ -783,11 +783,12 @@ describe("API Routes", () => {
 
   describe("POST /api/v1/subscriptions/:id/test: rate limiting", () => {
     // Own bearer tokens, never used by another test in this file: the
-    // limiter is keyed per raw token (see perUserKey in router.ts), and
-    // it's a module-level singleton whose state persists for the whole
-    // file run, so a shared token would make pass/fail depend on
-    // execution order. windowMs=200 / max=3 come from the config mock
-    // above.
+    // limiter is keyed per resolved user id (see perUserKey and
+    // requireAuthMiddleware in router.ts), and it's a module-level
+    // singleton whose state persists for the whole file run, so a shared
+    // token (or a token that resolves to a shared user id) would make
+    // pass/fail depend on execution order. windowMs=200 / max=3 come from
+    // the config mock above.
     //
     // These probes use a subscription id the findFirst mock resolves to
     // null (404 "Subscription not found") rather than one that reaches
@@ -829,21 +830,95 @@ describe("API Routes", () => {
       expect(afterReset.status).toBe(404);
     });
 
-    it("scopes the limit per caller: a different bearer token gets its own budget", async () => {
-      mockedPrisma.session.findUnique.mockResolvedValue(makeSession({ userId: "rl-user-2" }));
+    it("scopes the limit per user: two different users' sessions get separate budgets", async () => {
+      // Two distinct tokens that resolve to two distinct users, proving
+      // the limiter keys on the resolved user id rather than the raw
+      // token (which would also separate these, masking a keying bug).
+      mockedPrisma.session.findUnique.mockImplementation(async (args: { where: { token: string } }) => {
+        if (args.where.token === "sess_rate_limit_probe_userA") {
+          return makeSession({ userId: "rl-user-a", token: args.where.token });
+        }
+        if (args.where.token === "sess_rate_limit_probe_userB") {
+          return makeSession({ userId: "rl-user-b", token: args.where.token });
+        }
+        return null;
+      });
       mockedPrisma.alertSubscription.findFirst.mockResolvedValue(null);
-      const otherAuth = "Bearer sess_rate_limit_probe_other";
+      const authA = "Bearer sess_rate_limit_probe_userA";
+      const authB = "Bearer sess_rate_limit_probe_userB";
 
       for (let i = 0; i < 3; i++) {
-        const res = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", otherAuth);
+        const res = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", authA);
         expect(res.status).toBe(404);
       }
-      // A brand-new token (never used above) starts its own bucket, so it
-      // is not blocked by another caller's exhausted limit.
-      const freshCaller = await app
+      const exhausted = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", authA);
+      expect(exhausted.status).toBe(429);
+
+      // A different user is not blocked by userA's exhausted budget.
+      const userB = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", authB);
+      expect(userB.status).toBe(404);
+    });
+
+    it("does not scope by session: two sessions of the same user share one budget", async () => {
+      // Two distinct tokens ("two logged-in devices") that both resolve to
+      // the same user id: per decision, the limiter keys on the user, not
+      // the session, so logging in again must not grant a fresh budget.
+      mockedPrisma.session.findUnique.mockImplementation(async (args: { where: { token: string } }) => {
+        if (args.where.token === "sess_rate_limit_probe_deviceA" || args.where.token === "sess_rate_limit_probe_deviceB") {
+          return makeSession({ userId: "rl-user-shared", token: args.where.token });
+        }
+        return null;
+      });
+      mockedPrisma.alertSubscription.findFirst.mockResolvedValue(null);
+      const deviceA = "Bearer sess_rate_limit_probe_deviceA";
+      const deviceB = "Bearer sess_rate_limit_probe_deviceB";
+
+      // Exhaust the budget using deviceA's session for 2 of the 3 slots,
+      // then deviceB's session for the 3rd: both count against the same
+      // user bucket.
+      for (let i = 0; i < 2; i++) {
+        const res = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceA);
+        expect(res.status).toBe(404);
+      }
+      const thirdViaDeviceB = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceB);
+      expect(thirdViaDeviceB.status).toBe(404);
+
+      // The user's budget is now exhausted regardless of which session's
+      // token is used for the next request.
+      const blockedViaDeviceA = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceA);
+      expect(blockedViaDeviceA.status).toBe(429);
+      const blockedViaDeviceB = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceB);
+      expect(blockedViaDeviceB.status).toBe(429);
+    });
+
+    it("rejects an unauthenticated caller with 401 before the limiter runs, so it never consumes a real user's budget", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValue(makeSession({ userId: "rl-user-unauth-probe" }));
+      mockedPrisma.alertSubscription.findFirst.mockResolvedValue(null);
+      const auth = "Bearer sess_rate_limit_probe_unauth_user";
+
+      // 3 unauthenticated calls (no Authorization header at all, and a
+      // garbage bearer token that resolves to no session) must each get
+      // 401 from requireAuthMiddleware and never reach notificationTestLimiter.
+      const noHeader = await app.post("/api/v1/subscriptions/sub-rl/test");
+      expect(noHeader.status).toBe(401);
+
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(null);
+      const garbageToken = await app
         .post("/api/v1/subscriptions/sub-rl/test")
-        .set("Authorization", "Bearer sess_rate_limit_probe_fresh");
-      expect(freshCaller.status).toBe(404);
+        .set("Authorization", "Bearer not-a-real-session-token");
+      expect(garbageToken.status).toBe(401);
+
+      const noHeaderAgain = await app.post("/api/v1/subscriptions/sub-rl/test");
+      expect(noHeaderAgain.status).toBe(401);
+
+      // The real user still has a full budget: all 3 (notificationTestRateLimitMax)
+      // requests clear the limiter.
+      for (let i = 0; i < 3; i++) {
+        const res = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", auth);
+        expect(res.status).toBe(404);
+      }
+      const exhausted = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", auth);
+      expect(exhausted.status).toBe(429);
     });
   });
 

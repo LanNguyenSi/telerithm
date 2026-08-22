@@ -104,18 +104,36 @@ function rateLimitHandler(message: string, windowMs: number) {
   };
 }
 
-// Keys the limiter per authenticated caller (the raw bearer token, no DB
-// round trip needed) instead of per IP: a flood from one user must not
-// throttle other users behind the same office IP, and one user rotating
-// IPs must not dodge their own limit. Falls back to IP when unauthenticated;
-// those requests are rejected with 401 by requireAuth right after anyway,
-// so the shared bucket doesn't matter in practice.
-function perUserKey(req: Request): string {
-  const header = req.header("authorization");
-  if (header) {
-    return `token:${parseToken(header)}`;
+// Resolves the caller and attaches the user id to the request BEFORE any
+// downstream middleware runs, unlike requireAuth (called inline inside each
+// handler, after other middleware has already executed). This runs in front
+// of notificationTestLimiter so the limiter can key on the resolved user
+// id instead of the raw bearer token: keying on the token would let one
+// user multiply their budget for free by logging in again (N sessions = N
+// budgets, and sessions are cheap to create), and a limiter mounted before
+// auth has no way to validate the token at all, so any caller-supplied
+// string becomes its own bucket (unbounded key space). An unauthenticated
+// or invalid request gets 401 here and never reaches the limiter below, so
+// it never creates a bucket.
+async function requireAuthMiddleware(req: Request, res: Response, next: NextFunction) {
+  try {
+    (req as Request & { userId?: string }).userId = await resolveUserId(req);
+    next();
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
   }
-  return ipKeyGenerator(req.ip ?? "unknown");
+}
+
+// Keys the limiter per authenticated user, not per session token: two
+// sessions of the same user (e.g. two logged-in devices) intentionally
+// share one budget. requireAuthMiddleware always runs before this limiter
+// and rejects unauthenticated/invalid callers with 401, so req.userId is
+// already set by the time this runs; the IP fallback is defensive only; in
+// practice it is unreachable as long as the limiter stays mounted behind
+// requireAuthMiddleware.
+function perUserKey(req: Request): string {
+  const userId = (req as Request & { userId?: string }).userId;
+  return userId ? `user:${userId}` : ipKeyGenerator(req.ip ?? "unknown");
 }
 
 // Strict per-user limit for routes that trigger a real notification dispatch
@@ -1295,10 +1313,12 @@ apiRouter.delete(
 
 apiRouter.post(
   "/subscriptions/:id/test",
+  requireAuthMiddleware,
   notificationTestLimiter,
   asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
+    // requireAuthMiddleware above already resolved and validated the
+    // caller (401 otherwise, before the limiter), so this is always set.
+    const userId = (req as Request & { userId?: string }).userId as string;
     const subscription = await prisma.alertSubscription.findFirst({
       where: { id: String(req.params.id), userId },
       include: { user: { select: { id: true, email: true, name: true } } },
