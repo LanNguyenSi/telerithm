@@ -31,6 +31,14 @@ const configSchema = z.object({
     .default(7 * 24 * 60 * 60 * 1000),
   maxPageSize: z.coerce.number().int().min(50).max(2000).default(500),
   maxSyncRuntimeMs: z.coerce.number().int().min(100).max(30_000).default(1500),
+  // Strict per-user limit on routes that trigger a real notification dispatch
+  // (currently POST /subscriptions/:id/test). Default: 5 requests / 5 minutes.
+  notificationTestRateLimitWindowMs: z.coerce
+    .number()
+    .int()
+    .positive()
+    .default(5 * 60_000),
+  notificationTestRateLimitMax: z.coerce.number().int().positive().default(5),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -55,6 +63,8 @@ function loadConfig(): Config {
     maxLookbackMs: process.env.MAX_LOOKBACK_MS,
     maxPageSize: process.env.MAX_PAGE_SIZE,
     maxSyncRuntimeMs: process.env.MAX_SYNC_RUNTIME_MS,
+    notificationTestRateLimitWindowMs: process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS,
+    notificationTestRateLimitMax: process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX,
   });
 
   if (!result.success) {

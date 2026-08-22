@@ -67,6 +67,7 @@ The frontend renders this as editable filter chips plus a timeline view, so you 
 | Understand the ingestion + AI pipeline                           | [docs/architecture.md](docs/architecture.md) |
 | Configure env vars, ingestion sources, LLM provider              | [docs/configuration.md](docs/configuration.md) |
 | Write better natural-language queries, see prompt patterns       | [docs/queries.md](docs/queries.md)         |
+| See REST API rate limits per route group                         | [docs/api.md](docs/api.md)                 |
 | Run on a VPS with Traefik + SSL                                  | [DEPLOYMENT.md](DEPLOYMENT.md)             |
 | Run a local LLM (llama.cpp, Ollama) instead of cloud             | [LOCAL_LLM.md](LOCAL_LLM.md)               |
 

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type Request, type Response, type NextFunction, Router } from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator, type RateLimitInfo } from "express-rate-limit";
 import { IngestionService } from "../../ingestion/ingestion-service.js";
 import { LogRepository } from "../../repositories/log-repository.js";
 import { AlertService } from "../../services/alert/alert-service.js";
@@ -84,6 +84,53 @@ const ingestLimiter = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Ingest rate limit exceeded" },
+});
+
+// Seconds until the current window resets, for the 429 body's `retryAfter`
+// field. Mirrors the `Retry-After` header express-rate-limit already sets
+// (standardHeaders enables that automatically); falls back to the
+// configured window when `req.rateLimit` isn't populated yet.
+function retryAfterSeconds(req: Request, windowMs: number): number {
+  const info = (req as Request & { rateLimit?: RateLimitInfo }).rateLimit;
+  if (info?.resetTime) {
+    return Math.max(1, Math.ceil((info.resetTime.getTime() - Date.now()) / 1000));
+  }
+  return Math.ceil(windowMs / 1000);
+}
+
+function rateLimitHandler(message: string, windowMs: number) {
+  return (req: Request, res: Response) => {
+    res.status(429).json({ error: message, retryAfter: retryAfterSeconds(req, windowMs) });
+  };
+}
+
+// Keys the limiter per authenticated caller (the raw bearer token, no DB
+// round trip needed) instead of per IP: a flood from one user must not
+// throttle other users behind the same office IP, and one user rotating
+// IPs must not dodge their own limit. Falls back to IP when unauthenticated;
+// those requests are rejected with 401 by requireAuth right after anyway,
+// so the shared bucket doesn't matter in practice.
+function perUserKey(req: Request): string {
+  const header = req.header("authorization");
+  if (header) {
+    return `token:${parseToken(header)}`;
+  }
+  return ipKeyGenerator(req.ip ?? "unknown");
+}
+
+// Strict per-user limit for routes that trigger a real notification dispatch
+// (currently just the subscription test-notify route). Configurable via env
+// (NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS / _MAX); see docs/api.md.
+const notificationTestLimiter = rateLimit({
+  windowMs: config.notificationTestRateLimitWindowMs,
+  limit: config.notificationTestRateLimitMax,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: perUserKey,
+  handler: rateLimitHandler(
+    "Too many test notifications, try again later",
+    config.notificationTestRateLimitWindowMs,
+  ),
 });
 
 function parseToken(header?: string): string {
@@ -1248,6 +1295,7 @@ apiRouter.delete(
 
 apiRouter.post(
   "/subscriptions/:id/test",
+  notificationTestLimiter,
   asyncHandler(async (req, res) => {
     const userId = await requireAuth(req, res);
     if (userId === null) return;

@@ -31,6 +31,15 @@ vi.mock("../../src/config/index.js", () => ({
     maxLookbackMs: 7 * 24 * 60 * 60 * 1000,
     maxPageSize: 500,
     maxSyncRuntimeMs: 1500,
+    // Short window + small limit so the rate-limit tests below don't need
+    // multi-second waits; this is a module-level singleton (captured once
+    // when router.ts is imported in beforeAll), so it applies for the
+    // whole file's run, not just the rate-limit describe block. Only the
+    // "POST /api/v1/subscriptions/:id/test: rate limiting" tests exercise
+    // it deliberately; the two pre-existing subscription-test-route tests
+    // make 2 calls total with the "sess_admin" token, under this limit of 3.
+    notificationTestRateLimitWindowMs: 200,
+    notificationTestRateLimitMax: 3,
   },
 }));
 
@@ -769,6 +778,72 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Subscription not found");
+    });
+  });
+
+  describe("POST /api/v1/subscriptions/:id/test: rate limiting", () => {
+    // Own bearer tokens, never used by another test in this file: the
+    // limiter is keyed per raw token (see perUserKey in router.ts), and
+    // it's a module-level singleton whose state persists for the whole
+    // file run, so a shared token would make pass/fail depend on
+    // execution order. windowMs=200 / max=3 come from the config mock
+    // above.
+    //
+    // These probes use a subscription id the findFirst mock resolves to
+    // null (404 "Subscription not found") rather than one that reaches
+    // NotificationDispatcher: a 404 still proves the request cleared the
+    // limiter and reached the route handler (all this test needs), and
+    // the shared NotificationDispatcher constructor mock above only
+    // supports one real dispatch per test-file run before resetAllMocks
+    // in beforeEach strips its `this.dispatch = mockDispatch` binding, a
+    // pre-existing test-infra gap (already exercised exactly once by
+    // "dispatches the test notification..." above), out of scope here.
+    it("passes requests under the limit, 429s with Retry-After + retryAfter once exceeded, then resets after the window", async () => {
+      const auth = "Bearer sess_rate_limit_probe";
+      mockedPrisma.session.findUnique.mockResolvedValue(makeSession({ userId: "rl-user" }));
+      mockedPrisma.alertSubscription.findFirst.mockResolvedValue(null);
+
+      // notificationTestRateLimitMax (mocked to 3): every request up to
+      // the limit must clear the limiter and reach the handler.
+      for (let i = 0; i < 3; i++) {
+        const res = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", auth);
+        expect(res.status).toBe(404);
+      }
+
+      // The next request in the same window is rejected by the limiter
+      // itself, before the handler (and its prisma lookup) ever runs.
+      mockedPrisma.alertSubscription.findFirst.mockClear();
+      const blocked = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", auth);
+      expect(blocked.status).toBe(429);
+      expect(blocked.headers["retry-after"]).toBeDefined();
+      expect(Number(blocked.headers["retry-after"])).toBeGreaterThanOrEqual(0);
+      expect(blocked.body.error).toBe("Too many test notifications, try again later");
+      expect(Number.isInteger(blocked.body.retryAfter)).toBe(true);
+      expect(blocked.body.retryAfter).toBeGreaterThanOrEqual(1);
+      expect(mockedPrisma.alertSubscription.findFirst).not.toHaveBeenCalled();
+
+      // After the (mocked, 200ms) window elapses the same caller can hit
+      // the route again: the limit is per-window, not a lifetime cap.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const afterReset = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", auth);
+      expect(afterReset.status).toBe(404);
+    });
+
+    it("scopes the limit per caller: a different bearer token gets its own budget", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValue(makeSession({ userId: "rl-user-2" }));
+      mockedPrisma.alertSubscription.findFirst.mockResolvedValue(null);
+      const otherAuth = "Bearer sess_rate_limit_probe_other";
+
+      for (let i = 0; i < 3; i++) {
+        const res = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", otherAuth);
+        expect(res.status).toBe(404);
+      }
+      // A brand-new token (never used above) starts its own bucket, so it
+      // is not blocked by another caller's exhausted limit.
+      const freshCaller = await app
+        .post("/api/v1/subscriptions/sub-rl/test")
+        .set("Authorization", "Bearer sess_rate_limit_probe_fresh");
+      expect(freshCaller.status).toBe(404);
     });
   });
 

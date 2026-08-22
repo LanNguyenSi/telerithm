@@ -107,11 +107,15 @@ Key design choices:
 
 - **ClickHouse** holds log rows. Append-only, columnar, partitioned by day. Search and histogram queries hit ClickHouse directly.
 - **Postgres** holds tenancy state: teams, users, sources, alert rules, incidents, saved views, invites, escalation policies (schema only, see Alerting). Managed by Prisma.
-- **Redis** caches facet hints, holds SSE subscriber state, and rate-limits ingestion.
+- **Redis** caches facet hints and holds SSE subscriber state.
 
 ## Alerting
 
 `AlertEvaluationWorker` polls active rules on a fixed cadence, runs each rule's threshold query against ClickHouse, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Maintenance windows suppress rule evaluation entirely (no incidents, no notifications). `POST /api/v1/subscriptions/:id/test` is the exception: it dispatches a synthetic test notification straight through `NotificationDispatcher` without checking maintenance windows at all, so an operator can verify a channel is wired up even while a window is active. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
+
+## Rate limiting
+
+Every rate limiter is an in-memory, per-process counter (`express-rate-limit`'s default `MemoryStore`), not Redis-backed: correct for the current single-instance deployment, but each instance would track its own counters if the backend were ever run behind a load balancer with more than one replica, effectively multiplying the limit by the instance count. See [docs/api.md](api.md) for the limit table and env vars, and `backend/src/api/rest/router.ts` for the limiter definitions.
 
 ## Streaming
 
