@@ -108,6 +108,30 @@ describe("TelerithmClient — parseDsn (tested via flush→sendBatch capture)", 
     );
   });
 
+  it("README direct-config example: endpoint (base URL) + apiKey + sourceId produces <base>/api/v1/ingest/<sourceId>", async () => {
+    // Pins packages/sdk-js/README.md's "Configuration" direct-fields example
+    // verbatim, so a copy-pasted config never doubles the ingest path.
+    const c = new TelerithmClient({
+      endpoint: "https://logs.example.com",
+      apiKey: "<key>",
+      sourceId: "<sourceId>",
+      autoCapture: false,
+      breadcrumbs: false,
+      flushIntervalMs: 60_000,
+    });
+    c.log("info", "ping");
+    await c.flush();
+    await c.close();
+
+    expect(mockSendBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "https://logs.example.com/api/v1/ingest/<sourceId>",
+        apiKey: "<key>",
+      }),
+      expect.any(Object),
+    );
+  });
+
   it("direct endpoint+apiKey without sourceId appends empty segment", async () => {
     const c = new TelerithmClient({
       endpoint: "https://ingester.example.com",
