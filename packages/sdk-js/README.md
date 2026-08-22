@@ -61,7 +61,7 @@ init({
 | `release`         | —       | Release / version tag                                        |
 | `environment`     | —       | `production` / `staging` / etc.                              |
 | `autoCapture`     | `true`  | Install `uncaughtException` / `unhandledRejection` handlers  |
-| `breadcrumbs`     | `true`  | Capture breadcrumbs (console + manual)                       |
+| `breadcrumbs`     | `true`  | Capture breadcrumbs (console warn/error + manual)            |
 | `maxBreadcrumbs`  | `20`    | Cap on retained breadcrumbs per event                        |
 | `batchSize`       | `10`    | Flush after this many queued logs                            |
 | `flushIntervalMs` | `5000`  | Periodic flush interval                                      |
