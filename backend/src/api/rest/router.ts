@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { type Request, type Response, type NextFunction, Router } from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator, type RateLimitInfo } from "express-rate-limit";
 import { IngestionService } from "../../ingestion/ingestion-service.js";
 import { LogRepository } from "../../repositories/log-repository.js";
 import { AlertService } from "../../services/alert/alert-service.js";
@@ -84,6 +84,71 @@ const ingestLimiter = rateLimit({
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Ingest rate limit exceeded" },
+});
+
+// Seconds until the current window resets, for the 429 body's `retryAfter`
+// field. Mirrors the `Retry-After` header express-rate-limit already sets
+// (standardHeaders enables that automatically); falls back to the
+// configured window when `req.rateLimit` isn't populated yet.
+function retryAfterSeconds(req: Request, windowMs: number): number {
+  const info = (req as Request & { rateLimit?: RateLimitInfo }).rateLimit;
+  if (info?.resetTime) {
+    return Math.max(1, Math.ceil((info.resetTime.getTime() - Date.now()) / 1000));
+  }
+  return Math.ceil(windowMs / 1000);
+}
+
+function rateLimitHandler(message: string, windowMs: number) {
+  return (req: Request, res: Response) => {
+    res.status(429).json({ error: message, retryAfter: retryAfterSeconds(req, windowMs) });
+  };
+}
+
+// Resolves the caller and attaches the user id to the request BEFORE any
+// downstream middleware runs, unlike requireAuth (called inline inside each
+// handler, after other middleware has already executed). This runs in front
+// of notificationTestLimiter so the limiter can key on the resolved user
+// id instead of the raw bearer token: keying on the token would let one
+// user multiply their budget for free by logging in again (N sessions = N
+// budgets, and sessions are cheap to create), and a limiter mounted before
+// auth has no way to validate the token at all, so any caller-supplied
+// string becomes its own bucket (unbounded key space). An unauthenticated
+// or invalid request gets 401 here and never reaches the limiter below, so
+// it never creates a bucket.
+async function requireAuthMiddleware(req: Request, res: Response, next: NextFunction) {
+  try {
+    (req as Request & { userId?: string }).userId = await resolveUserId(req);
+    next();
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+  }
+}
+
+// Keys the limiter per authenticated user, not per session token: two
+// sessions of the same user (e.g. two logged-in devices) intentionally
+// share one budget. requireAuthMiddleware always runs before this limiter
+// and rejects unauthenticated/invalid callers with 401, so req.userId is
+// already set by the time this runs; the IP fallback is defensive only; in
+// practice it is unreachable as long as the limiter stays mounted behind
+// requireAuthMiddleware.
+function perUserKey(req: Request): string {
+  const userId = (req as Request & { userId?: string }).userId;
+  return userId ? `user:${userId}` : ipKeyGenerator(req.ip ?? "unknown");
+}
+
+// Strict per-user limit for routes that trigger a real notification dispatch
+// (currently just the subscription test-notify route). Configurable via env
+// (NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS / _MAX); see docs/api.md.
+const notificationTestLimiter = rateLimit({
+  windowMs: config.notificationTestRateLimitWindowMs,
+  limit: config.notificationTestRateLimitMax,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: perUserKey,
+  handler: rateLimitHandler(
+    "Too many test notifications, try again later",
+    config.notificationTestRateLimitWindowMs,
+  ),
 });
 
 function parseToken(header?: string): string {
@@ -1248,9 +1313,12 @@ apiRouter.delete(
 
 apiRouter.post(
   "/subscriptions/:id/test",
+  requireAuthMiddleware,
+  notificationTestLimiter,
   asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
+    // requireAuthMiddleware above already resolved and validated the
+    // caller (401 otherwise, before the limiter), so this is always set.
+    const userId = (req as Request & { userId?: string }).userId as string;
     const subscription = await prisma.alertSubscription.findFirst({
       where: { id: String(req.params.id), userId },
       include: { user: { select: { id: true, email: true, name: true } } },

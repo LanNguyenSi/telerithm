@@ -25,6 +25,8 @@ All configuration is environment-driven. The backend validates env vars on start
 | `MAX_PAGE_SIZE`      | `500`                         | Max page size for log search (50, 2000)                                             |
 | `MAX_SYNC_RUNTIME_MS`| `1500`                        | Max wall time for synchronous queries before they're pushed to async jobs           |
 | `SEED_DEMO_DATA`     | unset                         | Set to `true` to allow demo seeding when `NODE_ENV=production` (otherwise seeding is skipped in production) |
+| `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS` | `300000` (5 minutes) | Rate-limit window for `POST /subscriptions/:id/test`, see [api.md](api.md) |
+| `NOTIFICATION_TEST_RATE_LIMIT_MAX`       | `5`                  | Max `POST /subscriptions/:id/test` requests per window, per caller               |
 
 A starter file lives at `backend/.env.example`. Copy and edit:
 

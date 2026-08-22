@@ -41,9 +41,9 @@ CloudWatch               │                                          sources,
                          ▼                                          alerts,
                     IssueService                                    incidents,
                     (fingerprint, group)                            saved views)
-                         │                              Redis      (cache,
-                         ▼                                          rate limits,
-                    AlertEvalWorker ──► NotificationDispatcher      streaming)
+                         │                              Redis      (dashboard
+                         ▼                                          cache, health)
+                    AlertEvalWorker ──► NotificationDispatcher
                                           ├─ email
                                           ├─ webhook
                                           ├─ slack
@@ -107,11 +107,17 @@ Key design choices:
 
 - **ClickHouse** holds log rows. Append-only, columnar, partitioned by day. Search and histogram queries hit ClickHouse directly.
 - **Postgres** holds tenancy state: teams, users, sources, alert rules, incidents, saved views, invites, escalation policies (schema only, see Alerting). Managed by Prisma.
-- **Redis** caches facet hints, holds SSE subscriber state, and rate-limits ingestion.
+- **Redis** caches dashboard-overview summaries (`CacheService`, invalidated on ingest) and backs the `/api/v1/health` check. It does not hold SSE subscriber state: `StreamingService` is an in-process `EventEmitter`, so subscriber state does not survive past a single backend process.
 
 ## Alerting
 
 `AlertEvaluationWorker` polls active rules on a fixed cadence, runs each rule's threshold query against ClickHouse, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Maintenance windows suppress rule evaluation entirely (no incidents, no notifications). `POST /api/v1/subscriptions/:id/test` is the exception: it dispatches a synthetic test notification straight through `NotificationDispatcher` without checking maintenance windows at all, so an operator can verify a channel is wired up even while a window is active. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
+
+## Rate limiting
+
+Every request first passes through a global limiter mounted in `backend/src/app.ts` (200 requests / minute per client IP, before routing), then, for a few route groups, a second and stricter one defined in `backend/src/api/rest/router.ts`. Nothing is exempt from the global limiter: it also covers `GET /metrics`, `GET /api/v1/health` (including the Docker healthcheck's poll of that route every 30s, see `docker-compose.prod.yml`), and `GET /openapi.json`. See [docs/api.md](api.md) for the full limit table and env vars.
+
+Every limiter is an in-memory, per-process counter (`express-rate-limit`'s default `MemoryStore`), not Redis-backed, even though `ioredis` is a dependency and connects at startup (see Storage above): `rate-limit-redis` is not a dependency, the pre-existing global/ingest/auth limiters were already in-memory, and this deployment runs a single backend replica, so a shared store would add a dependency without changing behavior today. That's correct for the current single-instance deployment, but each instance would track its own counters if the backend were ever run behind a load balancer with more than one replica, effectively multiplying the limit by the instance count.
 
 ## Streaming
 
