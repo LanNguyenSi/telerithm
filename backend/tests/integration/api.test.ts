@@ -116,6 +116,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
     },
     alertSubscription: {
       findMany: vi.fn().mockResolvedValue([]),
+      findFirst: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
@@ -243,6 +244,7 @@ const mockedPrisma = prisma as typeof prisma & {
   };
   alertSubscription: {
     findMany: ReturnType<typeof vi.fn>;
+    findFirst: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
@@ -403,6 +405,8 @@ beforeEach(() => {
   mockedPrisma.alertIncident.findMany.mockResolvedValue([]);
   mockedPrisma.issue.findMany.mockResolvedValue([]);
   mockedPrisma.issue.count.mockResolvedValue(0);
+  mockedPrisma.alertSubscription.findMany.mockResolvedValue([]);
+  mockedPrisma.alertSubscription.findFirst.mockResolvedValue(null);
 });
 
 describe("API Routes", () => {
@@ -688,6 +692,56 @@ describe("API Routes", () => {
       expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
         where: { teamId_userId: { teamId: "other-team", userId: "user-1" } },
       });
+    });
+  });
+
+  describe("POST /api/v1/subscriptions/:id/test", () => {
+    // Pins the documented behavior (docs/architecture.md, "Alerting"
+    // section): this route is an operator-facing channel test and
+    // dispatches unconditionally, unlike AlertEvaluationWorker's real
+    // rule evaluation which maintenance windows suppress entirely. A
+    // caller must be able to verify a notification channel is wired up
+    // even while a maintenance window is active for the team.
+    it("dispatches the test notification even while a maintenance window is active for the team", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce({
+        id: "sub-1",
+        userId: "user-1",
+        teamId: "t1",
+        ruleId: "rule-1",
+        channel: "EMAIL",
+        config: {},
+        user: { id: "user-1", email: "user@test.com", name: "Test User" },
+      });
+      // An active maintenance window for the team, to show it has no
+      // bearing on this route: it never queries maintenanceWindow at all.
+      mockedPrisma.maintenanceWindow.findUnique.mockResolvedValueOnce({
+        id: "mw-1",
+        teamId: "t1",
+        startsAt: new Date("2020-01-01T00:00:00.000Z"),
+        endsAt: new Date("2099-01-01T00:00:00.000Z"),
+      });
+
+      const res = await app
+        .post("/api/v1/subscriptions/sub-1/test")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true, message: "Test notification sent" });
+      expect(mockedPrisma.maintenanceWindow.findUnique).not.toHaveBeenCalled();
+      expect(mockedPrisma.maintenanceWindow.findMany).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when the subscription does not belong to the caller", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce(null);
+
+      const res = await app
+        .post("/api/v1/subscriptions/missing-sub/test")
+        .set("Authorization", "Bearer sess_admin");
+
+      expect(res.status).toBe(404);
+      expect(res.body.error).toBe("Subscription not found");
     });
   });
 

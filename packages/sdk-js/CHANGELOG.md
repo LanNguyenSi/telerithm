@@ -26,7 +26,7 @@ payload may change between minor versions until v1.0.0.
   `endpoint` + `apiKey`. Direct `endpoint` + `apiKey` config also
   supported.
 - Breadcrumb tracking integration (console + manual `addBreadcrumb`),
-  capped at `maxBreadcrumbs` (default 100) and attached to error
+  capped at `maxBreadcrumbs` (default 100 [^1]) and attached to error
   events.
 - Global error-handler integration (`uncaughtException`,
   `unhandledRejection`, `window.onerror`, `unhandledrejection`) wired
@@ -43,3 +43,11 @@ payload may change between minor versions until v1.0.0.
 - Tarball is `dist/` only — `~3.9 KB` gzipped.
 - Published with `--provenance` (npm transparency-log attestation
   via GitHub Actions OIDC).
+
+[^1]:
+    Correction (2026-08-22): `maxBreadcrumbs` has always defaulted
+    to `20`, not `100`. The `100` figure above was wrong at release
+    time; the code and the current README have always used `20`. Left
+    uncorrected in place per Keep a Changelog practice (this entry
+    documents the 0.1.0 release as published); see the current
+    README for the accurate default.

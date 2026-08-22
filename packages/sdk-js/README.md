@@ -45,27 +45,33 @@ init({ dsn: "https://<key>@logs.example.com/<sourceId>" });
 // or
 
 init({
-  endpoint: "https://logs.example.com/api/v1/ingest/<sourceId>",
+  endpoint: "https://logs.example.com",
   apiKey: "<key>",
+  sourceId: "<sourceId>",
 });
 ```
 
+`endpoint` is the backend base URL (no path); the SDK appends
+`/api/v1/ingest/<sourceId>` itself. Do not include that path in
+`endpoint` or requests will double it.
+
 ### Options
 
-| Option            | Default | Description                                                  |
-| ----------------- | ------- | ------------------------------------------------------------ |
-| `dsn`             | —       | DSN string (`https://<key>@<host>/<sourceId>`)               |
-| `endpoint`        | —       | Direct ingest URL (alternative to `dsn`)                     |
-| `apiKey`          | —       | API key (alternative to `dsn`)                               |
-| `service`         | —       | Service name attached to every event                         |
-| `release`         | —       | Release / version tag                                        |
-| `environment`     | —       | `production` / `staging` / etc.                              |
-| `autoCapture`     | `true`  | Install `uncaughtException` / `unhandledRejection` handlers  |
-| `breadcrumbs`     | `true`  | Capture breadcrumbs (console warn/error + manual)            |
-| `maxBreadcrumbs`  | `20`    | Cap on retained breadcrumbs per event                        |
-| `batchSize`       | `10`    | Flush after this many queued logs                            |
-| `flushIntervalMs` | `5000`  | Periodic flush interval                                      |
-| `timeout`         | `10000` | HTTP timeout per flush                                       |
+| Option            | Default | Description                                                                          |
+| ----------------- | ------- | ------------------------------------------------------------------------------------ |
+| `dsn`             | —       | DSN string (`https://<key>@<host>/<sourceId>`)                                       |
+| `endpoint`        | —       | Backend base URL (alternative to `dsn`); the SDK appends `/api/v1/ingest/<sourceId>` |
+| `apiKey`          | —       | API key (alternative to `dsn`)                                                       |
+| `sourceId`        | —       | Source ID appended to `endpoint` (alternative to `dsn`)                              |
+| `service`         | —       | Service name attached to every event                                                 |
+| `release`         | —       | Release / version tag                                                                |
+| `environment`     | —       | `production` / `staging` / etc.                                                      |
+| `autoCapture`     | `true`  | Install `uncaughtException` / `unhandledRejection` handlers                          |
+| `breadcrumbs`     | `true`  | Capture breadcrumbs (console warn/error + manual)                                    |
+| `maxBreadcrumbs`  | `20`    | Cap on retained breadcrumbs per event                                                |
+| `batchSize`       | `10`    | Flush after this many queued logs                                                    |
+| `flushIntervalMs` | `5000`  | Periodic flush interval                                                              |
+| `timeout`         | `10000` | HTTP timeout per flush                                                               |
 
 ## API
 

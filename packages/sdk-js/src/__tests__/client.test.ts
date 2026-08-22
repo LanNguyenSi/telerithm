@@ -108,6 +108,30 @@ describe("TelerithmClient — parseDsn (tested via flush→sendBatch capture)", 
     );
   });
 
+  it("README direct-config example: endpoint (base URL) + apiKey + sourceId produces <base>/api/v1/ingest/<sourceId>", async () => {
+    // Pins packages/sdk-js/README.md's "Configuration" direct-fields example
+    // verbatim, so a copy-pasted config never doubles the ingest path.
+    const c = new TelerithmClient({
+      endpoint: "https://logs.example.com",
+      apiKey: "<key>",
+      sourceId: "<sourceId>",
+      autoCapture: false,
+      breadcrumbs: false,
+      flushIntervalMs: 60_000,
+    });
+    c.log("info", "ping");
+    await c.flush();
+    await c.close();
+
+    expect(mockSendBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        endpoint: "https://logs.example.com/api/v1/ingest/<sourceId>",
+        apiKey: "<key>",
+      }),
+      expect.any(Object),
+    );
+  });
+
   it("direct endpoint+apiKey without sourceId appends empty segment", async () => {
     const c = new TelerithmClient({
       endpoint: "https://ingester.example.com",
@@ -160,7 +184,11 @@ describe("TelerithmClient — log()", () => {
   });
 
   it("attaches _release and _environment when options are set", async () => {
-    const c = new TelerithmClient({ ...BASE_OPTIONS, release: "1.2.3", environment: "staging" });
+    const c = new TelerithmClient({
+      ...BASE_OPTIONS,
+      release: "1.2.3",
+      environment: "staging",
+    });
     c.log("info", "msg");
     await c.flush();
     await c.close();
@@ -324,7 +352,9 @@ describe("TelerithmClient — captureError()", () => {
 
     const fields = mockSendBatch.mock.calls[0][1].logs[0].fields!;
     expect(typeof fields["_breadcrumbs"]).toBe("string");
-    const crumbs = JSON.parse(fields["_breadcrumbs"] as string) as Array<{ message: string }>;
+    const crumbs = JSON.parse(fields["_breadcrumbs"] as string) as Array<{
+      message: string;
+    }>;
     expect(crumbs[0].message).toBe("clicked button");
   });
 
@@ -451,7 +481,9 @@ describe("TelerithmClient — autoCapture/breadcrumbs wiring", () => {
 
     // Constructor wired the Node global-error handlers and patched console.
     expect(process.listenerCount("uncaughtException")).toBe(beforeUncaught + 1);
-    expect(process.listenerCount("unhandledRejection")).toBe(beforeRejection + 1);
+    expect(process.listenerCount("unhandledRejection")).toBe(
+      beforeRejection + 1,
+    );
     expect(console.error).not.toBe(origConsoleError);
 
     await c.close();
