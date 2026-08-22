@@ -26,6 +26,7 @@ backend/
   prisma/                 Postgres schema and migrations
   tests/                  Vitest integration tests
 packages/sdk-js/          @telerithm/sdk client SDK
+packages/cli/             stdin-to-ingest shipping script (logforge-pipe.sh)
 deploy/                   Optional fluentd / vector ingestion sidecars
 ```
 
@@ -70,7 +71,7 @@ export type SourceType =
   | "CLOUDWATCH";
 ```
 
-For non-HTTP sources, `deploy/fluentd` and `deploy/vector` ship reference compose configs that forward to the HTTP endpoint.
+For non-HTTP sources, `deploy/fluentd` and `deploy/vector` ship reference forwarder configs (plus `deploy/docker-compose.logging.yml` to run the sidecar) that forward to the HTTP endpoint.
 
 ## NLQ pipeline
 
@@ -110,7 +111,7 @@ Key design choices:
 
 ## Alerting
 
-`AlertEvaluationWorker` polls active rules on a fixed cadence, runs each rule's threshold query against ClickHouse, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Maintenance windows suppress dispatch without suppressing incident creation. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
+`AlertEvaluationWorker` polls active rules on a fixed cadence, runs each rule's threshold query against ClickHouse, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Maintenance windows suppress rule evaluation entirely (no incidents, no notifications). Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
 
 ## Streaming
 
