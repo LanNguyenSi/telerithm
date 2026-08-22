@@ -82,7 +82,7 @@ Source types (from `backend/src/types/domain.ts`):
 | `DOCKER`     | Docker logging driver via fluentd                                              |
 | `CLOUDWATCH` | CloudWatch Logs subscription filter, forwarded to the HTTP endpoint            |
 
-Reference compose configs:
+Reference forwarder configs and the sidecar compose file:
 
 - `deploy/fluentd/` for syslog, Docker, CloudWatch forwarders
 - `deploy/vector/` for vector-based pipelines

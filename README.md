@@ -122,6 +122,7 @@ backend/
   ├── prisma/     Postgres schema and migrations
   └── tests/      Vitest integration tests
 packages/sdk-js/  JavaScript/TypeScript client SDK
+packages/cli/     stdin-to-ingest shipping script (logforge-pipe.sh)
 ```
 
 **Stack:** Node.js, Express, Prisma, PostgreSQL, ClickHouse, Redis, Next.js, Tailwind. See [docs/architecture.md](docs/architecture.md) for how ingestion, storage, and the NLQ pipeline fit together.
