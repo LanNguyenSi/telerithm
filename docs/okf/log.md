@@ -3,7 +3,7 @@
 <!-- Add new entries at the top, newest first. -->
 
 - 2026-09-02T04:49:48Z, okf-kit CI pin raised 0.3.1 -> 0.9.0 (fleet parity,
-  orchestrator decision D-004: 0.8.0 and 0.9.0 report identical findings
+  measured: 0.8.0 and 0.9.0 report identical findings
   here). Cleared the bundle's 7 pre-upgrade findings (4 `sources-fresh`
   STALE, 3 `citations-resolve` drifted `router.ts` citations) by
   re-verifying every claim against current sources and re-stamping:
