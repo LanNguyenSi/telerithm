@@ -15,9 +15,9 @@ jobs:
       run:
         working-directory: packages/sdk-js
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -58,7 +58,7 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Extract SDK version from tag
         id: version
@@ -70,7 +70,7 @@ jobs:
           echo "SDK release notes extracted for sdk-v${{ steps.version.outputs.version }}"
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: "sdk-v${{ steps.version.outputs.version }}"
           body_path: release_notes.md
