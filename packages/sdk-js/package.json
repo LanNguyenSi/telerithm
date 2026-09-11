@@ -52,10 +52,10 @@
   },
   "devDependencies": {
     "@types/node": "^26.0.1",
-    "@vitest/coverage-v8": "4.1.9",
+    "@vitest/coverage-v8": "4.1.11",
     "tsup": "^8.0.0",
     "typescript": "^5.4.0",
-    "vitest": "4.1.9"
+    "vitest": "4.1.11"
   },
   "overrides": {
     "esbuild": "^0.28.1"
