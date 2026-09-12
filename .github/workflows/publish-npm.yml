@@ -5,7 +5,7 @@ on:
     tags: ["sdk-v*"]
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 jobs:
@@ -38,6 +38,13 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Test
+        # Mirrors ci.yml's sdk-js "Tests with coverage" step so the
+        # publish-time gate is the same suite CI already runs on every
+        # push; a failing test here blocks the publish before it ever
+        # reaches the npm upgrade / Publish steps below.
+        run: npx vitest run --coverage --coverage.reporter=json-summary --coverage.thresholds.lines=94 --coverage.thresholds.statements=92 --coverage.thresholds.functions=92 --coverage.thresholds.branches=85
 
       - name: Upgrade npm for trusted publishing
         # npm Trusted Publishing (OIDC) needs npm >= 11.5.1; node 22 bundles
@@ -95,6 +102,8 @@ jobs:
     name: GitHub Release (SDK)
     needs: publish
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 
