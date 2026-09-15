@@ -59,7 +59,6 @@
     "deepmerge-ts": "^8.0.2",
     "picomatch": ">=4.0.4",
     "postcss": "^8.5.23",
-    "esbuild": "^0.28.1",
-    "qs": "^6.16.0"
+    "esbuild": "^0.28.1"
   }
 }
