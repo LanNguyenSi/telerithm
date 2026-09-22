@@ -1,23 +1,22 @@
 name: Audit
 
 # Regression guard: fails when a high/critical advisory is present in any of
-# telerithm's npm lockfile trees (backend, frontend, packages/sdk-js -- every
-# package directory this repo's ci.yml installs and that carries its own
-# package-lock.json; packages/cli has neither, so it is not covered), via
+# telerithm's npm lockfile trees (root, backend, frontend, packages/sdk-js --
+# every package directory this repo's ci.yml installs and that carries its
+# own package-lock.json; packages/cli has neither, so it is not covered), via
 # `npm audit --audit-level=high`; runtime (--omit=dev) dependencies also fail
-# at --audit-level=moderate (D-004: the same rule as
-# triologue-agent-gateway, triologue and repo-intelligence). Shape copied
-# from triologue/.github/workflows/audit.yml (matrix over package
-# directories, the 60 s full report, the classified gate step with its
-# timeout and the four outcomes).
+# at --audit-level=moderate (the same rule as triologue-agent-gateway,
+# triologue and repo-intelligence). Shape copied from
+# triologue/.github/workflows/audit.yml (matrix over package directories,
+# the 60 s full report, the classified gate step with its timeout and the
+# four outcomes).
 #
-# This is a SEPARATE workflow (not folded into ci.yml) on purpose: ci.yml is
-# reused by release.yml via `workflow_call`, so a blocking audit step inside
-# it would let a newly published external advisory turn a release red with
-# zero code change. As its own pull_request + push gate, this guards PRs and
-# master against re-introducing a high/critical or moderate-in-runtime
-# advisory without coupling the release path to externally timed advisory
-# publication.
+# This is a SEPARATE workflow (not folded into ci.yml) on purpose: keeping
+# the audit off ci.yml's path, and out of the tag/release path, means a
+# freshly published external advisory cannot turn an unrelated CI run or a
+# release red with zero code change. As its own pull_request + push gate,
+# this guards PRs and master against re-introducing a high/critical or
+# moderate-in-runtime advisory instead.
 #
 # `npm audit` reads package-lock.json directly, so no install is needed; none
 # of the covered directories' ci.yml install flags (frontend's
@@ -75,8 +74,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dir: [backend, frontend, sdk-js]
+        dir: [root, backend, frontend, sdk-js]
         include:
+          - dir: root
+            working-directory: .
           - dir: backend
             working-directory: backend
           - dir: frontend
@@ -146,10 +147,12 @@ jobs:
           LOG="$(mktemp)"
           trap 'rm -f "$LOG"' EXIT
 
-          # GitHub Actions runs `run:` steps as `bash -eo pipefail`;
-          # without this guard, `set -e` would kill the script right at
-          # this pipeline on any non-zero exit (findings, outage, or a
-          # timeout alike), before the classification below ever runs.
+          # This step carries no `shell:` key, so GitHub Actions runs it as
+          # `bash -e` (pipefail is not the default; the script sets it
+          # itself above). Without this guard, `set -e` would kill the
+          # script right at this pipeline on any non-zero exit (findings,
+          # outage, or a timeout alike), before the classification below
+          # ever runs.
           set +e
           timeout "${AUDIT_TIMEOUT_SECS}s" npm audit --audit-level=high --no-fund 2>&1 | tee "$LOG"
           STATUS=$?
@@ -183,7 +186,7 @@ jobs:
           exit 3
 
       - name: npm audit gate (moderate, runtime deps fail)
-        # D-004: runtime dependencies (--omit=dev) fail this gate at
+        # Runtime dependencies (--omit=dev) fail this gate at
         # --audit-level=moderate; the full-tree gate above stays at
         # --audit-level=high. Same four-outcome classification as that
         # gate (see the top-of-file comment for the incident-2026-09-04
