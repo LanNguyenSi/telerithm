@@ -1,6 +1,21 @@
 # @telerithm/sdk
 
-Client SDK for [Telerithm](https://github.com/LanNguyenSi/telerithm) — ship structured logs, errors, and breadcrumbs from JavaScript / TypeScript apps to a Telerithm backend.
+Client SDK for [Telerithm](https://github.com/LanNguyenSi/telerithm): ship structured logs, errors, and breadcrumbs from JavaScript / TypeScript apps to a Telerithm backend.
+
+## Overview
+
+`@telerithm/sdk` batches logs in memory and flushes them to a Telerithm ingest endpoint over `fetch`, so it runs in Node, modern browsers, and edge runtimes without extra dependencies. Configure it once with a DSN or with direct fields, then call `log`, `captureError`, `setUser`, and `setTag` from anywhere in the app. Pre-1.0: the API and on-the-wire payload may change between minor versions.
+
+## Key features
+
+- Batched log delivery with configurable `batchSize` and `flushIntervalMs`
+- Structured logging at `debug` / `info` / `warn` / `error` / `fatal` levels
+- Error capture with stack trace and message extraction
+- Breadcrumb tracking (console warn/error, plus manual `addBreadcrumb`)
+- Global `uncaughtException` / `unhandledRejection` capture, opt-out via `autoCapture: false`
+- User and tag context attached to every subsequent event
+- DSN or direct `endpoint` + `apiKey` configuration
+- ESM + CJS dual exports with TypeScript type declarations
 
 ## Install
 
@@ -8,9 +23,9 @@ Client SDK for [Telerithm](https://github.com/LanNguyenSi/telerithm) — ship st
 npm install @telerithm/sdk
 ```
 
-Node.js ≥ 18. Works in Node, modern browsers, and edge runtimes that support `fetch`.
+Node.js >= 18. Works in Node, modern browsers, and edge runtimes that support `fetch`.
 
-## Quick start
+## Usage
 
 ```ts
 import { init, log, captureError, setUser } from "@telerithm/sdk";
@@ -33,17 +48,11 @@ try {
 }
 ```
 
-The default client batches logs in memory and flushes them to the configured ingest endpoint at `flushIntervalMs` or when `batchSize` is reached. There is no automatic flush on shutdown: call `await client.close()` before your process exits (or on `beforeunload` in the browser), otherwise logs still in the buffer are lost. `autoCapture` (default) installs uncaught-exception/unhandled-rejection handlers only.
+The default client batches logs in memory and flushes them at `flushIntervalMs` or when `batchSize` is reached. There is no automatic flush on shutdown: call `await client.close()` before your process exits (or on `beforeunload` in the browser), otherwise logs still in the buffer are lost.
 
-## Configuration
-
-You can configure either via a DSN or via direct fields:
+You can also configure via direct fields instead of a DSN:
 
 ```ts
-init({ dsn: "https://<key>@logs.example.com/<sourceId>" });
-
-// or
-
 init({
   endpoint: "https://logs.example.com",
   apiKey: "<key>",
@@ -51,61 +60,21 @@ init({
 });
 ```
 
-`endpoint` is the backend base URL (no path, no trailing slash); the
-SDK appends `/api/v1/ingest/<sourceId>` itself. Do not include that
-path in `endpoint` or requests will double it, and a trailing slash
-on `endpoint` will double the slash in the built URL.
+## Documentation
 
-### Options
+- [Configuration options and API reference](docs/reference.md): every `init` option and the full exported function list.
+- [CHANGELOG.md](./CHANGELOG.md): per-release notes.
 
-| Option            | Default | Description                                                                          |
-| ----------------- | ------- | ------------------------------------------------------------------------------------ |
-| `dsn`             | —       | DSN string (`https://<key>@<host>/<sourceId>`)                                       |
-| `endpoint`        | —       | Backend base URL (alternative to `dsn`); the SDK appends `/api/v1/ingest/<sourceId>` |
-| `apiKey`          | —       | API key (alternative to `dsn`)                                                       |
-| `sourceId`        | —       | Source ID appended to `endpoint` (alternative to `dsn`)                              |
-| `service`         | —       | Service name attached to every event                                                 |
-| `release`         | —       | Release / version tag                                                                |
-| `environment`     | —       | `production` / `staging` / etc.                                                      |
-| `autoCapture`     | `true`  | Install `uncaughtException` / `unhandledRejection` handlers                          |
-| `breadcrumbs`     | `true`  | Capture breadcrumbs (console warn/error + manual)                                    |
-| `maxBreadcrumbs`  | `20`    | Cap on retained breadcrumbs per event                                                |
-| `batchSize`       | `10`    | Flush after this many queued logs                                                    |
-| `flushIntervalMs` | `5000`  | Periodic flush interval                                                              |
-| `timeout`         | `10000` | HTTP timeout per flush                                                               |
+## Development
 
-## API
-
-```ts
-init(options): TelerithmClient    // create + register the global client
-getClient(): TelerithmClient | null
-
-log(level, message, extra?)
-captureError(error, extra?)
-
-setUser(user)
-setTag(key, value)
-
-flush(): Promise<void>             // force a flush
-close(): Promise<void>             // flush + tear down (call on shutdown)
+```bash
+npm install
+npm test              # vitest
+npm run build         # tsup, emits dist/ (esm, cjs, .d.ts)
 ```
 
-For multi-client setups (e.g. tests, multiple sinks), import `TelerithmClient` directly and skip `init`:
-
-```ts
-import { TelerithmClient } from "@telerithm/sdk";
-
-const client = new TelerithmClient({ ... });
-client.log("info", "...");
-await client.close();
-```
-
-## Versioning
-
-Pre-1.0: the API and on-the-wire payload may change between minor versions. From 1.0 onwards the SDK adheres to [SemVer](https://semver.org/).
-
-See [CHANGELOG.md](./CHANGELOG.md) for per-release notes.
+See the repo root's [CONTRIBUTING.md](../../CONTRIBUTING.md) for the full workflow.
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT, see [LICENSE](./LICENSE). Pre-1.0, breaking changes may land in minor releases; see [CHANGELOG.md](./CHANGELOG.md).
