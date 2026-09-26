@@ -48,7 +48,7 @@ try {
 }
 ```
 
-The default client batches logs in memory and flushes them at `flushIntervalMs` or when `batchSize` is reached. There is no automatic flush on shutdown: call `await client.close()` before your process exits (or on `beforeunload` in the browser), otherwise logs still in the buffer are lost.
+The default client batches logs in memory and flushes them at `flushIntervalMs` or when `batchSize` is reached. There is no automatic flush on shutdown: call `await close()` (exported next to `init`) before your process exits (or on `beforeunload` in the browser), otherwise logs still in the buffer are lost.
 
 You can also configure via direct fields instead of a DSN:
 

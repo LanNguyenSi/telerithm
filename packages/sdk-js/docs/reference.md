@@ -12,7 +12,7 @@ Pass these to `init(options)` or the `TelerithmClient` constructor.
 | `endpoint`        | none    | Backend base URL (alternative to `dsn`); the SDK appends `/api/v1/ingest/<sourceId>` |
 | `apiKey`          | none    | API key (alternative to `dsn`)                                                       |
 | `sourceId`        | none    | Source ID appended to `endpoint` (alternative to `dsn`)                              |
-| `service`         | none    | Service name attached to every event                                                 |
+| `service`         | `"unknown"` | Service name attached to every event                                             |
 | `release`         | none    | Release / version tag                                                                |
 | `environment`     | none    | `production` / `staging` / etc.                                                      |
 | `autoCapture`     | `true`  | Install `uncaughtException` / `unhandledRejection` handlers                          |
