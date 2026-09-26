@@ -51,4 +51,5 @@ payload may change between minor versions until v1.0.0.
     carried the same wrong `100` default until it was corrected on
     2026-08-22. Left uncorrected in place per Keep a Changelog
     practice (this entry documents the 0.1.0 release as published);
-    see the current README for the accurate default.
+    see [docs/reference.md](docs/reference.md#configuration-options)
+    for the accurate default.

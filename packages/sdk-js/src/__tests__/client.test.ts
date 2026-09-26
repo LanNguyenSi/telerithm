@@ -109,7 +109,7 @@ describe("TelerithmClient — parseDsn (tested via flush→sendBatch capture)", 
   });
 
   it("README direct-config example: endpoint (base URL) + apiKey + sourceId produces <base>/api/v1/ingest/<sourceId>", async () => {
-    // Pins packages/sdk-js/README.md's "Configuration" direct-fields example
+    // Pins packages/sdk-js/README.md's "Usage" direct-fields example
     // verbatim, so a copy-pasted config never doubles the ingest path.
     const c = new TelerithmClient({
       endpoint: "https://logs.example.com",
