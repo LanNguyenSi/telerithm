@@ -16,7 +16,7 @@ Telerithm turns plain-language questions into structured queries over your logs.
 - Multi-source ingestion: HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
 - Alert rules and incidents, maintenance windows, notification channels (Email, Webhook, Slack, Microsoft Teams)
 - Error grouping with fingerprinting and an assignment workflow
-- Team management with RBAC (Owner, Admin, Member, Viewer) and invites; single-tenant by default, optional multi-tenant via config flag
+- Team management with RBAC (Owner, Admin, Member, Viewer), invites, and an admin API; single-tenant by default, optional multi-tenant via config flag
 - Prometheus metrics endpoint (`/metrics`) covering HTTP, ingest, alert, SSE, and NLQ stats
 
 **Planned:** escalation policies (schema exists, evaluation not yet wired), AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, retention policies, `telerithm` CLI.
@@ -27,7 +27,7 @@ Telerithm turns plain-language questions into structured queries over your logs.
 
 **Self-host:**
 
-Prerequisites: Docker Engine 20.10+ and Docker Compose v2 (see [DEPLOYMENT.md](DEPLOYMENT.md)).
+Prerequisites: Docker Engine 20.10+, Docker Compose v2, and make. The local stack needs no Traefik; [DEPLOYMENT.md](DEPLOYMENT.md) covers production.
 
 ```bash
 git clone https://github.com/LanNguyenSi/telerithm.git
