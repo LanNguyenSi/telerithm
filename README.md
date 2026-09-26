@@ -2,17 +2,32 @@
 
 **AI-powered log analytics for self-hosted teams.**
 
-Telerithm turns plain-language questions into structured queries over your logs. Instead of grepping millions of lines or hand-writing SQL, you ask _"show me payment errors from the last hour"_ and the AI translates it into filters, a time range, and a search plan you can review and edit. Self-hosted, single-tenant by default, OpenAI-compatible (cloud or local LLM).
+[![CI](https://github.com/LanNguyenSi/telerithm/actions/workflows/ci.yml/badge.svg)](https://github.com/LanNguyenSi/telerithm/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Telerithm turns plain-language questions into structured queries over your logs. Instead of grepping millions of lines or hand-writing SQL, you ask _"show me payment errors from the last hour"_ and the AI translates it into filters, a time range, and a search plan you can review and edit. Self-hosted, single-tenant by default, OpenAI-compatible (cloud or local LLM). Backend is Node.js/Express with Prisma over PostgreSQL and ClickHouse for log storage; frontend is Next.js. See [docs/architecture.md](docs/architecture.md) for how the pieces fit together.
 
 ![The Telerithm Logs view: a natural-language log query ('Show me payment failures from the last hour') with level, service, and host filters plus an execution summary.](docs/img/logs.png)
 
-## Try it in 60 seconds
+## Key features
 
-**Live demo (no install):**
+- Natural-language search with an editable AI-generated filter plan
+- Real-time SSE log streaming, Today view, log detail with surrounding context
+- Saved views, faceted search, histograms, automatic pattern clustering
+- Multi-source ingestion: HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
+- Alert rules and incidents, maintenance windows, notification channels (Email, Webhook, Slack, Microsoft Teams)
+- Error grouping with fingerprinting and an assignment workflow
+- Team management with RBAC (Owner, Admin, Member, Viewer), invites, and an admin API; single-tenant by default, optional multi-tenant via config flag
+- Prometheus metrics endpoint (`/metrics`) covering HTTP, ingest, alert, SSE, and NLQ stats
 
-[demo.telerithm.cloud](https://demo.telerithm.cloud)
+**Planned:** escalation policies (schema exists, evaluation not yet wired), AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, retention policies, `telerithm` CLI.
+
+## Quick start
+
+**Live demo (no install):** [demo.telerithm.cloud](https://demo.telerithm.cloud)
 
 **Self-host:**
+
+Prerequisites: Docker Engine 20.10+, Docker Compose v2, and make. The local stack needs no Traefik; [DEPLOYMENT.md](DEPLOYMENT.md) covers production.
 
 ```bash
 git clone https://github.com/LanNguyenSi/telerithm.git
@@ -22,11 +37,11 @@ make init
 
 That builds the stack and starts everything on Docker:
 
-| Service    | URL                    |
-| ---------- | ---------------------- |
-| Frontend   | http://localhost:3000  |
-| Backend    | http://localhost:4000  |
-| API docs   | http://localhost:4000/docs |
+| Service  | URL                         |
+| -------- | ---------------------------- |
+| Frontend | http://localhost:3000        |
+| Backend  | http://localhost:4000        |
+| API docs | http://localhost:4000/docs   |
 
 Send a log, then ask a question:
 
@@ -36,7 +51,7 @@ curl -X POST http://localhost:4000/api/v1/ingest/<sourceId> \
   -d '{"logs":[{"level":"error","service":"payment","message":"Payment authorization failed for order 4721","fields":{"status_code":502,"amount":189.50}}]}'
 ```
 
-## What a query looks like
+## Usage
 
 `POST /api/v1/query/natural` with `{"teamId":"...", "query":"payment errors in the last hour"}` returns the AI's structured plan:
 
@@ -56,79 +71,22 @@ curl -X POST http://localhost:4000/api/v1/ingest/<sourceId> \
 }
 ```
 
-The frontend renders this as editable filter chips plus a timeline view, so you can refine the AI's interpretation before running the search. If `OPENAI_API_KEY` is unset, Telerithm falls back to a deterministic heuristic translator (no LLM call, no cloud dependency).
+The frontend renders this as editable filter chips plus a timeline view, so you can refine the AI's interpretation before running the search. If `OPENAI_API_KEY` is unset, Telerithm falls back to a deterministic heuristic translator (no LLM call, no cloud dependency). All endpoints live under `/api/v1`; see [docs/api.md](docs/api.md) for the full reference, or `GET /openapi.json` for the machine-readable spec.
 
-## Next steps
+## Documentation
 
-| If you want to...                                                | Read                                       |
-| ---------------------------------------------------------------- | ------------------------------------------ |
-| See it running, click around, no install                         | [demo.telerithm.cloud](https://demo.telerithm.cloud) |
-| Read the pitch and roadmap                                       | [telerithm.cloud](https://telerithm.cloud) |
-| Understand the ingestion + AI pipeline                           | [docs/architecture.md](docs/architecture.md) |
-| Configure env vars, ingestion sources, LLM provider              | [docs/configuration.md](docs/configuration.md) |
-| Write better natural-language queries, see prompt patterns       | [docs/queries.md](docs/queries.md)         |
-| See REST API rate limits per route group                         | [docs/api.md](docs/api.md)                 |
-| Run on a VPS with Traefik + SSL                                  | [DEPLOYMENT.md](DEPLOYMENT.md)             |
-| Run a local LLM (llama.cpp, Ollama) instead of cloud             | [LOCAL_LLM.md](LOCAL_LLM.md)               |
+| If you want to...                                            | Read                                         |
+| ------------------------------------------------------------- | --------------------------------------------- |
+| Read the pitch and roadmap                                    | [telerithm.cloud](https://telerithm.cloud)    |
+| Understand the ingestion + AI pipeline                        | [docs/architecture.md](docs/architecture.md)  |
+| Configure env vars, ingestion sources, LLM provider           | [docs/configuration.md](docs/configuration.md) |
+| Write better natural-language queries, see prompt patterns    | [docs/queries.md](docs/queries.md)            |
+| See the full REST API reference and rate limits per route group | [docs/api.md](docs/api.md)                  |
+| Run on a VPS with Traefik + SSL                                | [DEPLOYMENT.md](DEPLOYMENT.md)                |
+| Run a local LLM (llama.cpp, Ollama) instead of cloud            | [LOCAL_LLM.md](LOCAL_LLM.md)                  |
+| Use the JavaScript/TypeScript client SDK                      | [packages/sdk-js/README.md](packages/sdk-js/README.md) |
 
-## Features
-
-**Available now:**
-
-- Natural-language search with editable AI-generated filter plan
-- Real-time SSE log streaming, Today view, log detail with surrounding context
-- Saved views, faceted search, histograms, automatic pattern clustering
-- Multi-source ingestion: HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
-- Alert rules + incidents, maintenance windows
-- Notification channels: Email, Webhook, Slack, Microsoft Teams
-- Error grouping with fingerprinting and assignment workflow
-- Team management with RBAC (Owner, Admin, Member, Viewer), invites, admin API
-- Single-tenant by default, optional multi-tenant via config flag
-- Prometheus metrics endpoint (`/metrics`) covering HTTP, ingest, alert, SSE, and NLQ stats
-
-**Planned:** escalation policies (schema exists, evaluation not yet wired), AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, retention policies, `telerithm` CLI.
-
-## API at a glance
-
-All endpoints under `/api/v1`. Bearer-token auth except `/ingest/*` (API key) and `/auth/*`. The table below is a sampling, the full surface is ~58 endpoints across the categories below. See `GET /openapi.json` for the complete spec.
-
-| Method | Path                              | Description                       |
-| ------ | --------------------------------- | --------------------------------- |
-| `POST` | `/auth/register`, `/auth/login`   | Account creation, sign in         |
-| `GET`  | `/teams`                          | Teams (CRUD, invites, members)    |
-| `GET`  | `/sources`                        | Ingestion sources (CRUD)          |
-| `POST` | `/ingest/:sourceId`               | Ingest logs (API key)             |
-| `POST` | `/logs/search`                    | Search logs                       |
-| `POST` | `/logs/facets`, `/logs/histogram`, `/logs/patterns` | Faceted search, timelines, pattern clustering |
-| `GET`  | `/logs/views`                     | Saved views (CRUD, duplicate)     |
-| `POST` | `/query/natural`                  | Translate NL to query plan        |
-| `GET`  | `/stream/logs`                    | SSE live tail                     |
-| `GET`  | `/alerts/rules`, `/alerts/incidents` | Alert rules + incidents        |
-| `POST` | `/alerts/incidents/:id/acknowledge` | Incident workflow (ack, resolve, reopen) |
-| `GET`  | `/dashboards/overview`            | Overview dashboard                |
-| `GET`  | `/issues`, `/issues/:id`          | Grouped errors with assignment    |
-| `GET`  | `/subscriptions`                  | Notification channels (CRUD)      |
-| `GET`  | `/maintenance-windows`            | Maintenance windows               |
-| `GET`  | `/admin/users`, `/admin/teams`    | Admin (Owner role)                |
-| `GET`  | `/health`                         | Health check                      |
-
-## Architecture
-
-```
-frontend/         Next.js 15, server components, Tailwind
-backend/
-  ├── api/        REST endpoints + OpenAPI spec
-  ├── ingestion/  Log parsing and storage pipeline
-  ├── services/   ai, query, alert, team, notification, ...
-  ├── prisma/     Postgres schema and migrations
-  └── tests/      Vitest integration tests
-packages/sdk-js/  JavaScript/TypeScript client SDK
-packages/cli/     stdin-to-ingest shipping script (logforge-pipe.sh)
-```
-
-**Stack:** Node.js, Express, Prisma, PostgreSQL, ClickHouse, Redis, Next.js, Tailwind. See [docs/architecture.md](docs/architecture.md) for how ingestion, storage, and the NLQ pipeline fit together.
-
-## Development
+## Development and contributing
 
 ```bash
 cd backend && npm test              # vitest integration tests
@@ -136,7 +94,7 @@ cd backend && npx tsc --noEmit      # type check
 cd frontend && npx tsc --noEmit     # type check
 ```
 
-Contributions welcome, see [CONTRIBUTING.md](CONTRIBUTING.md). Release notes live in [CHANGELOG.md](CHANGELOG.md) (app) and [packages/sdk-js/CHANGELOG.md](packages/sdk-js/CHANGELOG.md) (SDK, versioned independently).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow. Release notes live in [CHANGELOG.md](CHANGELOG.md) (app) and [packages/sdk-js/CHANGELOG.md](packages/sdk-js/CHANGELOG.md) (SDK, versioned independently).
 
 ## License
 

@@ -1,6 +1,30 @@
 # API
 
-The full route reference is the OpenAPI 3 spec (`backend/src/api/openapi.ts`), served at `GET /openapi.json` and rendered at `GET /docs`. This page covers what the spec does not: rate limiting.
+The full route reference is the OpenAPI 3 spec (`backend/src/api/openapi.ts`), served at `GET /openapi.json` and rendered at `GET /docs`. This page covers what the spec does not: an overview of the route groups, and rate limiting.
+
+## Endpoints
+
+All endpoints are under `/api/v1`. Bearer-token auth applies except `/ingest/*` (API key) and `/auth/*`. The table below is a sampling; the full surface is around 58 endpoints across the categories below. See `GET /openapi.json` for the complete spec.
+
+| Method | Path                              | Description                       |
+| ------ | --------------------------------- | --------------------------------- |
+| `POST` | `/auth/register`, `/auth/login`   | Account creation, sign in         |
+| `GET`  | `/teams`                          | Teams (CRUD, invites, members)    |
+| `GET`  | `/sources`                        | Ingestion sources (CRUD)          |
+| `POST` | `/ingest/:sourceId`               | Ingest logs (API key)             |
+| `POST` | `/logs/search`                    | Search logs                       |
+| `POST` | `/logs/facets`, `/logs/histogram`, `/logs/patterns` | Faceted search, timelines, pattern clustering |
+| `GET`  | `/logs/views`                     | Saved views (CRUD, duplicate)     |
+| `POST` | `/query/natural`                  | Translate NL to query plan        |
+| `GET`  | `/stream/logs`                    | SSE live tail                     |
+| `GET`  | `/alerts/rules`, `/alerts/incidents` | Alert rules + incidents        |
+| `POST` | `/alerts/incidents/:id/acknowledge` | Incident workflow (ack, resolve, reopen) |
+| `GET`  | `/dashboards/overview`            | Overview dashboard                |
+| `GET`  | `/issues`, `/issues/:id`          | Grouped errors with assignment    |
+| `GET`  | `/subscriptions`                  | Notification channels (CRUD)      |
+| `GET`  | `/maintenance-windows`            | Maintenance windows               |
+| `GET`  | `/admin/users`, `/admin/teams`    | Admin (Owner role)                |
+| `GET`  | `/health`                         | Health check                      |
 
 ## Rate limiting
 
