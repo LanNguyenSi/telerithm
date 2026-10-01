@@ -114,7 +114,7 @@ describe("TRUST_PROXY config", () => {
 
   // node:net accepts these IPv6 spellings, Express's proxy-addr does not; they
   // must fail as a configuration error, not later inside app.set.
-  it.each(["::1.2.3.4", "1::1.2.3.4", "::0.0.0.0/96", "fe80::1%eth0.5/64"])(
+  it.each(["::1.2.3.4", "1::1.2.3.4", "::0.0.0.0/96", "fe80::1%eth0.5/64", "10.0.0.1, ::1.2.3.4"])(
     "rejects %j, which Express cannot parse, at config time",
     async (value) => {
       await expect(loadConfigWith(value)).rejects.toThrow(/Invalid configuration:[\s\S]*trustProxy/);

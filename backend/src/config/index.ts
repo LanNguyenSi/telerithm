@@ -99,9 +99,11 @@ function isIpOrCidr(entry: string): boolean {
   return Number(prefix) <= (version === 4 ? 32 : 128);
 }
 
-// Parses the TRUST_PROXY env var. Every value that makes Express trust all
-// hops is rejected, not only the literal `true`: such a setting lets any
-// client pick its own rate-limit key by sending X-Forwarded-For.
+// Parses the TRUST_PROXY env var. Values that make Express trust all hops and
+// that the bounds above can catch are rejected, not only the literal `true`:
+// such a setting lets any client pick its own rate-limit key by sending
+// X-Forwarded-For. A union of narrow ranges and a hop count above the real
+// proxy chain are not caught (documented in docs/api.md).
 export function parseTrustProxy(raw: string | undefined): TrustProxySetting | undefined {
   const value = (raw ?? "").trim();
   if (value === "") return undefined;
