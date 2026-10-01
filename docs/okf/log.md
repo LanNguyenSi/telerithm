@@ -2,6 +2,10 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-01T07:24:15Z, re-verified and re-stamped ingestion-pipeline.md after the
+  `TRUST_PROXY` row in docs/configuration.md was reworded (which values are
+  rejected): its ingestion-source claims are unaffected.
+
 - 2026-10-01T07:01:35Z, re-verified and re-stamped ingestion-pipeline.md again after
   docs/configuration.md changed further (the `TRUST_PROXY` row now states its
   bounds and the production note says how to disable it): its "Ingestion
