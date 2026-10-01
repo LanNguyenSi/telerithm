@@ -2,6 +2,30 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-01T07:35:34Z, re-verified and re-stamped ingestion-pipeline.md after another
+  wording change to the `TRUST_PROXY` row in docs/configuration.md; its
+  ingestion-source claims are unaffected.
+
+- 2026-10-01T07:24:15Z, re-verified and re-stamped ingestion-pipeline.md after the
+  `TRUST_PROXY` row in docs/configuration.md was reworded (which values are
+  rejected): its ingestion-source claims are unaffected.
+
+- 2026-10-01T07:01:35Z, re-verified and re-stamped ingestion-pipeline.md again after
+  docs/configuration.md changed further (the `TRUST_PROXY` row now states its
+  bounds and the production note says how to disable it): its "Ingestion
+  sources" claims (six `SourceType` values, forwarder config paths) still hold.
+  `okf-kit check docs/okf` (0.10.0) is clean.
+
+- 2026-10-01T06:45:55Z, re-verified and re-stamped two docs after the `TRUST_PROXY` change
+  (docs/configuration.md gained a variable row and a production-deploy note;
+  docker-compose.traefik.yml gained the backend `TRUST_PROXY` env).
+  ingestion-pipeline.md: its "Ingestion sources" claims (six `SourceType`
+  values, forwarder config paths) re-checked against docs/configuration.md and
+  unchanged. compose-file-topology-and-drift.md: re-checked the three-file
+  roles and the mirrored ClickHouse mounts and logging anchor (unchanged) and
+  added the deliberate traefik-only `TRUST_PROXY` setting so it is not read as
+  drift. `okf-kit check docs/okf` (0.10.0) was clean afterwards.
+
 - 2026-09-02T04:49:48Z, okf-kit CI pin raised 0.3.1 -> 0.9.0 (fleet parity,
   measured: 0.8.0 and 0.9.0 report identical findings
   here). Cleared the bundle's 7 pre-upgrade findings (4 `sources-fresh`

@@ -93,6 +93,10 @@ services:
       CLICKHOUSE_URL: http://clickhouse:8123
       REDIS_URL: redis://redis:6379
       CORS_ORIGINS: https://demo.telerithm.cloud,https://play.telerithm.cloud
+      # Number of reverse-proxy hops in front of the backend, so the IP-keyed
+      # rate limiters see the real client address. 1 = Traefik only; raise it
+      # if another proxy or CDN sits in front of Traefik (see docs/configuration.md).
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       REGISTRATION_MODE: ${REGISTRATION_MODE:-approval}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}

@@ -1,5 +1,5 @@
 import type { Server } from "node:http";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import supertest from "supertest";
 
 // Hoisted so the vi.mock factory below (itself hoisted above imports) can
@@ -560,6 +560,214 @@ describe("API Routes", () => {
     it("rejects invalid body", async () => {
       const res = await app.post("/api/v1/auth/login").send({});
       expect(res.status).toBe(400);
+    });
+  });
+
+  describe("TRUST_PROXY: IP-keyed rate limiters", () => {
+    // Each case builds its own app (the global limiter, with its in-memory
+    // counters, is created per createApp call) and binds it to a real
+    // listening server, like the suite-wide server above. The auth and ingest
+    // limiters are module-level singletons shared by the whole file, so their
+    // cases use client addresses no other test uses and compare the
+    // `RateLimit` remaining counts instead of exhausting a bucket.
+    type Trust = number | "loopback" | string[] | undefined;
+    const servers: Server[] = [];
+
+    async function appWithTrust(trustProxy: Trust): Promise<supertest.Agent> {
+      const { createApp } = await import("../../src/app.js");
+      (mockedConfig as { trustProxy?: Trust }).trustProxy = trustProxy;
+      const s = await new Promise<Server>((resolve, reject) => {
+        const listening = createApp().listen(0);
+        listening.once("listening", () => resolve(listening));
+        listening.once("error", reject);
+      });
+      servers.push(s);
+      return supertest(s);
+    }
+
+    function remaining(res: { headers: Record<string, string | string[] | undefined> }): number {
+      const header = String(res.headers["ratelimit"]);
+      const match = /remaining=(\d+)/.exec(header);
+      if (!match) throw new Error(`no remaining count in RateLimit header: ${header}`);
+      return Number(match[1]);
+    }
+
+    afterEach(async () => {
+      delete (mockedConfig as { trustProxy?: Trust }).trustProxy;
+      vi.restoreAllMocks();
+      await Promise.all(
+        servers.splice(0).map((s) => new Promise<void>((resolve) => s.close(() => resolve()))),
+      );
+    });
+
+    describe("global limiter", () => {
+      it("with TRUST_PROXY=1, clients with different X-Forwarded-For get separate buckets", async () => {
+        const proxied = await appWithTrust(1);
+        const a1 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.1");
+        const a2 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.1");
+        const b1 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.2");
+        expect([remaining(a1), remaining(a2), remaining(b1)]).toEqual([199, 198, 199]);
+      });
+
+      it("with TRUST_PROXY=1, one client exhausting its bucket does not 429 another client", async () => {
+        const proxied = await appWithTrust(1);
+        for (let i = 0; i < 200; i++) {
+          const ok = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.10");
+          expect(ok.status).toBe(200);
+        }
+        const blocked = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.10");
+        const other = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.11");
+        expect(blocked.status).toBe(429);
+        expect(other.status).toBe(200);
+      });
+
+      it("with TRUST_PROXY unset, a spoofed X-Forwarded-For does not change the bucket key", async () => {
+        const direct = await appWithTrust(undefined);
+        const first = await direct.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.20");
+        const second = await direct.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.21");
+        const third = await direct.get("/api/v1/health");
+        expect([remaining(first), remaining(second), remaining(third)]).toEqual([199, 198, 197]);
+      });
+
+      it("with TRUST_PROXY unset, rotating X-Forwarded-For cannot dodge the limit", async () => {
+        const direct = await appWithTrust(undefined);
+        for (let i = 0; i < 200; i++) {
+          const ok = await direct.get("/api/v1/health").set("X-Forwarded-For", `198.51.100.${i % 250}`);
+          expect(ok.status).toBe(200);
+        }
+        const blocked = await direct.get("/api/v1/health").set("X-Forwarded-For", "198.51.100.251");
+        expect(blocked.status).toBe(429);
+      });
+
+      // The supertest peer is the loopback address, so these cases drive the
+      // `loopback` keyword, an IP/CIDR list, and a hop count other than 1
+      // through to Express's own parsing of the setting.
+      it("with TRUST_PROXY=loopback, clients with different X-Forwarded-For get separate buckets", async () => {
+        const proxied = await appWithTrust("loopback");
+        const a1 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.100");
+        const a2 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.100");
+        const b1 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.101");
+        expect([remaining(a1), remaining(a2), remaining(b1)]).toEqual([199, 198, 199]);
+      });
+
+      it("with a TRUST_PROXY list covering the peer, X-Forwarded-For is honoured", async () => {
+        const proxied = await appWithTrust(["127.0.0.0/8"]);
+        const a1 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.110");
+        const a2 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.110");
+        const b1 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.111");
+        expect([remaining(a1), remaining(a2), remaining(b1)]).toEqual([199, 198, 199]);
+      });
+
+      it("with a TRUST_PROXY list that does not cover the peer, a spoofed X-Forwarded-For is ignored", async () => {
+        const proxied = await appWithTrust(["203.0.113.250"]);
+        const first = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.120");
+        const second = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.121");
+        expect([remaining(first), remaining(second)]).toEqual([199, 198]);
+      });
+
+      it("with TRUST_PROXY=2, the key is the second X-Forwarded-For entry from the right", async () => {
+        const proxied = await appWithTrust(2);
+        // Forged leftmost entry, then the client as the outer proxy saw it,
+        // then the outer proxy as the inner proxy saw it.
+        const a1 = await proxied
+          .get("/api/v1/health")
+          .set("X-Forwarded-For", "6.6.6.1, 203.0.113.130, 10.1.1.1");
+        const a2 = await proxied
+          .get("/api/v1/health")
+          .set("X-Forwarded-For", "6.6.6.2, 203.0.113.130, 10.1.1.1");
+        const b1 = await proxied
+          .get("/api/v1/health")
+          .set("X-Forwarded-For", "6.6.6.3, 203.0.113.131, 10.1.1.1");
+        expect([remaining(a1), remaining(a2), remaining(b1)]).toEqual([199, 198, 199]);
+      });
+
+      it("does not raise the unexpected-X-Forwarded-For validation error when a proxy hop is trusted", async () => {
+        const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const proxied = await appWithTrust(1);
+        await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.30");
+        const logged = errors.mock.calls.flat().map((arg) => String((arg as { code?: string })?.code ?? arg));
+        expect(logged).not.toContain("ERR_ERL_UNEXPECTED_X_FORWARDED_FOR");
+      });
+
+      it("raises the unexpected-X-Forwarded-For validation error when no proxy is trusted (negative control)", async () => {
+        const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        const direct = await appWithTrust(undefined);
+        await direct.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.31");
+        const logged = errors.mock.calls.flat().map((arg) => String((arg as { code?: string })?.code ?? arg));
+        expect(logged).toContain("ERR_ERL_UNEXPECTED_X_FORWARDED_FOR");
+      });
+    });
+
+    describe("GET /api/v1/health (not exempt from the global limiter)", () => {
+      // The Docker healthcheck polls the backend directly on localhost, so its
+      // requests carry no X-Forwarded-For and key on the loopback address, a
+      // bucket no proxied client shares. The route stays under the global
+      // limiter on purpose: exempting it would let anyone hammer the three
+      // dependency pings (Postgres, ClickHouse, Redis) without limit.
+      it("with TRUST_PROXY=1, a client exhausting its bucket cannot starve the healthcheck, and health itself is still limited", async () => {
+        const proxied = await appWithTrust(1);
+        for (let i = 0; i < 200; i++) {
+          await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.40");
+        }
+        const clientBlocked = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.40");
+        const healthcheck = await proxied.get("/api/v1/health");
+        expect(clientBlocked.status).toBe(429);
+        expect(healthcheck.status).toBe(200);
+      });
+    });
+
+    describe("auth limiter", () => {
+      it("with TRUST_PROXY=1, logins from different X-Forwarded-For addresses get separate buckets", async () => {
+        const proxied = await appWithTrust(1);
+        const a1 = await proxied.post("/api/v1/auth/login").set("X-Forwarded-For", "203.0.113.50").send({});
+        const a2 = await proxied.post("/api/v1/auth/login").set("X-Forwarded-For", "203.0.113.50").send({});
+        const b1 = await proxied.post("/api/v1/auth/login").set("X-Forwarded-For", "203.0.113.51").send({});
+        expect(remaining(a2)).toBe(remaining(a1) - 1);
+        expect(remaining(b1)).toBe(remaining(a1));
+      });
+
+      it("with TRUST_PROXY unset, a spoofed X-Forwarded-For shares the socket address bucket", async () => {
+        const direct = await appWithTrust(undefined);
+        const first = await direct.post("/api/v1/auth/login").set("X-Forwarded-For", "203.0.113.60").send({});
+        const second = await direct
+          .post("/api/v1/auth/login")
+          .set("X-Forwarded-For", "203.0.113.61")
+          .send({});
+        expect(remaining(second)).toBe(remaining(first) - 1);
+      });
+    });
+
+    describe("ingest limiter", () => {
+      it("with TRUST_PROXY=1, ingest from different X-Forwarded-For addresses get separate buckets", async () => {
+        const proxied = await appWithTrust(1);
+        const a1 = await proxied
+          .post("/api/v1/ingest/source-1")
+          .set("X-Forwarded-For", "203.0.113.70")
+          .send({});
+        const a2 = await proxied
+          .post("/api/v1/ingest/source-1")
+          .set("X-Forwarded-For", "203.0.113.70")
+          .send({});
+        const b1 = await proxied
+          .post("/api/v1/ingest/source-1")
+          .set("X-Forwarded-For", "203.0.113.71")
+          .send({});
+        expect(remaining(a2)).toBe(remaining(a1) - 1);
+        expect(remaining(b1)).toBe(remaining(a1));
+      });
+
+      it("with TRUST_PROXY unset, a spoofed X-Forwarded-For shares the socket address bucket", async () => {
+        const direct = await appWithTrust(undefined);
+        const first = await direct
+          .post("/api/v1/ingest/source-1")
+          .set("X-Forwarded-For", "203.0.113.80")
+          .send({});
+        const second = await direct
+          .post("/api/v1/ingest/source-1")
+          .set("X-Forwarded-For", "203.0.113.81")
+          .send({});
+        expect(remaining(second)).toBe(remaining(first) - 1);
+      });
     });
   });
 
