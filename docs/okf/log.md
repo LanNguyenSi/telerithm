@@ -2,6 +2,17 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-01T06:45:55Z, re-verified and re-stamped two docs after the `TRUST_PROXY` change
+  (docs/configuration.md gained a variable row and a production-deploy note;
+  docker-compose.traefik.yml gained the backend `TRUST_PROXY` env).
+  ingestion-pipeline.md: its "Ingestion sources" claims (six `SourceType`
+  values, forwarder config paths) re-checked against docs/configuration.md and
+  unchanged. compose-file-topology-and-drift.md: re-checked the three-file
+  roles and the mirrored ClickHouse mounts and logging anchor (unchanged) and
+  added the deliberate traefik-only `TRUST_PROXY` setting so it is not read as
+  drift. `okf-kit check docs/okf` (0.10.0): 2 `sources-fresh` warnings before,
+  none after; the base tree had none.
+
 - 2026-09-02T04:49:48Z, okf-kit CI pin raised 0.3.1 -> 0.9.0 (fleet parity,
   measured: 0.8.0 and 0.9.0 report identical findings
   here). Cleared the bundle's 7 pre-upgrade findings (4 `sources-fresh`
