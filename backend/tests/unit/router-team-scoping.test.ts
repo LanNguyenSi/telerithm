@@ -65,13 +65,13 @@ type Guard =
 // keyed by "METHOD /path" exactly as declared there.
 const ROUTE_TEAM_GUARDS: Record<string, Guard> = {
   // --- Resource-derived team resolvers, built via requireResourceTeam ---
-  "POST /alerts/rules/:id/mute": { kind: "resolver", resolverName: "requireRuleTeam" },
-  "POST /alerts/rules/:id/unmute": { kind: "resolver", resolverName: "requireRuleTeam" },
-  "DELETE /maintenance-windows/:id": { kind: "resolver", resolverName: "requireMaintenanceWindowTeam" },
-  "POST /alerts/incidents/:id/acknowledge": { kind: "resolver", resolverName: "requireIncidentTeam" },
-  "POST /alerts/incidents/:id/resolve": { kind: "resolver", resolverName: "requireIncidentTeam" },
-  "POST /alerts/incidents/:id/reopen": { kind: "resolver", resolverName: "requireIncidentTeam" },
-  "PUT /issues/:id": { kind: "resolver", resolverName: "requireIssueTeam" },
+  "POST /alerts/rules/:id/mute": { kind: "resolver", resolverName: "requireRuleWriteTeam" },
+  "POST /alerts/rules/:id/unmute": { kind: "resolver", resolverName: "requireRuleWriteTeam" },
+  "DELETE /maintenance-windows/:id": { kind: "resolver", resolverName: "requireMaintenanceWindowWriteTeam" },
+  "POST /alerts/incidents/:id/acknowledge": { kind: "resolver", resolverName: "requireIncidentWriteTeam" },
+  "POST /alerts/incidents/:id/resolve": { kind: "resolver", resolverName: "requireIncidentWriteTeam" },
+  "POST /alerts/incidents/:id/reopen": { kind: "resolver", resolverName: "requireIncidentWriteTeam" },
+  "PUT /issues/:id": { kind: "resolver", resolverName: "requireIssueWriteTeam" },
 
   // --- Explicit, justified allowlist (never a silent skip) ---
   "POST /ingest/:sourceId": {

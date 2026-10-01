@@ -130,6 +130,8 @@ enum UserStatus {
   DISABLED
 }
 
+// VIEWER is read-only on team-scoped write routes (403); OWNER, ADMIN and MEMBER
+// may write. The rule lives in canWrite() in src/api/rest/router.ts.
 enum TeamRole {
   OWNER
   ADMIN

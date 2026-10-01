@@ -1072,7 +1072,10 @@ describe("API Routes", () => {
       // the same user id: per decision, the limiter keys on the user, not
       // the session, so logging in again must not grant a fresh budget.
       mockedPrisma.session.findUnique.mockImplementation(async (args: { where: { token: string } }) => {
-        if (args.where.token === "sess_rate_limit_probe_deviceA" || args.where.token === "sess_rate_limit_probe_deviceB") {
+        if (
+          args.where.token === "sess_rate_limit_probe_deviceA" ||
+          args.where.token === "sess_rate_limit_probe_deviceB"
+        ) {
           return makeSession({ userId: "rl-user-shared", token: args.where.token });
         }
         return null;
@@ -1088,14 +1091,20 @@ describe("API Routes", () => {
         const res = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceA);
         expect(res.status).toBe(404);
       }
-      const thirdViaDeviceB = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceB);
+      const thirdViaDeviceB = await app
+        .post("/api/v1/subscriptions/sub-rl/test")
+        .set("Authorization", deviceB);
       expect(thirdViaDeviceB.status).toBe(404);
 
       // The user's budget is now exhausted regardless of which session's
       // token is used for the next request.
-      const blockedViaDeviceA = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceA);
+      const blockedViaDeviceA = await app
+        .post("/api/v1/subscriptions/sub-rl/test")
+        .set("Authorization", deviceA);
       expect(blockedViaDeviceA.status).toBe(429);
-      const blockedViaDeviceB = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceB);
+      const blockedViaDeviceB = await app
+        .post("/api/v1/subscriptions/sub-rl/test")
+        .set("Authorization", deviceB);
       expect(blockedViaDeviceB.status).toBe(429);
     });
 
@@ -2806,6 +2815,282 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Maintenance window not found");
+    });
+  });
+  // ---------------------------------------------------------------------------
+  // VIEWER is read-only on team-scoped writes (task 2a52b2b1)
+  // ---------------------------------------------------------------------------
+
+  describe("team write role — VIEWER is read-only", () => {
+    // This block makes ~40 requests; the app's general rate limiter (200 per
+    // minute per client, with its state held per app instance) is already
+    // close to exhausted by the rest of the file, so it runs against its own
+    // app instance with a fresh limiter instead of the shared one.
+    let writeApp: supertest.Agent;
+    let writeServer: Server;
+
+    beforeAll(async () => {
+      const { createApp } = await import("../../src/app.js");
+      writeServer = await new Promise<Server>((resolve, reject) => {
+        const s = createApp().listen(0);
+        s.once("listening", () => resolve(s));
+        s.once("error", reject);
+      });
+      writeApp = supertest(writeServer);
+    });
+
+    afterAll(async () => {
+      if (!writeServer) return;
+      await new Promise<void>((resolve, reject) => {
+        writeServer.close((err) => (err ? reject(err) : resolve()));
+      });
+    });
+
+    type Role = "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
+
+    function membership(role: Role) {
+      return {
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role,
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      };
+    }
+
+    // One case per team-scoped write route. `arrange` seeds the resource
+    // lookups the handler needs after the gate (the membership row, whose role
+    // is the thing under test, is seeded by the test itself); `mutations` are
+    // the Prisma mocks that must stay untouched when the gate refuses.
+    interface WriteCase {
+      name: string;
+      group: string;
+      send: () => supertest.Test;
+      arrange: () => void;
+      mutations: () => Array<ReturnType<typeof vi.fn>>;
+      successStatus: number;
+    }
+
+    const authed = (req: supertest.Test) => req.set("Authorization", "Bearer sess_admin");
+
+    const writeCases: WriteCase[] = [
+      {
+        name: "POST /sources",
+        group: "sources",
+        send: () =>
+          authed(writeApp.post("/api/v1/sources")).send({ teamId: "t1", name: "web", type: "HTTP" }),
+        arrange: () => {
+          mockedPrisma.logSource.create.mockResolvedValueOnce({
+            id: "src-1",
+            teamId: "t1",
+            name: "web",
+            type: "HTTP",
+            config: {},
+            retentionDays: 7,
+            apiKey: "lf_key",
+            createdAt: new Date("2026-03-23T00:00:00.000Z"),
+          });
+        },
+        mutations: () => [mockedPrisma.logSource.create],
+        successStatus: 201,
+      },
+      {
+        name: "POST /alerts/rules/:id/mute",
+        group: "rule mute/unmute",
+        send: () => authed(writeApp.post("/api/v1/alerts/rules/rule-1/mute")).send({ durationMinutes: 30 }),
+        arrange: () => {
+          mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.alertRule.update.mockResolvedValueOnce({ id: "rule-1", muteUntil: new Date() });
+        },
+        mutations: () => [mockedPrisma.alertRule.update],
+        successStatus: 200,
+      },
+      {
+        name: "POST /alerts/rules/:id/unmute",
+        group: "rule mute/unmute",
+        send: () => authed(writeApp.post("/api/v1/alerts/rules/rule-1/unmute")),
+        arrange: () => {
+          mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.alertRule.update.mockResolvedValueOnce({ id: "rule-1", muteUntil: null });
+        },
+        mutations: () => [mockedPrisma.alertRule.update],
+        successStatus: 200,
+      },
+      {
+        name: "POST /maintenance-windows",
+        group: "maintenance-windows",
+        send: () =>
+          authed(writeApp.post("/api/v1/maintenance-windows")).send({
+            teamId: "t1",
+            name: "Deploy freeze",
+            startsAt: "2026-07-01T00:00:00.000Z",
+            endsAt: "2026-07-01T01:00:00.000Z",
+          }),
+        arrange: () => {
+          mockedPrisma.maintenanceWindow.create.mockResolvedValueOnce({ id: "mw-1", teamId: "t1" });
+        },
+        mutations: () => [mockedPrisma.maintenanceWindow.create],
+        successStatus: 201,
+      },
+      {
+        name: "DELETE /maintenance-windows/:id",
+        group: "maintenance-windows",
+        send: () => authed(writeApp.delete("/api/v1/maintenance-windows/mw-1")),
+        arrange: () => {
+          mockedPrisma.maintenanceWindow.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.maintenanceWindow.delete.mockResolvedValueOnce({ id: "mw-1" });
+        },
+        mutations: () => [mockedPrisma.maintenanceWindow.delete],
+        successStatus: 204,
+      },
+      ...(["acknowledge", "resolve", "reopen"] as const).map(
+        (action): WriteCase => ({
+          name: `POST /alerts/incidents/:id/${action}`,
+          group: "incidents",
+          send: () => authed(writeApp.post(`/api/v1/alerts/incidents/inc-1/${action}`)).send({}),
+          arrange: () => {
+            mockedPrisma.alertIncident.findUnique.mockResolvedValueOnce({ rule: { teamId: "t1" } });
+            mockedPrisma.alertIncident.findFirst.mockResolvedValueOnce({ id: "inc-1" });
+            mockedPrisma.alertIncident.update.mockResolvedValueOnce({ id: "inc-1", status: "OK" });
+            mockedPrisma.incidentEvent.create.mockResolvedValueOnce({ id: "ev-1" });
+          },
+          mutations: () => [mockedPrisma.alertIncident.update, mockedPrisma.incidentEvent.create],
+          successStatus: 200,
+        }),
+      ),
+      {
+        name: "PUT /issues/:id (status)",
+        group: "issues",
+        send: () => authed(writeApp.put("/api/v1/issues/issue-1")).send({ status: "RESOLVED" }),
+        arrange: () => {
+          mockedPrisma.issue.findUnique.mockResolvedValueOnce({ id: "issue-1", teamId: "t1" });
+          mockedPrisma.issue.update.mockResolvedValueOnce({ id: "issue-1", status: "RESOLVED" });
+        },
+        mutations: () => [mockedPrisma.issue.update],
+        successStatus: 200,
+      },
+      {
+        name: "PUT /issues/:id (assignee)",
+        group: "issues",
+        send: () => authed(writeApp.put("/api/v1/issues/issue-1")).send({ assigneeId: null }),
+        arrange: () => {
+          mockedPrisma.issue.findUnique.mockResolvedValueOnce({ id: "issue-1", teamId: "t1" });
+          mockedPrisma.issue.update.mockResolvedValueOnce({ id: "issue-1", assigneeId: null });
+        },
+        mutations: () => [mockedPrisma.issue.update],
+        successStatus: 200,
+      },
+    ];
+
+    it("covers every route group the rule applies to", () => {
+      expect([...new Set(writeCases.map((c) => c.group))].sort()).toEqual([
+        "incidents",
+        "issues",
+        "maintenance-windows",
+        "rule mute/unmute",
+        "sources",
+      ]);
+    });
+
+    for (const c of writeCases) {
+      it(`${c.name}: 403 for a VIEWER and nothing is mutated`, async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        c.arrange();
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership("VIEWER"));
+
+        const res = await c.send();
+
+        expect(res.status).toBe(403);
+        expect(res.body.error).toBe("Forbidden");
+        // The membership lookup ran (so the 403 is the role gate, not a missing
+        // row) against the resource's own team.
+        expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+          where: { teamId_userId: { teamId: "t1", userId: "user-1" } },
+        });
+        for (const mutation of c.mutations()) {
+          expect(mutation).not.toHaveBeenCalled();
+        }
+        expect(mockedPrisma.$transaction).not.toHaveBeenCalled();
+      });
+
+      it(`${c.name}: succeeds for a MEMBER and the mutation runs`, async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        c.arrange();
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership("MEMBER"));
+
+        const res = await c.send();
+
+        expect(res.status).toBe(c.successStatus);
+        expect(c.mutations().some((m) => m.mock.calls.length > 0)).toBe(true);
+      });
+    }
+
+    it("OWNER and ADMIN keep write access (POST /sources)", async () => {
+      for (const role of ["OWNER", "ADMIN"] as const) {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership(role));
+        mockedPrisma.logSource.create.mockResolvedValueOnce({
+          id: "src-1",
+          teamId: "t1",
+          name: "web",
+          type: "HTTP",
+          config: {},
+          retentionDays: 7,
+          apiKey: "lf_key",
+          createdAt: new Date("2026-03-23T00:00:00.000Z"),
+        });
+
+        const res = await authed(writeApp.post("/api/v1/sources")).send({
+          teamId: "t1",
+          name: "web",
+          type: "HTTP",
+        });
+
+        expect(res.status, `role ${role}`).toBe(201);
+      }
+    });
+
+    it("a non-member still gets 403 on a write route (membership check unchanged)", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+      const res = await authed(writeApp.post("/api/v1/sources")).send({
+        teamId: "t1",
+        name: "web",
+        type: "HTTP",
+      });
+
+      expect(res.status).toBe(403);
+      expect(mockedPrisma.logSource.create).not.toHaveBeenCalled();
+    });
+
+    it("VIEWER can still read: GET /alerts/incidents/:id/timeline returns 200", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.alertIncident.findUnique.mockResolvedValueOnce({ rule: { teamId: "t1" } });
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership("VIEWER"));
+      mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce([]);
+
+      const res = await authed(writeApp.get("/api/v1/alerts/incidents/inc-1/timeline"));
+
+      expect(res.status).toBe(200);
+      expect(res.body.events).toEqual([]);
+    });
+
+    it("VIEWER can still read: GET /sources returns 200", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership("VIEWER"));
+
+      const res = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
+
+      expect(res.status).toBe(200);
+    });
+
+    it("canWrite: OWNER, ADMIN and MEMBER may write, VIEWER may not", async () => {
+      const { canWrite } = await import("../../src/api/rest/router.js");
+      expect(canWrite("OWNER")).toBe(true);
+      expect(canWrite("ADMIN")).toBe(true);
+      expect(canWrite("MEMBER")).toBe(true);
+      expect(canWrite("VIEWER")).toBe(false);
     });
   });
 });
