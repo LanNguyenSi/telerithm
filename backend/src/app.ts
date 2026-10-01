@@ -22,6 +22,15 @@ function redactTokenQuery(url: string): string {
 export function createApp() {
   const app = express();
 
+  // Behind a reverse proxy (Traefik) req.ip would be the proxy's address and
+  // every client would share one rate-limit bucket. TRUST_PROXY (off by
+  // default) tells Express how many proxy hops to trust so req.ip, which the
+  // IP-keyed limiters use, becomes the real client address. Never set to
+  // `true`: config rejects it, since it makes X-Forwarded-For spoofable.
+  if (config.trustProxy !== undefined) {
+    app.set("trust proxy", config.trustProxy);
+  }
+
   // 2.2 — Security headers
   app.use(helmet());
 

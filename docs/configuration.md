@@ -27,6 +27,7 @@ All configuration is environment-driven. The backend validates env vars on start
 | `SEED_DEMO_DATA`     | unset                         | Set to `true` to allow demo seeding when `NODE_ENV=production` (otherwise seeding is skipped in production) |
 | `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS` | `300000` (5 minutes) | Rate-limit window for `POST /subscriptions/:id/test`, see [api.md](api.md) |
 | `NOTIFICATION_TEST_RATE_LIMIT_MAX`       | `5`                  | Max `POST /subscriptions/:id/test` requests per window, per caller               |
+| `TRUST_PROXY`        | unset (off)                   | Reverse-proxy trust for the IP-keyed rate limiters. Unset = trust no proxy. Accepts a non-negative integer hop count (`1` = one proxy such as Traefik), `loopback`, or a comma-separated list of proxy IPs/CIDRs. `true` is rejected at startup. See [api.md](api.md#behind-a-reverse-proxy-trust_proxy) |
 
 A starter file lives at `backend/.env.example`. Copy and edit:
 
@@ -109,3 +110,5 @@ cp .env.production.example .env.production
 docker compose -f docker-compose.traefik.yml --env-file .env.production up -d --build
 docker compose -f docker-compose.traefik.yml exec backend npx prisma db push
 ```
+
+The compose file sets `TRUST_PROXY=1` for the backend (Traefik is the only hop between the internet and the backend, per the architecture in [../DEPLOYMENT.md](../DEPLOYMENT.md)). Set `TRUST_PROXY` in `.env.production` to override it, for example `2` when a CDN or another proxy sits in front of Traefik. Leaving it unset on a deployment that is behind a proxy puts every client in one rate-limit bucket.

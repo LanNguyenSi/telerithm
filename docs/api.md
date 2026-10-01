@@ -40,6 +40,8 @@ Every request passes through a global limiter first, then (for a few route group
 
 The global limiter (`app.use(rateLimit(...))` in `backend/src/app.ts`, mounted before routing) applies to every request the process handles, including `GET /metrics`, `GET /api/v1/health`, and `GET /openapi.json`: nothing is exempt from it. A route in one of the other rows sits behind both the global limiter and its own, stricter one; whichever trips first returns the 429.
 
+"Client IP" in the table is `req.ip`. By default (`TRUST_PROXY` unset) that is the address of the socket peer, and an `X-Forwarded-For` header sent by a client is ignored, so it cannot change which bucket a request lands in. Behind a reverse proxy (the Traefik deployment) the peer is the proxy, so every client would share one bucket; set `TRUST_PROXY` to the number of proxy hops in front of the backend so `req.ip` becomes the real client address. See [Behind a reverse proxy](#behind-a-reverse-proxy-trust_proxy) below.
+
 A request over the limit gets `429 Too Many Requests` with:
 
 - A `Retry-After` header (integer seconds until the window resets).
@@ -59,3 +61,16 @@ A request over the limit gets `429 Too Many Requests` with:
 ### Global, ingest, and auth limiters (pre-existing)
 
 The global, ingest, and auth limiters already existed before the per-user limiter above was added; this page documents their current, unchanged behavior rather than introducing them. All three are keyed by client IP (`express-rate-limit`'s default `keyGenerator`) and their limits are hardcoded, not env-configurable. Widening that to match the notification-test limiter's env-configurability is a reasonable follow-up but is out of scope here (see the docs-audit-followup-2 task this page was written for).
+
+### Behind a reverse proxy (`TRUST_PROXY`)
+
+The global, ingest, and auth limiters (and the notification-test limiter's unauthenticated fallback) key on `req.ip`. `TRUST_PROXY` is the opt-in setting that tells the backend which proxies to believe when it derives that address from `X-Forwarded-For`:
+
+- **Unset (default): no proxy is trusted.** `req.ip` is the socket peer. A request carrying a forged `X-Forwarded-For` is keyed on the peer, not on the header. Behind a proxy this puts all clients in one bucket, and `express-rate-limit` logs `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` when it sees the header.
+- **A hop count** (`1`, `2`, ...): trust that many proxies counted from the backend. `req.ip` is the address the outermost trusted proxy saw. `1` fits Traefik alone in front of the backend. Use `2` only if a CDN or another proxy sits in front of Traefik and Traefik is configured to trust it (its entrypoint `forwardedHeaders.trustedIPs`); a count larger than the real number of hops lets a client choose its own key.
+- **`loopback`**, or a **comma-separated list of proxy IPs/CIDRs**: trust only those peers.
+- **`true` is rejected at startup.** It trusts every `X-Forwarded-For` entry, so any client could pick its own rate-limit key. A value that is not one of the forms above also fails startup with an `Invalid configuration` error.
+
+`docker-compose.traefik.yml` sets `TRUST_PROXY` to `1` (override with the `TRUST_PROXY` variable in the compose env file). See [configuration.md](configuration.md) for the full variable entry.
+
+`GET /api/v1/health` is deliberately not exempt from the global limiter. The Docker healthcheck polls the backend directly on `localhost` with no `X-Forwarded-For`, so with `TRUST_PROXY` set it is keyed on the loopback address and a client exhausting its own bucket cannot starve it; exempting the route would instead let any caller hammer the Postgres, ClickHouse, and Redis pings without limit.

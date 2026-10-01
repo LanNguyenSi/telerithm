@@ -1,4 +1,42 @@
+import { isIP } from "node:net";
 import { z } from "zod";
+
+// Value handed to Express's `trust proxy` setting: a hop count, the
+// `loopback` keyword, or a list of trusted proxy IPs/CIDRs. `undefined` means
+// "do not trust any proxy" (Express's default), so `req.ip` is the socket peer.
+export type TrustProxySetting = number | "loopback" | string[];
+
+const TRUST_PROXY_EXPECTED =
+  "unset (no proxy trusted), a non-negative integer hop count (e.g. 1 for a single reverse proxy), " +
+  '"loopback", or a comma-separated list of proxy IPs/CIDRs';
+
+function isIpOrCidr(entry: string): boolean {
+  const slash = entry.indexOf("/");
+  if (slash === -1) return isIP(entry) !== 0;
+  const version = isIP(entry.slice(0, slash));
+  const prefix = entry.slice(slash + 1);
+  if (version === 0 || !/^\d{1,3}$/.test(prefix)) return false;
+  return Number(prefix) <= (version === 4 ? 32 : 128);
+}
+
+// Parses the TRUST_PROXY env var. The boolean `true` is rejected on purpose:
+// Express's `trust proxy: true` trusts every X-Forwarded-For entry, so any
+// client could pick its own rate-limit key by sending the header.
+export function parseTrustProxy(raw: string | undefined): TrustProxySetting | undefined {
+  const value = (raw ?? "").trim();
+  if (value === "") return undefined;
+  if (value.toLowerCase() === "true") {
+    throw new Error(
+      "TRUST_PROXY=true is not allowed: it trusts every X-Forwarded-For entry, so clients could spoof " +
+        `their IP and dodge the rate limiters. Expected ${TRUST_PROXY_EXPECTED}`,
+    );
+  }
+  if (/^\d+$/.test(value)) return Number(value);
+  if (value === "loopback") return "loopback";
+  const entries = value.split(",").map((e) => e.trim());
+  if (entries.every((e) => e !== "" && isIpOrCidr(e))) return entries;
+  throw new Error(`TRUST_PROXY=${JSON.stringify(value)} is invalid. Expected ${TRUST_PROXY_EXPECTED}`);
+}
 
 const configSchema = z.object({
   port: z.coerce.number().int().default(4000),
@@ -39,6 +77,18 @@ const configSchema = z.object({
     .positive()
     .default(5 * 60_000),
   notificationTestRateLimitMax: z.coerce.number().int().positive().default(5),
+  // Opt-in proxy trust for the IP-keyed rate limiters; see parseTrustProxy.
+  trustProxy: z
+    .string()
+    .optional()
+    .transform((v, ctx) => {
+      try {
+        return parseTrustProxy(v);
+      } catch (err) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: (err as Error).message });
+        return z.NEVER;
+      }
+    }),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -65,6 +115,7 @@ function loadConfig(): Config {
     maxSyncRuntimeMs: process.env.MAX_SYNC_RUNTIME_MS,
     notificationTestRateLimitWindowMs: process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS,
     notificationTestRateLimitMax: process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX,
+    trustProxy: process.env.TRUST_PROXY,
   });
 
   if (!result.success) {
