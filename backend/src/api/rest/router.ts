@@ -1137,10 +1137,11 @@ function requireResourceTeam(
       res.status(404).json({ error: notFoundMessage });
       return null;
     }
+    // Fail closed: only an explicit "read" gets the membership-only gate.
     const role =
-      mode === "write"
-        ? await requireTeamWriteRole(userId, teamId, res)
-        : await requireTeamRole(userId, teamId, res);
+      mode === "read"
+        ? await requireTeamRole(userId, teamId, res)
+        : await requireTeamWriteRole(userId, teamId, res);
     if (role === null) return null;
     return teamId;
   };

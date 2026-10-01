@@ -21,9 +21,12 @@ import ts from "typescript";
 // POST /sources and POST /maintenance-windows take their teamId from the body.
 //
 // Every state-changing route MUST appear in ROUTE_WRITE_GUARDS as either
-//   { kind: "write", gate }        the handler contains a real CallExpression
-//                                  to a write gate (a mention in a comment
-//                                  does not count), or
+//   { kind: "write", gate }        the handler applies a write gate as its
+//                                  first step after authentication and
+//                                  validation, with the gate's null result
+//                                  ending the handler (see "Gate placement"
+//                                  below; a mention in a comment does not
+//                                  count), or
 //   { kind: "allowlist", reason }  an explicit, justified exception (reading
 //                                  POST, per-user, invite, admin, ingest, ...).
 // A route in router.ts that is missing here fails CI, so a new mutating route
@@ -139,15 +142,17 @@ const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
     kind: "allowlist",
     reason:
       "Saved-view model (owner plus canManageShared), outside the team write rule; whether a VIEWER may create a " +
-      "shared view is a separate open question tracked as its own follow-up task. Membership is required via " +
-      "requireTeamRole.",
+      "shared or default view is a separate open question tracked as its own follow-up task (765bb823). " +
+      "Membership is required via requireTeamRole.",
     verify: { type: "call", callee: "requireTeamRole" },
   },
   "PUT /logs/views/:id": {
     kind: "allowlist",
     reason:
-      "Saved-view model: LogViewService scopes the mutation to the owner, or to OWNER/ADMIN (canManageShared) " +
-      "for shared views; a VIEWER can only touch their own views.",
+      "Saved-view model, outside the team write rule: LogViewService lets the owner of a view update it and " +
+      "OWNER/ADMIN (canManageShared) update shared views. That does not make it read-only for a VIEWER: an " +
+      "owner (any role) can set isShared and isDefault on their own view, and isDefault clears the default flag " +
+      "of the team's other shared views. Tracked as a log-view follow-up task (765bb823), not part of this rule.",
     verify: { type: "call", callee: "requireTeamRole" },
   },
   "POST /logs/views/:id/duplicate": {
@@ -299,11 +304,42 @@ function findUnrecognizedApiRouterUsages(
         }
       }
     }
+    // Any other reference to the `apiRouter` identifier is a registration shape
+    // the call-based walk above cannot see: an alias (`const r = apiRouter;
+    // r.post(...)`), element access (`apiRouter["delete"](...)`), a detached
+    // method (`const f = apiRouter.post`), destructuring or passing the router
+    // on. Only the declaration and the `apiRouter.<member>(` callee position
+    // (handled above) are accepted.
+    if (ts.isIdentifier(node) && node.text === "apiRouter" && !isRecognizedApiRouterReference(node)) {
+      issues.push({
+        snippet: (node.parent ?? node).getText(sourceFile).split("\n")[0].trim(),
+        reason:
+          "apiRouter is referenced in a position other than its declaration or an `apiRouter.<method>(` call " +
+          "(an alias, element access such as apiRouter['delete'](...), a detached method or a pass-through). " +
+          "extractRoutes would silently skip routes registered that way. Register routes with a direct " +
+          `apiRouter.<method>("path", ...) call, or extend extractRoutes and classify the resulting routes in ROUTE_WRITE_GUARDS.`,
+      });
+    }
     ts.forEachChild(node, visit);
   }
 
   visit(sourceFile);
   return issues;
+}
+
+// True for the two positions of the `apiRouter` identifier that are not an
+// escape hatch: its own declaration, and the object of a property access that
+// is itself the callee of a call (`apiRouter.get(...)`, `apiRouter.use(...)`;
+// whether the member is a supported method is judged by the caller).
+function isRecognizedApiRouterReference(identifier: ts.Identifier): boolean {
+  const parent = identifier.parent;
+  if (ts.isVariableDeclaration(parent) && parent.name === identifier) return true;
+  return (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === identifier &&
+    ts.isCallExpression(parent.parent) &&
+    parent.parent.expression === parent
+  );
 }
 
 // First CallExpression in `root`'s subtree whose callee's exact source text
@@ -347,6 +383,195 @@ function containsIdentifier(root: ts.Node, name: string): boolean {
 
 function routeCallsGate(route: RouteDecl, sourceFile: ts.SourceFile, gate: string): boolean {
   return route.argNodes.some((node) => findCallByCallee(node, sourceFile, gate) !== null);
+}
+
+// --- Gate placement -------------------------------------------------------
+//
+// Calling a write gate somewhere in the handler is not enough: a call whose
+// null result is ignored, or one that runs after a mutation, still lets a
+// VIEWER through. `checkGatePlacement` therefore pins the shape of the handler
+// body (the statements of the route's handler function, in order):
+//
+//   1. PRE-GATE statements (everything before the gate statement) may only be
+//      authentication and validation: `await requireAuth(...)` with its null
+//      early return, `<schema>.safeParse(...)` with its 400 early return, and
+//      plain reads such as `String(req.params.id)`. They may not contain any
+//      other await or call, assign, or delete anything.
+//   2. The GATE statement is a direct child of the handler body (not nested
+//      in a condition, loop, try or callback) and has exactly one of two
+//      shapes:
+//        a. `if ((await gate(...)) === null) return;`
+//        b. `const x = await gate(...);` IMMEDIATELY followed by
+//           `if (x === null) return;`
+//      where `return` is a bare return, directly or as the only statement of
+//      the `if` block, so a null result (the gate has already sent the 403 or
+//      404) ends the handler before anything else runs.
+//
+// Everything after the gate statement is unconstrained: by then the caller
+// is known to be a member whose role may write.
+const PRE_GATE_CALLEES = new Set(["requireAuth", "String"]);
+
+function isPermittedPreGateCallee(calleeText: string): boolean {
+  return (
+    PRE_GATE_CALLEES.has(calleeText) ||
+    calleeText.endsWith(".safeParse") ||
+    calleeText.endsWith(".error.flatten") ||
+    /^res\.status(\(\d+\)\.(json|end))?$/.test(calleeText)
+  );
+}
+
+// Reason the statement does not qualify as pre-gate (authentication or
+// validation only), or null when it does.
+function preGateViolation(statement: ts.Statement, sourceFile: ts.SourceFile): string | null {
+  let violation: string | null = null;
+
+  function visit(node: ts.Node): void {
+    if (violation) return;
+    if (ts.isAwaitExpression(node)) {
+      const operand = ts.isParenthesizedExpression(node.expression)
+        ? node.expression.expression
+        : node.expression;
+      if (!(ts.isCallExpression(operand) && operand.expression.getText(sourceFile) === "requireAuth")) {
+        violation = `awaits ${node.expression.getText(sourceFile).split("\n")[0]} before the write gate`;
+        return;
+      }
+    } else if (ts.isCallExpression(node)) {
+      const callee = node.expression.getText(sourceFile);
+      if (!isPermittedPreGateCallee(callee)) {
+        violation = `calls ${callee}(...) before the write gate`;
+        return;
+      }
+    } else if (
+      (ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+      ts.isDeleteExpression(node) ||
+      ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken))
+    ) {
+      violation = `mutates state (${node.getText(sourceFile).split("\n")[0]}) before the write gate`;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(statement);
+  return violation;
+}
+
+function unwrapParens(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (ts.isParenthesizedExpression(current)) current = current.expression;
+  return current;
+}
+
+// `<operand> === null` in either operand order; returns the operand or null.
+function nullComparisonOperand(expression: ts.Expression): ts.Expression | null {
+  const e = unwrapParens(expression);
+  if (!ts.isBinaryExpression(e) || e.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken)
+    return null;
+  if (e.right.kind === ts.SyntaxKind.NullKeyword) return e.left;
+  if (e.left.kind === ts.SyntaxKind.NullKeyword) return e.right;
+  return null;
+}
+
+// `if (<null check>) return;` or `if (<null check>) { return; }` without else.
+function isNullCheckThenBareReturn(statement: ts.Statement): statement is ts.IfStatement {
+  if (!ts.isIfStatement(statement) || statement.elseStatement) return false;
+  const then = statement.thenStatement;
+  if (ts.isReturnStatement(then)) return !then.expression;
+  return (
+    ts.isBlock(then) &&
+    then.statements.length === 1 &&
+    ts.isReturnStatement(then.statements[0]) &&
+    !then.statements[0].expression
+  );
+}
+
+// `await gate(...)` (parentheses allowed) with exactly the given callee.
+function isAwaitedGateCall(expression: ts.Expression, sourceFile: ts.SourceFile, gate: string): boolean {
+  const e = unwrapParens(expression);
+  return (
+    ts.isAwaitExpression(e) &&
+    ts.isCallExpression(unwrapParens(e.expression)) &&
+    (unwrapParens(e.expression) as ts.CallExpression).expression.getText(sourceFile) === gate
+  );
+}
+
+// Does `statement` (and, for shape b, its successor) form the gate statement?
+// Returns how many statements it consumes (1 or 2), or 0 when it is not one.
+function gateStatementLength(
+  statements: readonly ts.Statement[],
+  index: number,
+  sourceFile: ts.SourceFile,
+  gate: string,
+): number {
+  const statement = statements[index];
+  // Shape a: if ((await gate(...)) === null) return;
+  if (isNullCheckThenBareReturn(statement)) {
+    const operand = nullComparisonOperand(statement.expression);
+    if (operand && isAwaitedGateCall(operand, sourceFile, gate)) return 1;
+  }
+  // Shape b: const x = await gate(...); if (x === null) return;
+  if (ts.isVariableStatement(statement) && statement.declarationList.declarations.length === 1) {
+    const [declaration] = statement.declarationList.declarations;
+    const next = statements[index + 1];
+    if (
+      ts.isIdentifier(declaration.name) &&
+      declaration.initializer &&
+      isAwaitedGateCall(declaration.initializer, sourceFile, gate) &&
+      next &&
+      isNullCheckThenBareReturn(next)
+    ) {
+      const operand = nullComparisonOperand(next.expression);
+      if (operand && ts.isIdentifier(operand) && operand.text === declaration.name.text) return 2;
+    }
+  }
+  return 0;
+}
+
+// The route's handler: the first function-like node inside the last argument
+// (the `async (req, res) => {...}` passed to asyncHandler).
+function findHandlerBody(route: RouteDecl): ts.Block | null {
+  const last = route.argNodes[route.argNodes.length - 1];
+  if (!last) return null;
+  let body: ts.Block | null = null;
+  let seen = false;
+  function visit(node: ts.Node): void {
+    if (seen) return;
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+      seen = true;
+      if (ts.isBlock(node.body)) body = node.body;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(last);
+  return body;
+}
+
+// Returns null when the route's handler applies `gate` in the required place,
+// otherwise a human-readable reason.
+function checkGatePlacement(route: RouteDecl, sourceFile: ts.SourceFile, gate: string): string | null {
+  if (!routeCallsGate(route, sourceFile, gate)) return `never calls ${gate}(...)`;
+  const body = findHandlerBody(route);
+  if (!body) return "has no handler function with a block body to inspect";
+  const statements = body.statements;
+  for (let i = 0; i < statements.length; i++) {
+    if (gateStatementLength(statements, i, sourceFile, gate) > 0) return null;
+    const violation = preGateViolation(statements[i], sourceFile);
+    if (violation) {
+      return (
+        `${violation}; the first statement that is not authentication or validation must be the ${gate} ` +
+        "gate with a null early return"
+      );
+    }
+  }
+  return (
+    `calls ${gate}(...), but not as a top-level \`if ((await ${gate}(...)) === null) return;\` or ` +
+    `\`const x = await ${gate}(...); if (x === null) return;\` before any other work (its null result must end ` +
+    "the handler)"
+  );
 }
 
 function routeSatisfiesVerify(route: RouteDecl, sourceFile: ts.SourceFile, verify: Verify): boolean {
@@ -441,10 +666,10 @@ describe("router.ts: every state-changing route is classified for the team write
       if (!guard) return; // reported by the classification test above
       if (guard.kind === "write") {
         expect(
-          routeCallsGate(route, routerSourceFile, guard.gate),
-          `Expected ${key} to actually call ${guard.gate}(...) so a VIEWER is refused before any mutation (a ` +
-            "mention in a comment does not count).",
-        ).toBe(true);
+          checkGatePlacement(route, routerSourceFile, guard.gate),
+          `Expected ${key} to apply ${guard.gate} before any mutation, with its null result ending the handler ` +
+            "(a mention in a comment does not count; see the gate placement rules above).",
+        ).toBeNull();
       } else if (guard.verify) {
         expect(
           routeSatisfiesVerify(route, routerSourceFile, guard.verify),
@@ -496,22 +721,191 @@ describe("router.ts: the write rule has one home and the gates really apply it",
     expect(resolverMode(routerSourceFile, "requireIncidentTeam")).toBe("read");
   });
 
-  it('requireResourceTeam picks requireTeamWriteRole for "write" mode and requireTeamRole otherwise', () => {
+  it('requireResourceTeam fails closed: only an explicit "read" mode gets requireTeamRole', () => {
     const decls = findFunctionDeclarations(routerSourceFile, "requireResourceTeam");
     expect(decls).toHaveLength(1);
     let conditional: ts.ConditionalExpression | null = null;
     (function visit(node: ts.Node): void {
       if (conditional) return;
-      if (ts.isConditionalExpression(node) && node.condition.getText(routerSourceFile).includes('"write"')) {
+      if (ts.isConditionalExpression(node) && node.condition.getText(routerSourceFile).includes("mode")) {
         conditional = node;
         return;
       }
       ts.forEachChild(node, visit);
     })(decls[0]);
-    expect(conditional, 'requireResourceTeam must branch on its "write" mode').not.toBeNull();
+    expect(conditional, "requireResourceTeam must branch on its mode").not.toBeNull();
     const branch = conditional as unknown as ts.ConditionalExpression;
-    expect(findCallByCallee(branch.whenTrue, routerSourceFile, "requireTeamWriteRole")).not.toBeNull();
-    expect(findCallByCallee(branch.whenFalse, routerSourceFile, "requireTeamRole")).not.toBeNull();
+    // The membership-only gate sits behind the explicit "read" comparison; a
+    // missing, misspelled or future mode falls through to the write gate.
+    expect(branch.condition.getText(routerSourceFile)).toBe('mode === "read"');
+    expect(findCallByCallee(branch.whenTrue, routerSourceFile, "requireTeamRole")).not.toBeNull();
+    expect(findCallByCallee(branch.whenTrue, routerSourceFile, "requireTeamWriteRole")).toBeNull();
+    expect(findCallByCallee(branch.whenFalse, routerSourceFile, "requireTeamWriteRole")).not.toBeNull();
+    expect(findCallByCallee(branch.whenFalse, routerSourceFile, "requireTeamRole")).toBeNull();
+  });
+
+  // Gate placement controls: a synthetic handler is run through the same
+  // classifier the real routes go through. The positive controls pin what is
+  // accepted; every negative control is a way a VIEWER could still reach a
+  // mutation while a gate call is present in the handler.
+  describe("the write gate must end the handler on null and precede any other work", () => {
+    const PROLOGUE = `
+            const userId = await requireAuth(req, res);
+            if (userId === null) return;
+            const parsed = widgetSchema.safeParse(req.body);
+            if (!parsed.success) {
+              res.status(400).json({ error: parsed.error.flatten() });
+              return;
+            }`;
+
+    function placement(body: string, gate: string = "requireTeamWriteRole"): string | null {
+      const synthetic = `
+        apiRouter.post(
+          "/widgets",
+          asyncHandler(async (req, res) => {${body}
+          }),
+        );
+      `;
+      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      const [route] = extractRoutes(file);
+      expect(route).toBeDefined();
+      return checkGatePlacement(route, file, gate);
+    }
+
+    it("accepts `if ((await gate(...)) === null) return;` after auth and validation (positive control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;
+            await prisma.widget.create({ data: {} });`),
+      ).toBeNull();
+    });
+
+    it("accepts `const x = await gate(...)` immediately followed by `if (x === null) return;` (positive control)", () => {
+      expect(
+        placement(
+          `${PROLOGUE}
+            const teamId = await requireIncidentWriteTeam(String(req.params.id), userId, res);
+            if (teamId === null) return;
+            await prisma.widget.delete({ where: { id: String(req.params.id), teamId } });`,
+          "requireIncidentWriteTeam",
+        ),
+      ).toBeNull();
+    });
+
+    it("accepts the null check with a braced bare return and a flipped comparison (positive control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            if (null === (await requireTeamWriteRole(userId, parsed.data.teamId, res))) {
+              return;
+            }
+            await prisma.widget.create({ data: {} });`),
+      ).toBeNull();
+    });
+
+    it("rejects a gate call whose result is not checked (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            await requireTeamWriteRole(userId, parsed.data.teamId, res);
+            await prisma.widget.create({ data: {} });`),
+      ).not.toBeNull();
+    });
+
+    it("rejects `const x = await gate(...)` with no following null check (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            const role = await requireTeamWriteRole(userId, parsed.data.teamId, res);
+            await prisma.widget.create({ data: { role } });`),
+      ).not.toBeNull();
+    });
+
+    it("rejects a null check that is not immediately after the gate call (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            const role = await requireTeamWriteRole(userId, parsed.data.teamId, res);
+            await prisma.widget.create({ data: { role } });
+            if (role === null) return;`),
+      ).not.toBeNull();
+    });
+
+    it("rejects a null check that does not return (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) {
+              console.warn("forbidden");
+            }
+            await prisma.widget.create({ data: {} });`),
+      ).not.toBeNull();
+    });
+
+    it("rejects a return that carries a value or sits behind another statement (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) {
+              await prisma.widget.create({ data: {} });
+              return;
+            }`),
+      ).not.toBeNull();
+    });
+
+    it("rejects an inverted null check that returns for allowed callers (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) !== null) return;
+            await prisma.widget.create({ data: {} });`),
+      ).not.toBeNull();
+    });
+
+    it("rejects a gate that runs after a mutation (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            await prisma.widget.create({ data: {} });
+            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;`),
+      ).not.toBeNull();
+    });
+
+    it("rejects a gate that runs after another awaited lookup (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            const widget = await widgetService.get(parsed.data.id);
+            if ((await requireTeamWriteRole(userId, widget.teamId, res)) === null) return;
+            await prisma.widget.update({ where: { id: widget.id }, data: {} });`),
+      ).not.toBeNull();
+    });
+
+    it("rejects a gate that runs after an assignment (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            state.count += 1;
+            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;`),
+      ).not.toBeNull();
+    });
+
+    it("rejects a gate nested in a condition (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            if (req.body.strict) {
+              if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;
+            }
+            await prisma.widget.create({ data: {} });`),
+      ).not.toBeNull();
+    });
+
+    it("rejects a gate nested in a callback (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            const check = async () => {
+              if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;
+            };
+            await prisma.widget.create({ data: {} });`),
+      ).not.toBeNull();
+    });
+
+    it("rejects a handler that never calls the gate (negative control)", () => {
+      expect(
+        placement(`${PROLOGUE}
+            await prisma.widget.create({ data: {} });`),
+      ).not.toBeNull();
+    });
   });
 
   // Regression tests: a gate name that appears only in a comment must not
@@ -608,6 +1002,44 @@ describe("router.ts: the write rule has one home and the gates really apply it",
       const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
       expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
       expect(extractRoutes(file)).toEqual([]);
+    });
+
+    it("flags an aliased router (const alias = apiRouter; alias.post(...))", () => {
+      const synthetic = `const alias = apiRouter;\n        alias.post("/widgets", asyncHandler(async (req, res) => {}));`;
+      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
+      expect(extractRoutes(file)).toEqual([]);
+    });
+
+    it('flags element-access registration (apiRouter["delete"](...))', () => {
+      const synthetic = `apiRouter["delete"]("/widgets/:id", asyncHandler(async (req, res) => {}));`;
+      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
+      expect(extractRoutes(file)).toEqual([]);
+    });
+
+    it("flags a detached method reference (const post = apiRouter.post)", () => {
+      const synthetic = `const post = apiRouter.post;`;
+      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
+    });
+
+    it("flags destructuring the router (const { post } = apiRouter)", () => {
+      const synthetic = `const { post } = apiRouter;`;
+      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
+    });
+
+    it("flags passing the router on (register(apiRouter))", () => {
+      const synthetic = `register(apiRouter);`;
+      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
+    });
+
+    it("does not flag the router's own declaration (negative control)", () => {
+      const synthetic = `export const apiRouter = Router();\n        apiRouter.get("/widgets", asyncHandler(async (req, res) => {}));`;
+      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(file)).toEqual([]);
     });
 
     it("does not flag a normal, recognized route registration (negative control)", () => {

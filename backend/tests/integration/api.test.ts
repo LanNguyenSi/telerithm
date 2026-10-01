@@ -1072,10 +1072,7 @@ describe("API Routes", () => {
       // the same user id: per decision, the limiter keys on the user, not
       // the session, so logging in again must not grant a fresh budget.
       mockedPrisma.session.findUnique.mockImplementation(async (args: { where: { token: string } }) => {
-        if (
-          args.where.token === "sess_rate_limit_probe_deviceA" ||
-          args.where.token === "sess_rate_limit_probe_deviceB"
-        ) {
+        if (args.where.token === "sess_rate_limit_probe_deviceA" || args.where.token === "sess_rate_limit_probe_deviceB") {
           return makeSession({ userId: "rl-user-shared", token: args.where.token });
         }
         return null;
@@ -1091,20 +1088,14 @@ describe("API Routes", () => {
         const res = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceA);
         expect(res.status).toBe(404);
       }
-      const thirdViaDeviceB = await app
-        .post("/api/v1/subscriptions/sub-rl/test")
-        .set("Authorization", deviceB);
+      const thirdViaDeviceB = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceB);
       expect(thirdViaDeviceB.status).toBe(404);
 
       // The user's budget is now exhausted regardless of which session's
       // token is used for the next request.
-      const blockedViaDeviceA = await app
-        .post("/api/v1/subscriptions/sub-rl/test")
-        .set("Authorization", deviceA);
+      const blockedViaDeviceA = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceA);
       expect(blockedViaDeviceA.status).toBe(429);
-      const blockedViaDeviceB = await app
-        .post("/api/v1/subscriptions/sub-rl/test")
-        .set("Authorization", deviceB);
+      const blockedViaDeviceB = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceB);
       expect(blockedViaDeviceB.status).toBe(429);
     });
 

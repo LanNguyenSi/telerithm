@@ -48,7 +48,7 @@ erzwungen:
 
 Team-Mitgliedschaft allein reicht für mutierende Routen nicht: die Rolle
 `VIEWER` (`TeamRole` in `backend/prisma/schema.prisma`) ist read-only, `OWNER`,
-`ADMIN` und `MEMBER` dürfen schreiben (Operator-Entscheidung 2026-10-01). Ein
+`ADMIN` und `MEMBER` dürfen schreiben. Ein
 `VIEWER` bekommt auf einer team-gescopten Write-Route `403 { error: "Forbidden" }`,
 bevor irgendetwas mutiert wird; Lesepfade (inklusive `GET /alerts/incidents/:id/timeline`
 und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
@@ -56,7 +56,8 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
 - Die Regel steht an genau einer Stelle: `canWrite(role)` in `router.ts`
   (Allow-List: `OWNER`, `ADMIN`, `MEMBER` sind `true`, alles andere `false`, eine
   später ergänzte Rolle ist also erst nach bewusstem Eintrag schreibberechtigt).
-  Keine Route vergleicht Rollen selbst für die Write-Entscheidung.
+  Keine der team-gescopten Write-Routen vergleicht Rollen selbst für die
+  Write-Entscheidung (die Log-View-Routen haben ein eigenes Modell, siehe unten).
 - Erreicht wird `canWrite` über `requireTeamWriteRole(userId, teamId, res)`
   (Mitgliedschaft über `requireTeamRole`, danach `canWrite`, sonst 403) für Routen,
   die die `teamId` aus dem Body nehmen (`POST /sources`, `POST /maintenance-windows`),
@@ -68,18 +69,30 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
 - Durchsetzung: `backend/tests/unit/router-write-role.test.ts` parst `router.ts`
   per TypeScript-AST und verlangt für JEDE state-changing Route (mit oder ohne
   `:param`) einen Eintrag in `ROUTE_WRITE_GUARDS`: entweder `{ kind: "write", gate }`
-  (der Handler enthält einen echten `CallExpression` auf das Gate, ein Kommentar
-  zählt nicht) oder einen begründeten Allowlist-Eintrag (lesender POST, per-User,
-  Invites, Log-Views, Admin, Ingest, Auth, `POST /teams`). Eine neue, nicht
-  klassifizierte mutierende Route macht CI rot. Der Test prüft außerdem, dass
-  `requireTeamWriteRole` `canWrite` aufruft und dass jeder Write-Resolver im
-  Modus `"write"` gebaut ist. Das Verhalten (VIEWER 403 und keine Mutation,
+  (das Gate ist der erste Schritt nach Authentifizierung und Validierung, und
+  sein `null`-Ergebnis beendet den Handler per frühem `return`, also entweder
+  `if ((await gate(...)) === null) return;` oder `const x = await gate(...);`
+  unmittelbar gefolgt von `if (x === null) return;`; ein Kommentar zählt nicht)
+  oder einen begründeten Allowlist-Eintrag (lesender POST, per-User, Invites,
+  Log-Views, Admin, Ingest, Auth, `POST /teams`). Ein Gate nach einer Mutation,
+  ohne `null`-Prüfung oder ohne `return` lässt den Test rot werden, ebenso eine
+  neue, nicht klassifizierte mutierende Route oder eine Router-Registrierung,
+  die der Test nicht klassifizieren kann (Alias von `apiRouter`,
+  `apiRouter["delete"](...)`). Der Test prüft außerdem, dass
+  `requireTeamWriteRole` `canWrite` aufruft, dass jeder Write-Resolver im
+  Modus `"write"` gebaut ist und dass `requireResourceTeam` nur für `"read"`
+  die reine Mitgliedschaftsprüfung nimmt (fail-closed). Das Verhalten (VIEWER 403 und keine Mutation,
   MEMBER 2xx, Timeline für VIEWER 200) pinnen die Route-Tests in
   `backend/tests/integration/api.test.ts`.
 - Nicht Teil dieser Regel: Invite-Verwaltung (`canManageInvites`, nur OWNER/ADMIN),
-  Shared-Views (`canManageShared`), Subscriptions (per-User) und die
-  Admin-Routen (`requireAdmin`). Ob ein `VIEWER` per `POST /logs/views` eine
-  Shared-View anlegen darf, ist eine eigene offene Frage.
+  Subscriptions (per-User) und die Admin-Routen (`requireAdmin`). Die
+  Log-View-Routen (`/logs/views`) liegen ebenfalls außerhalb und sind für
+  `VIEWER` nicht read-only: sie prüfen nur Mitgliedschaft und
+  Eigentümerschaft der View, `canManageShared` greift nur beim Ändern oder
+  Löschen fremder Shared-Views. Ein `VIEWER` kann eine eigene View per
+  `POST` oder `PUT` mit `isShared` teilen und per `isDefault` das
+  Default-Flag der übrigen Shared-Views des Teams löschen. Das ist ein
+  eigener Follow-up (agent-tasks `765bb823`), nicht Teil dieser Regel.
 - Nach dem Merge prüft der Operator in Produktion, ob VIEWER-Mitgliedschaften
   existieren (`SELECT count(*) FROM "TeamMember" WHERE role = 'VIEWER'`), weil
   deren bisheriger Schreibzugriff mit dieser Regel endet.
