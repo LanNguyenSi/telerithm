@@ -6,9 +6,75 @@ import { z } from "zod";
 // "do not trust any proxy" (Express's default), so `req.ip` is the socket peer.
 export type TrustProxySetting = number | "loopback" | string[];
 
+// Express trusts every hop (so any client can pick its own rate-limit key) when
+// the hop count is unbounded or an entry covers the whole address space. These
+// bounds keep a typo or a lazy "trust everything" value from getting there.
+// No real deployment has more reverse proxies in front of the app than this,
+// and a count above the real number of hops already lets a client choose its key.
+export const TRUST_PROXY_MAX_HOPS = 10;
+// Shortest accepted prefixes: /8 for IPv4 (one legacy class A block) and /32
+// for IPv6 (the smallest block a provider is normally allocated). Anything
+// shorter is a range of the internet, not a proxy.
+export const TRUST_PROXY_MIN_IPV4_PREFIX = 8;
+export const TRUST_PROXY_MIN_IPV6_PREFIX = 32;
+
 const TRUST_PROXY_EXPECTED =
-  "unset (no proxy trusted), a non-negative integer hop count (e.g. 1 for a single reverse proxy), " +
-  '"loopback", or a comma-separated list of proxy IPs/CIDRs';
+  "unset (no proxy trusted), a non-negative integer hop count of at most " +
+  `${TRUST_PROXY_MAX_HOPS} (e.g. 1 for a single reverse proxy), "loopback", or a comma-separated list of ` +
+  `proxy IPs/CIDRs (IPv4 prefix /${TRUST_PROXY_MIN_IPV4_PREFIX} or longer, IPv6 prefix /${TRUST_PROXY_MIN_IPV6_PREFIX} or longer)`;
+
+// First 96 bits of an IPv4-mapped IPv6 address (::ffff:0:0/96) as a BigInt
+// of the whole 128-bit value.
+const IPV4_MAPPED_BASE = 0xffffn << 32n;
+
+// Converts a valid IPv6 literal to its 128-bit value.
+function ipv6ToBigInt(address: string): bigint {
+  let text = address.split("%")[0] ?? address;
+  const dotted = /^(.*:)(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(text);
+  if (dotted) {
+    const [, head, a, b, c, d] = dotted;
+    const hi = ((Number(a) << 8) | Number(b)).toString(16);
+    const lo = ((Number(c) << 8) | Number(d)).toString(16);
+    text = `${head}${hi}:${lo}`;
+  }
+  const halves = text.split("::");
+  const toGroups = (part: string | undefined) => (part ? part.split(":") : []);
+  const head = toGroups(halves[0]);
+  const tail = toGroups(halves[1]);
+  const fill = halves.length === 2 ? 8 - head.length - tail.length : 0;
+  const groups = [...head, ...Array<string>(fill).fill("0"), ...tail];
+  return groups.reduce((acc, g) => (acc << 16n) | BigInt(parseInt(g, 16)), 0n);
+}
+
+// Returns why a syntactically valid IP/CIDR entry is too broad to trust, or
+// undefined when it is acceptable. A bare address is always fine.
+function tooBroad(entry: string): string | undefined {
+  const slash = entry.indexOf("/");
+  if (slash === -1) return undefined;
+  const address = entry.slice(0, slash);
+  const prefix = Number(entry.slice(slash + 1));
+  if (isIP(address) === 4) {
+    return prefix < TRUST_PROXY_MIN_IPV4_PREFIX
+      ? `IPv4 prefix /${prefix} is shorter than /${TRUST_PROXY_MIN_IPV4_PREFIX}`
+      : undefined;
+  }
+  if (prefix < TRUST_PROXY_MIN_IPV6_PREFIX) {
+    return `IPv6 prefix /${prefix} is shorter than /${TRUST_PROXY_MIN_IPV6_PREFIX}`;
+  }
+  // Express matches an IPv4 peer against an IPv6 range as its IPv4-mapped
+  // form, so an IPv6 range that contains ::ffff:0:0/96 (for example ::/32 or
+  // ::ffff:0:0/96 itself) trusts every IPv4 peer, and a mapped range longer
+  // than /96 is an IPv4 range of prefix (length - 96).
+  const value = ipv6ToBigInt(address);
+  const shift = BigInt(128 - prefix);
+  if (prefix <= 96 && value >> shift === IPV4_MAPPED_BASE >> shift) {
+    return `the IPv6 range /${prefix} contains the IPv4-mapped block ::ffff:0:0/96, i.e. every IPv4 address`;
+  }
+  if (value >> 32n === IPV4_MAPPED_BASE >> 32n && prefix - 96 < TRUST_PROXY_MIN_IPV4_PREFIX) {
+    return `the IPv4-mapped prefix /${prefix} is the IPv4 prefix /${prefix - 96}, shorter than /${TRUST_PROXY_MIN_IPV4_PREFIX}`;
+  }
+  return undefined;
+}
 
 function isIpOrCidr(entry: string): boolean {
   const slash = entry.indexOf("/");
@@ -19,9 +85,9 @@ function isIpOrCidr(entry: string): boolean {
   return Number(prefix) <= (version === 4 ? 32 : 128);
 }
 
-// Parses the TRUST_PROXY env var. The boolean `true` is rejected on purpose:
-// Express's `trust proxy: true` trusts every X-Forwarded-For entry, so any
-// client could pick its own rate-limit key by sending the header.
+// Parses the TRUST_PROXY env var. Every value that makes Express trust all
+// hops is rejected, not only the literal `true`: such a setting lets any
+// client pick its own rate-limit key by sending X-Forwarded-For.
 export function parseTrustProxy(raw: string | undefined): TrustProxySetting | undefined {
   const value = (raw ?? "").trim();
   if (value === "") return undefined;
@@ -31,10 +97,30 @@ export function parseTrustProxy(raw: string | undefined): TrustProxySetting | un
         `their IP and dodge the rate limiters. Expected ${TRUST_PROXY_EXPECTED}`,
     );
   }
-  if (/^\d+$/.test(value)) return Number(value);
+  if (/^\d+$/.test(value)) {
+    const hops = Number(value);
+    if (!Number.isSafeInteger(hops) || hops > TRUST_PROXY_MAX_HOPS) {
+      throw new Error(
+        `TRUST_PROXY=${JSON.stringify(value)} is not allowed: a hop count above ${TRUST_PROXY_MAX_HOPS} ` +
+          `trusts more proxies than any deployment has, so clients could spoof their IP and dodge the rate limiters. Expected ${TRUST_PROXY_EXPECTED}`,
+      );
+    }
+    return hops;
+  }
   if (value === "loopback") return "loopback";
   const entries = value.split(",").map((e) => e.trim());
-  if (entries.every((e) => e !== "" && isIpOrCidr(e))) return entries;
+  if (entries.every((e) => e !== "" && isIpOrCidr(e))) {
+    for (const entry of entries) {
+      const reason = tooBroad(entry);
+      if (reason) {
+        throw new Error(
+          `TRUST_PROXY entry ${JSON.stringify(entry)} is not allowed: ${reason}, which trusts far more than a proxy ` +
+            `and lets clients spoof their IP and dodge the rate limiters. Expected ${TRUST_PROXY_EXPECTED}`,
+        );
+      }
+    }
+    return entries;
+  }
   throw new Error(`TRUST_PROXY=${JSON.stringify(value)} is invalid. Expected ${TRUST_PROXY_EXPECTED}`);
 }
 

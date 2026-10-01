@@ -65,6 +65,48 @@ describe("TRUST_PROXY config", () => {
     },
   );
 
+  it("accepts the largest allowed hop count and rejects one above it", async () => {
+    expect((await loadConfigWith("10")).config.trustProxy).toBe(10);
+    await expect(loadConfigWith("11")).rejects.toThrow(
+      /Invalid configuration:[\s\S]*trustProxy[\s\S]*TRUST_PROXY="11" is not allowed: a hop count above 10/,
+    );
+  });
+
+  // Each of these makes Express trust every hop (or every IPv4 peer), which is
+  // the same spoofable setup as `true`: a hop count above any real chain
+  // (including values that are not safe integers), and ranges that cover all
+  // of IPv4 or IPv6, directly, as IPv4-mapped IPv6, or as a split pair.
+  it.each([
+    ["99999999", /hop count above 10/],
+    ["9007199254740993", /hop count above 10/],
+    ["1".repeat(400), /hop count above 10/],
+    ["0.0.0.0/0", /"0\.0\.0\.0\/0" is not allowed: IPv4 prefix \/0 is shorter than \/8/],
+    ["::/0", /"::\/0" is not allowed: IPv6 prefix \/0 is shorter than \/32/],
+    ["10.0.0.1, 0.0.0.0/0", /"0\.0\.0\.0\/0" is not allowed/],
+    ["0.0.0.0/1,128.0.0.0/1", /"0\.0\.0\.0\/1" is not allowed: IPv4 prefix \/1/],
+    ["0.0.0.0/7", /IPv4 prefix \/7 is shorter than \/8/],
+    ["2001:db8::/31", /IPv6 prefix \/31 is shorter than \/32/],
+    ["::ffff:0:0/96", /"::ffff:0:0\/96" is not allowed: the IPv6 range \/96 contains the IPv4-mapped block/],
+    ["::ffff:0.0.0.0/96", /contains the IPv4-mapped block/],
+    ["::ffff:0:0/80", /contains the IPv4-mapped block/],
+    ["::/32", /contains the IPv4-mapped block/],
+    ["::/64", /contains the IPv4-mapped block/],
+    ["::ffff:0:0/103", /IPv4-mapped prefix \/103 is the IPv4 prefix \/7/],
+    ["::ffff:0:0/100", /IPv4-mapped prefix \/100 is the IPv4 prefix \/4/],
+  ])("rejects the trust-everything value %j and names the rule", async (value, rule) => {
+    await expect(loadConfigWith(value)).rejects.toThrow(/Invalid configuration:[\s\S]*trustProxy/);
+    await expect(loadConfigWith(value)).rejects.toThrow(rule);
+  });
+
+  it("accepts ranges right at the length bounds", async () => {
+    expect((await loadConfigWith("10.0.0.0/8")).config.trustProxy).toEqual(["10.0.0.0/8"]);
+    expect((await loadConfigWith("2001:db8::/32")).config.trustProxy).toEqual(["2001:db8::/32"]);
+    expect((await loadConfigWith("::ffff:10.0.0.0/104")).config.trustProxy).toEqual(["::ffff:10.0.0.0/104"]);
+    expect((await loadConfigWith("::/96")).config.trustProxy).toEqual(["::/96"]);
+    expect((await loadConfigWith("::ffff:1.2.3.4")).config.trustProxy).toEqual(["::ffff:1.2.3.4"]);
+    expect((await loadConfigWith("0.0.0.0/32")).config.trustProxy).toEqual(["0.0.0.0/32"]);
+  });
+
   it.each([
     "false",
     "-1",

@@ -639,6 +639,48 @@ describe("API Routes", () => {
         expect(blocked.status).toBe(429);
       });
 
+      // The supertest peer is the loopback address, so these cases drive the
+      // `loopback` keyword, an IP/CIDR list, and a hop count other than 1
+      // through to Express's own parsing of the setting.
+      it("with TRUST_PROXY=loopback, clients with different X-Forwarded-For get separate buckets", async () => {
+        const proxied = await appWithTrust("loopback");
+        const a1 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.100");
+        const a2 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.100");
+        const b1 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.101");
+        expect([remaining(a1), remaining(a2), remaining(b1)]).toEqual([199, 198, 199]);
+      });
+
+      it("with a TRUST_PROXY list covering the peer, X-Forwarded-For is honoured", async () => {
+        const proxied = await appWithTrust(["127.0.0.0/8"]);
+        const a1 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.110");
+        const a2 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.110");
+        const b1 = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.111");
+        expect([remaining(a1), remaining(a2), remaining(b1)]).toEqual([199, 198, 199]);
+      });
+
+      it("with a TRUST_PROXY list that does not cover the peer, a spoofed X-Forwarded-For is ignored", async () => {
+        const proxied = await appWithTrust(["203.0.113.250"]);
+        const first = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.120");
+        const second = await proxied.get("/api/v1/health").set("X-Forwarded-For", "203.0.113.121");
+        expect([remaining(first), remaining(second)]).toEqual([199, 198]);
+      });
+
+      it("with TRUST_PROXY=2, the key is the second X-Forwarded-For entry from the right", async () => {
+        const proxied = await appWithTrust(2);
+        // Forged leftmost entry, then the client as the outer proxy saw it,
+        // then the outer proxy as the inner proxy saw it.
+        const a1 = await proxied
+          .get("/api/v1/health")
+          .set("X-Forwarded-For", "6.6.6.1, 203.0.113.130, 10.1.1.1");
+        const a2 = await proxied
+          .get("/api/v1/health")
+          .set("X-Forwarded-For", "6.6.6.2, 203.0.113.130, 10.1.1.1");
+        const b1 = await proxied
+          .get("/api/v1/health")
+          .set("X-Forwarded-For", "6.6.6.3, 203.0.113.131, 10.1.1.1");
+        expect([remaining(a1), remaining(a2), remaining(b1)]).toEqual([199, 198, 199]);
+      });
+
       it("does not raise the unexpected-X-Forwarded-For validation error when a proxy hop is trusted", async () => {
         const errors = vi.spyOn(console, "error").mockImplementation(() => undefined);
         const proxied = await appWithTrust(1);
