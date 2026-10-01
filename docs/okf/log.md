@@ -2,6 +2,35 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-01T11:32:19Z, re-verified and re-stamped api-authz-and-team-scoping.md
+  (task 2a52b2b1): the write-gate placement claim now states the actual
+  guarantee (a syntactic check that does not see side effects in gate
+  arguments, middleware arguments, handler default parameters or tagged
+  templates and `new` expressions), and the duplicate saved-view route is
+  described as checking `canRead` and keeping `isShared` only with
+  `canManageShared` (log-view-service.ts:121, 129).
+
+- 2026-10-01T11:19:40Z, re-verified and re-stamped api-authz-and-team-scoping.md
+  after the write-role meta-test gained gate-placement rules (task 2a52b2b1):
+  the gate must be the first step after authentication and validation and its
+  null result must end the handler; both router guards now flag aliased,
+  element-access and detached `apiRouter` registrations; `requireResourceTeam`
+  fails closed. The saved-view statements were corrected: those routes check
+  ownership, not `canWrite`, so a VIEWER can share its own view and clear the
+  team's default flags (tracked in a follow-up task). `router.ts` citations
+  re-pointed after the file grew by one line.
+
+- 2026-10-01T10:58:00Z, re-verified and re-stamped api-authz-and-team-scoping.md
+  after VIEWER became read-only on team-scoped write routes (task 2a52b2b1):
+  the "open, undecided" section is replaced by the implemented rule
+  (`canWrite`, `requireTeamWriteRole`, write-mode `requireResourceTeam`
+  resolvers, the new `router-write-role.test.ts` meta-test, now listed under
+  `sources`), the factory signature and its five instantiations are updated,
+  and every `router.ts` and `ENGINEERING.md` line citation was re-pointed
+  after the file grew from 1774 to 1824 lines. Re-checked against the code:
+  the three caller models, the by-id guard, the allowlist categories and
+  `canManageInvites` are unchanged. index.md summary line updated to match.
+
 - 2026-10-01T07:35:34Z, re-verified and re-stamped ingestion-pipeline.md after another
   wording change to the `TRUST_PROXY` row in docs/configuration.md; its
   ingestion-source claims are unaffected.

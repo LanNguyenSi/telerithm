@@ -19,9 +19,9 @@ their areas; these docs deliberately do not duplicate them.
 - [API authz and team scoping](api-authz-and-team-scoping.md), the three
   caller models in `router.ts` (session Bearer, X-API-Key pinned to a single
   source, global admin) and the `requireResourceTeam` factory + AST
-  meta-test convention that enforces team-scoping on by-id write routes;
-  states as open, without deciding it, that `requireTeamRole` checks
-  membership only, not role.
+  meta-test convention that enforces team-scoping on by-id write routes,
+  plus the `canWrite` rule that makes VIEWER read-only on team-scoped
+  writes, enforced by a second AST meta-test.
 - [ClickHouse tenant row-scoping](clickhouse-tenant-row-scoping.md), the
   second, independent tenancy layer below `router.ts`: `team_id` as the
   first `WHERE` condition in every query method, and the dynamic

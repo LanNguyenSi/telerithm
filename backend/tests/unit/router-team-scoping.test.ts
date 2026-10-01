@@ -65,13 +65,13 @@ type Guard =
 // keyed by "METHOD /path" exactly as declared there.
 const ROUTE_TEAM_GUARDS: Record<string, Guard> = {
   // --- Resource-derived team resolvers, built via requireResourceTeam ---
-  "POST /alerts/rules/:id/mute": { kind: "resolver", resolverName: "requireRuleTeam" },
-  "POST /alerts/rules/:id/unmute": { kind: "resolver", resolverName: "requireRuleTeam" },
-  "DELETE /maintenance-windows/:id": { kind: "resolver", resolverName: "requireMaintenanceWindowTeam" },
-  "POST /alerts/incidents/:id/acknowledge": { kind: "resolver", resolverName: "requireIncidentTeam" },
-  "POST /alerts/incidents/:id/resolve": { kind: "resolver", resolverName: "requireIncidentTeam" },
-  "POST /alerts/incidents/:id/reopen": { kind: "resolver", resolverName: "requireIncidentTeam" },
-  "PUT /issues/:id": { kind: "resolver", resolverName: "requireIssueTeam" },
+  "POST /alerts/rules/:id/mute": { kind: "resolver", resolverName: "requireRuleWriteTeam" },
+  "POST /alerts/rules/:id/unmute": { kind: "resolver", resolverName: "requireRuleWriteTeam" },
+  "DELETE /maintenance-windows/:id": { kind: "resolver", resolverName: "requireMaintenanceWindowWriteTeam" },
+  "POST /alerts/incidents/:id/acknowledge": { kind: "resolver", resolverName: "requireIncidentWriteTeam" },
+  "POST /alerts/incidents/:id/resolve": { kind: "resolver", resolverName: "requireIncidentWriteTeam" },
+  "POST /alerts/incidents/:id/reopen": { kind: "resolver", resolverName: "requireIncidentWriteTeam" },
+  "PUT /issues/:id": { kind: "resolver", resolverName: "requireIssueWriteTeam" },
 
   // --- Explicit, justified allowlist (never a silent skip) ---
   "POST /ingest/:sourceId": {
@@ -260,11 +260,42 @@ function findUnrecognizedApiRouterUsages(
         }
       }
     }
+    // Any other reference to the `apiRouter` identifier is a registration shape
+    // the call-based walk above cannot see: an alias (`const r = apiRouter;
+    // r.post(...)`), element access (`apiRouter["delete"](...)`), a detached
+    // method (`const f = apiRouter.post`), destructuring or passing the router
+    // on. Only the declaration and the `apiRouter.<member>(` callee position
+    // (handled above) are accepted.
+    if (ts.isIdentifier(node) && node.text === "apiRouter" && !isRecognizedApiRouterReference(node)) {
+      issues.push({
+        snippet: (node.parent ?? node).getText(sourceFile).split("\n")[0].trim(),
+        reason:
+          "apiRouter is referenced in a position other than its declaration or an `apiRouter.<method>(` call " +
+          "(an alias, element access such as apiRouter['delete'](...), a detached method or a pass-through). " +
+          "extractRoutes would silently skip routes registered that way. Register routes with a direct " +
+          `apiRouter.<method>("path", ...) call, or extend extractRoutes and classify the resulting routes in ROUTE_TEAM_GUARDS.`,
+      });
+    }
     ts.forEachChild(node, visit);
   }
 
   visit(sourceFile);
   return issues;
+}
+
+// True for the two positions of the `apiRouter` identifier that are not an
+// escape hatch: its own declaration, and the object of a property access that
+// is itself the callee of a call (`apiRouter.get(...)`, `apiRouter.use(...)`;
+// whether the member is a supported method is judged by the caller).
+function isRecognizedApiRouterReference(identifier: ts.Identifier): boolean {
+  const parent = identifier.parent;
+  if (ts.isVariableDeclaration(parent) && parent.name === identifier) return true;
+  return (
+    ts.isPropertyAccessExpression(parent) &&
+    parent.expression === identifier &&
+    ts.isCallExpression(parent.parent) &&
+    parent.parent.expression === parent
+  );
 }
 
 // True if `root`'s subtree contains a CallExpression whose callee's exact
@@ -477,6 +508,44 @@ describe("router.ts: by-id write routes must declare a team-scoping guard", () =
       const issues = findUnrecognizedApiRouterUsages(syntheticFile);
       expect(issues.length).toBeGreaterThan(0);
       expect(extractRoutes(syntheticFile)).toEqual([]);
+    });
+
+    it("flags an aliased router (const alias = apiRouter; alias.post(...))", () => {
+      const synthetic = `const alias = apiRouter;\n        alias.post("/widgets", asyncHandler(async (req, res) => {}));`;
+      const syntheticFile = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(syntheticFile).length).toBeGreaterThan(0);
+      expect(extractRoutes(syntheticFile)).toEqual([]);
+    });
+
+    it('flags element-access registration (apiRouter["delete"](...))', () => {
+      const synthetic = `apiRouter["delete"]("/widgets/:id", asyncHandler(async (req, res) => {}));`;
+      const syntheticFile = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(syntheticFile).length).toBeGreaterThan(0);
+      expect(extractRoutes(syntheticFile)).toEqual([]);
+    });
+
+    it("flags a detached method reference (const post = apiRouter.post)", () => {
+      const synthetic = `const post = apiRouter.post;`;
+      const syntheticFile = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(syntheticFile).length).toBeGreaterThan(0);
+    });
+
+    it("flags destructuring the router (const { post } = apiRouter)", () => {
+      const synthetic = `const { post } = apiRouter;`;
+      const syntheticFile = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(syntheticFile).length).toBeGreaterThan(0);
+    });
+
+    it("flags passing the router on (register(apiRouter))", () => {
+      const synthetic = `register(apiRouter);`;
+      const syntheticFile = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(syntheticFile).length).toBeGreaterThan(0);
+    });
+
+    it("does not flag the router's own declaration (negative control)", () => {
+      const synthetic = `export const apiRouter = Router();\n        apiRouter.get("/widgets", asyncHandler(async (req, res) => {}));`;
+      const syntheticFile = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      expect(findUnrecognizedApiRouterUsages(syntheticFile)).toEqual([]);
     });
 
     it("does not flag a normal, recognized route registration (negative control)", () => {

@@ -21,9 +21,11 @@ erzwungen:
   Relation) auf `teamId` auflösbar sind, gibt es `requireResourceTeam(...)`
   in `router.ts`: eine Factory, die "Ressource per id laden → teamId ziehen →
   404 wenn fehlt → requireTeamRole → teamId zurückgeben" kapselt. Eine neue
-  Ressource anzuschließen ist eine Zeile (siehe `requireRuleTeam`,
-  `requireMaintenanceWindowTeam`, `requireIncidentTeam`, `requireIssueTeam`
-  in `router.ts`).
+  Ressource anzuschließen ist eine Zeile (siehe `requireRuleWriteTeam`,
+  `requireMaintenanceWindowWriteTeam`, `requireIncidentWriteTeam`,
+  `requireIssueWriteTeam` und den Lese-Resolver `requireIncidentTeam` in
+  `router.ts`). Der dritte Parameter `mode` (`"read"` oder `"write"`) ist
+  Pflicht; siehe den Abschnitt zur Write-Rolle unten.
 - Bewusste Ausnahmen (Ressource per-User statt per-Team gescoped,
   Admin-Routen, API-Key-Auth, Capability-Token-Routen, ...) sind erlaubt,
   müssen aber explizit begründet allowlistet werden, nicht stillschweigend
@@ -41,3 +43,64 @@ erzwungen:
   aus Body oder Query ziehen, fallen nicht unter diesen automatisierten
   Schutz und müssen weiterhin von Hand team-gescoped und im Review geprüft
   werden.
+
+## Backend: VIEWER ist read-only auf team-gescopten Write-Routen
+
+Team-Mitgliedschaft allein reicht für mutierende Routen nicht: die Rolle
+`VIEWER` (`TeamRole` in `backend/prisma/schema.prisma`) ist read-only, `OWNER`,
+`ADMIN` und `MEMBER` dürfen schreiben. Ein
+`VIEWER` bekommt auf einer team-gescopten Write-Route `403 { error: "Forbidden" }`,
+bevor irgendetwas mutiert wird; Lesepfade (inklusive `GET /alerts/incidents/:id/timeline`
+und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
+
+- Die Regel steht an genau einer Stelle: `canWrite(role)` in `router.ts`
+  (Allow-List: `OWNER`, `ADMIN`, `MEMBER` sind `true`, alles andere `false`, eine
+  später ergänzte Rolle ist also erst nach bewusstem Eintrag schreibberechtigt).
+  Keine der team-gescopten Write-Routen vergleicht Rollen selbst für die
+  Write-Entscheidung (die Log-View-Routen haben ein eigenes Modell, siehe unten).
+- Erreicht wird `canWrite` über `requireTeamWriteRole(userId, teamId, res)`
+  (Mitgliedschaft über `requireTeamRole`, danach `canWrite`, sonst 403) für Routen,
+  die die `teamId` aus dem Body nehmen (`POST /sources`, `POST /maintenance-windows`),
+  und über Write-Resolver, die `requireResourceTeam(loader, message, "write")`
+  baut, für by-id-Routen (Rule mute/unmute, Maintenance-Window löschen,
+  Incident acknowledge/resolve/reopen, `PUT /issues/:id`). Ein Resolver, der eine
+  mutierende Route schützt, muss im Modus `"write"` gebaut sein; lesende Routen
+  nutzen `requireTeamRole` bzw. einen `"read"`-Resolver.
+- Durchsetzung: `backend/tests/unit/router-write-role.test.ts` parst `router.ts`
+  per TypeScript-AST und verlangt für JEDE state-changing Route (mit oder ohne
+  `:param`) einen Eintrag in `ROUTE_WRITE_GUARDS`: entweder `{ kind: "write", gate }`
+  (das Gate ist der erste Schritt nach Authentifizierung und Validierung, und
+  sein `null`-Ergebnis beendet den Handler per frühem `return`, also entweder
+  `if ((await gate(...)) === null) return;` oder `const x = await gate(...);`
+  unmittelbar gefolgt von `if (x === null) return;`; ein Kommentar zählt nicht)
+  oder einen begründeten Allowlist-Eintrag (lesender POST, per-User, Invites,
+  Log-Views, Admin, Ingest, Auth, `POST /teams`). Ein Gate nach einer Mutation,
+  ohne `null`-Prüfung oder ohne `return` lässt den Test rot werden, ebenso eine
+  neue, nicht klassifizierte mutierende Route oder eine Router-Registrierung,
+  die der Test nicht klassifizieren kann (Alias von `apiRouter`,
+  `apiRouter["delete"](...)`). Die Garantie ist rein syntaktisch: das Gate ist
+  ein Top-Level-Statement des Handler-Bodys, nur von zugelassenen Auth- und
+  Validierungs-Statements davor (siehe Test) und mit frühem Return bei
+  `null`. Der Test sieht keine Seiteneffekte in den Argumenten des Gate-Aufrufs,
+  in Middleware-Argumenten vor dem Handler, in Default-Parametern des Handlers
+  oder in Tagged Templates und `new`-Ausdrücken; diese Formen kommen in
+  `router.ts` heute nicht vor (Härtung ist ein eigener Task). Der Test prüft außerdem, dass
+  `requireTeamWriteRole` `canWrite` aufruft, dass jeder Write-Resolver im
+  Modus `"write"` gebaut ist und dass `requireResourceTeam` nur für `"read"`
+  die reine Mitgliedschaftsprüfung nimmt (fail-closed). Das Verhalten (VIEWER 403 und keine Mutation,
+  MEMBER 2xx, Timeline für VIEWER 200) pinnen die Route-Tests in
+  `backend/tests/integration/api.test.ts`.
+- Nicht Teil dieser Regel: Invite-Verwaltung (`canManageInvites`, nur OWNER/ADMIN),
+  Subscriptions (per-User) und die Admin-Routen (`requireAdmin`). Die
+  Log-View-Routen (`/logs/views`) liegen ebenfalls außerhalb und sind für
+  `VIEWER` nicht read-only: sie prüfen nur Mitgliedschaft und
+  Eigentümerschaft der View, `canManageShared` greift nur beim Ändern oder
+  Löschen fremder Shared-Views. `POST /logs/views/:id/duplicate` prüft
+  `canRead` (Shared-View oder eigene) und übernimmt `isShared` nur, wenn
+  `canManageShared` gilt. Ein `VIEWER` kann eine eigene View per
+  `POST` oder `PUT` mit `isShared` teilen und per `isDefault` das
+  Default-Flag der übrigen Shared-Views des Teams löschen. Das ist ein
+  eigener Follow-up (agent-tasks `765bb823`), nicht Teil dieser Regel.
+- Nach dem Merge prüft der Operator in Produktion, ob VIEWER-Mitgliedschaften
+  existieren (`SELECT count(*) FROM "TeamMember" WHERE role = 'VIEWER'`), weil
+  deren bisheriger Schreibzugriff mit dieser Regel endet.
