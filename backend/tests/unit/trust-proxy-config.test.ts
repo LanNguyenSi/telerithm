@@ -93,6 +93,9 @@ describe("TRUST_PROXY config", () => {
     ["::/64", /contains the IPv4-mapped block/],
     ["::ffff:0:0/103", /IPv4-mapped prefix \/103 is the IPv4 prefix \/7/],
     ["::ffff:0:0/100", /IPv4-mapped prefix \/100 is the IPv4 prefix \/4/],
+    // Network bits differ from ::ffff:0:0 only below the prefix length, so the
+    // range still contains the whole IPv4-mapped block.
+    ["::fffe:0:0/95", /"::fffe:0:0\/95" is not allowed: the IPv6 range \/95 contains the IPv4-mapped block/],
   ])("rejects the trust-everything value %j and names the rule", async (value, rule) => {
     await expect(loadConfigWith(value)).rejects.toThrow(/Invalid configuration:[\s\S]*trustProxy/);
     await expect(loadConfigWith(value)).rejects.toThrow(rule);
@@ -105,7 +108,19 @@ describe("TRUST_PROXY config", () => {
     expect((await loadConfigWith("::/96")).config.trustProxy).toEqual(["::/96"]);
     expect((await loadConfigWith("::ffff:1.2.3.4")).config.trustProxy).toEqual(["::ffff:1.2.3.4"]);
     expect((await loadConfigWith("0.0.0.0/32")).config.trustProxy).toEqual(["0.0.0.0/32"]);
+    // Right next to the mapped block but not containing it.
+    expect((await loadConfigWith("::fffe:0:0/96")).config.trustProxy).toEqual(["::fffe:0:0/96"]);
   });
+
+  // node:net accepts these IPv6 spellings, Express's proxy-addr does not; they
+  // must fail as a configuration error, not later inside app.set.
+  it.each(["::1.2.3.4", "1::1.2.3.4", "::0.0.0.0/96", "fe80::1%eth0.5/64"])(
+    "rejects %j, which Express cannot parse, at config time",
+    async (value) => {
+      await expect(loadConfigWith(value)).rejects.toThrow(/Invalid configuration:[\s\S]*trustProxy/);
+      await expect(loadConfigWith(value)).rejects.toThrow(/Express cannot use it/);
+    },
+  );
 
   it.each([
     "false",

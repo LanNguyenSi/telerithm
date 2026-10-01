@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import express from "express";
 import { z } from "zod";
 
 // Value handed to Express's `trust proxy` setting: a hop count, the
@@ -76,6 +77,19 @@ function tooBroad(entry: string): string | undefined {
   return undefined;
 }
 
+// node:net's isIP accepts some IPv6 spellings (an embedded dotted IPv4 tail
+// outside ::ffff:, a zone id) that Express's proxy-addr cannot parse; those
+// would otherwise pass this check and only fail later inside app.set. Ask
+// Express itself, so every accepted list is one it can use.
+function expressRejects(entries: string[]): string | undefined {
+  try {
+    express().set("trust proxy", entries);
+    return undefined;
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+}
+
 function isIpOrCidr(entry: string): boolean {
   const slash = entry.indexOf("/");
   if (slash === -1) return isIP(entry) !== 0;
@@ -118,6 +132,12 @@ export function parseTrustProxy(raw: string | undefined): TrustProxySetting | un
             `and lets clients spoof their IP and dodge the rate limiters. Expected ${TRUST_PROXY_EXPECTED}`,
         );
       }
+    }
+    const unusable = expressRejects(entries);
+    if (unusable) {
+      throw new Error(
+        `TRUST_PROXY=${JSON.stringify(value)} is invalid: Express cannot use it (${unusable}). Expected ${TRUST_PROXY_EXPECTED}`,
+      );
     }
     return entries;
   }
