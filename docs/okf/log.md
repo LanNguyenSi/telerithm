@@ -2,6 +2,17 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-01T10:58:00Z, re-verified and re-stamped api-authz-and-team-scoping.md
+  after VIEWER became read-only on team-scoped write routes (task 2a52b2b1):
+  the "open, undecided" section is replaced by the implemented rule
+  (`canWrite`, `requireTeamWriteRole`, write-mode `requireResourceTeam`
+  resolvers, the new `router-write-role.test.ts` meta-test, now listed under
+  `sources`), the factory signature and its five instantiations are updated,
+  and every `router.ts` and `ENGINEERING.md` line citation was re-pointed
+  after the file grew from 1774 to 1824 lines. Re-checked against the code:
+  the three caller models, the by-id guard, the allowlist categories and
+  `canManageInvites` are unchanged. index.md summary line updated to match.
+
 - 2026-10-01T07:35:34Z, re-verified and re-stamped ingestion-pipeline.md after another
   wording change to the `TRUST_PROXY` row in docs/configuration.md; its
   ingestion-source claims are unaffected.
