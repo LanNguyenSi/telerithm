@@ -157,7 +157,9 @@ const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
   },
   "POST /logs/views/:id/duplicate": {
     kind: "allowlist",
-    reason: "Same saved-view owner/canManageShared model as PUT /logs/views/:id.",
+    reason:
+      "Saved-view model: LogViewService.duplicate checks canRead (shared view or the caller's own) and keeps " +
+      "isShared only when canManageShared is true.",
     verify: { type: "call", callee: "requireTeamRole" },
   },
   "DELETE /logs/views/:id": {

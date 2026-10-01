@@ -78,7 +78,13 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
   ohne `null`-Prüfung oder ohne `return` lässt den Test rot werden, ebenso eine
   neue, nicht klassifizierte mutierende Route oder eine Router-Registrierung,
   die der Test nicht klassifizieren kann (Alias von `apiRouter`,
-  `apiRouter["delete"](...)`). Der Test prüft außerdem, dass
+  `apiRouter["delete"](...)`). Die Garantie ist rein syntaktisch: das Gate ist
+  ein Top-Level-Statement des Handler-Bodys, nur von zugelassenen Auth- und
+  Validierungs-Statements davor (siehe Test) und mit frühem Return bei
+  `null`. Der Test sieht keine Seiteneffekte in den Argumenten des Gate-Aufrufs,
+  in Middleware-Argumenten vor dem Handler, in Default-Parametern des Handlers
+  oder in Tagged Templates und `new`-Ausdrücken; diese Formen kommen in
+  `router.ts` heute nicht vor (Härtung ist ein eigener Task). Der Test prüft außerdem, dass
   `requireTeamWriteRole` `canWrite` aufruft, dass jeder Write-Resolver im
   Modus `"write"` gebaut ist und dass `requireResourceTeam` nur für `"read"`
   die reine Mitgliedschaftsprüfung nimmt (fail-closed). Das Verhalten (VIEWER 403 und keine Mutation,
@@ -89,7 +95,9 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
   Log-View-Routen (`/logs/views`) liegen ebenfalls außerhalb und sind für
   `VIEWER` nicht read-only: sie prüfen nur Mitgliedschaft und
   Eigentümerschaft der View, `canManageShared` greift nur beim Ändern oder
-  Löschen fremder Shared-Views. Ein `VIEWER` kann eine eigene View per
+  Löschen fremder Shared-Views. `POST /logs/views/:id/duplicate` prüft
+  `canRead` (Shared-View oder eigene) und übernimmt `isShared` nur, wenn
+  `canManageShared` gilt. Ein `VIEWER` kann eine eigene View per
   `POST` oder `PUT` mit `isShared` teilen und per `isDefault` das
   Default-Flag der übrigen Shared-Views des Teams löschen. Das ist ein
   eigener Follow-up (agent-tasks `765bb823`), nicht Teil dieser Regel.
