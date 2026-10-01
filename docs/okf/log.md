@@ -2,6 +2,14 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-01T11:32:19Z, re-verified and re-stamped api-authz-and-team-scoping.md
+  (task 2a52b2b1): the write-gate placement claim now states the actual
+  guarantee (a syntactic check that does not see side effects in gate
+  arguments, middleware arguments, handler default parameters or tagged
+  templates and `new` expressions), and the duplicate saved-view route is
+  described as checking `canRead` and keeping `isShared` only with
+  `canManageShared` (log-view-service.ts:121, 129).
+
 - 2026-10-01T11:19:40Z, re-verified and re-stamped api-authz-and-team-scoping.md
   after the write-role meta-test gained gate-placement rules (task 2a52b2b1):
   the gate must be the first step after authentication and validation and its
