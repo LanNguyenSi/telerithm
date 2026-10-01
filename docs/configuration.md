@@ -27,7 +27,7 @@ All configuration is environment-driven. The backend validates env vars on start
 | `SEED_DEMO_DATA`     | unset                         | Set to `true` to allow demo seeding when `NODE_ENV=production` (otherwise seeding is skipped in production) |
 | `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS` | `300000` (5 minutes) | Rate-limit window for `POST /subscriptions/:id/test`, see [api.md](api.md) |
 | `NOTIFICATION_TEST_RATE_LIMIT_MAX`       | `5`                  | Max `POST /subscriptions/:id/test` requests per window, per caller               |
-| `TRUST_PROXY`        | unset (off)                   | Reverse-proxy trust for the IP-keyed rate limiters. Unset = trust no proxy. Accepts a non-negative integer hop count up to `10` (`1` = one proxy such as Traefik), `loopback`, or a comma-separated list of proxy IPs/CIDRs (IPv4 prefix `/8` or longer, IPv6 `/32` or longer). `true` and every value that trusts all hops (`0.0.0.0/0`, `::/0`, a huge hop count) are rejected at startup. See [api.md](api.md#behind-a-reverse-proxy-trust_proxy) |
+| `TRUST_PROXY`        | unset (off)                   | Reverse-proxy trust for the IP-keyed rate limiters. Unset = trust no proxy. Accepts a non-negative integer hop count up to `10` (`1` = one proxy such as Traefik), `loopback`, or a comma-separated list of proxy IPs/CIDRs (IPv4 prefix `/8` or longer, IPv6 `/32` or longer). `true`, a hop count above `10` and any single entry broader than these bounds (`0.0.0.0/0`, `::/0`, `::ffff:0:0/96`) are rejected at startup, as is an IPv6 spelling Express cannot parse; a hop count above the real number of proxies is not caught. See [api.md](api.md#behind-a-reverse-proxy-trust_proxy) |
 
 A starter file lives at `backend/.env.example`. Copy and edit:
 
