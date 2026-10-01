@@ -2821,7 +2821,7 @@ describe("API Routes", () => {
   // VIEWER is read-only on team-scoped writes (task 2a52b2b1)
   // ---------------------------------------------------------------------------
 
-  describe("team write role — VIEWER is read-only", () => {
+  describe("team write role: VIEWER is read-only", () => {
     // This block makes ~40 requests; the app's general rate limiter (200 per
     // minute per client, with its state held per app instance) is already
     // close to exhausted by the rest of the file, so it runs against its own
