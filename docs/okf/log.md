@@ -2,6 +2,15 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-02T08:36:31Z, re-verified and re-stamped api-authz-and-team-scoping.md
+  (task 10b54786): the route-table audit now rebuilds the app under every
+  combination of nodeEnv, multiTenant and trustProxy, rejects `param`
+  callbacks on the app and the API router, and pins every anonymous layer by
+  a source fragment; a resolver held in an identifier must be a top-level
+  `const`. The doc states the threat model (accidental gaps, not deliberate
+  obfuscation) and no longer claims S4 is detected whatever its spelling or
+  that the static scan sees any registration in `server.ts`.
+
 - 2026-10-02T07:47:58Z, re-verified and re-stamped api-authz-and-team-scoping.md
   (task 10b54786): a runtime route-table test (`route-table.test.ts`) now
   walks the Express stack of the real app and makes the wrapper mandatory
