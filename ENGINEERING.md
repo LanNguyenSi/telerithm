@@ -93,14 +93,21 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
 - Nicht Teil dieser Regel: Invite-Verwaltung (`canManageInvites`, nur OWNER/ADMIN),
   Subscriptions (per-User) und die Admin-Routen (`requireAdmin`). Die
   Log-View-Routen (`/logs/views`) liegen ebenfalls außerhalb und sind für
-  `VIEWER` nicht read-only: sie prüfen nur Mitgliedschaft und
-  Eigentümerschaft der View, `canManageShared` greift nur beim Ändern oder
-  Löschen fremder Shared-Views. `POST /logs/views/:id/duplicate` prüft
-  `canRead` (Shared-View oder eigene) und übernimmt `isShared` nur, wenn
-  `canManageShared` gilt. Ein `VIEWER` kann eine eigene View per
-  `POST` oder `PUT` mit `isShared` teilen und per `isDefault` das
-  Default-Flag der übrigen Shared-Views des Teams löschen. Das ist ein
-  eigener Follow-up (agent-tasks `765bb823`), nicht Teil dieser Regel.
+  `VIEWER` nicht read-only: private Views (per-User-Zustand) darf jedes
+  Mitglied anlegen und ändern. Team-weiter Zustand ist dagegen nur für
+  OWNER/ADMIN (`canManageShared`): `POST` und `PUT` antworten mit 403, bevor
+  der Service läuft, wenn `isShared: true` oder `isDefault: true` gesetzt
+  wird (`isDefault: true` löscht das Default-Flag aller Shared-Views des
+  Teams). `canManageShared` greift außerdem beim Ändern oder Löschen fremder
+  Shared-Views. `POST /logs/views/:id/duplicate` prüft `canRead`
+  (Shared-View oder eigene) und übernimmt `isShared` nur, wenn
+  `canManageShared` gilt (agent-tasks `765bb823`). `isDefault: true` ist für
+  Nicht-Admins auch auf einer privaten View gesperrt, weil der Service das
+  Default-Flag teamweit zurücksetzt. Offene Lücke: ein Nicht-Admin, der eine
+  bereits geteilte oder als Default markierte View besitzt (vor dieser
+  Änderung angelegt, oder nach einer Herabstufung vom Admin), kann sie weiter
+  ändern, auf privat zurückstellen und löschen; bestehende Daten werden nicht
+  migriert.
 - Nach dem Merge prüft der Operator in Produktion, ob VIEWER-Mitgliedschaften
   existieren (`SELECT count(*) FROM "TeamMember" WHERE role = 'VIEWER'`), weil
   deren bisheriger Schreibzugriff mit dieser Regel endet.

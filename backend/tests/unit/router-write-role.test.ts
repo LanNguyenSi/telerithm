@@ -141,8 +141,10 @@ const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
   "POST /logs/views": {
     kind: "allowlist",
     reason:
-      "Saved-view model (owner plus canManageShared), outside the team write rule; whether a VIEWER may create a " +
-      "shared or default view is a separate open question tracked as its own follow-up task (765bb823). " +
+      "Saved-view model (owner plus canManageShared), outside the team write rule: any member, VIEWER included, " +
+      "may create a private view, because it is per-user state. Team-wide state is gated inside the handler: " +
+      "isShared: true or isDefault: true (which clears the default flag of every shared view in the team) " +
+      "needs canManageShared (OWNER/ADMIN) and otherwise answers 403 before any service call. " +
       "Membership is required via requireTeamRole.",
     verify: { type: "call", callee: "requireTeamRole" },
   },
@@ -150,9 +152,9 @@ const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
     kind: "allowlist",
     reason:
       "Saved-view model, outside the team write rule: LogViewService lets the owner of a view update it and " +
-      "OWNER/ADMIN (canManageShared) update shared views. That does not make it read-only for a VIEWER: an " +
-      "owner (any role) can set isShared and isDefault on their own view, and isDefault clears the default flag " +
-      "of the team's other shared views. Tracked as a log-view follow-up task (765bb823), not part of this rule.",
+      "OWNER/ADMIN (canManageShared) update shared views, so a VIEWER may edit its own private view. " +
+      "Team-wide state is gated inside the handler: isShared: true or isDefault: true needs canManageShared " +
+      "(OWNER/ADMIN) and otherwise answers 403 before the service runs, so no default flag is cleared.",
     verify: { type: "call", callee: "requireTeamRole" },
   },
   "POST /logs/views/:id/duplicate": {

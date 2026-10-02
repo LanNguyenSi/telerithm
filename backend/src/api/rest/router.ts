@@ -625,6 +625,11 @@ apiRouter.get(
   }),
 );
 
+// True when a create or update payload touches team-wide view state.
+function requestsSharedState(input: { isShared?: boolean; isDefault?: boolean }): boolean {
+  return input.isShared === true || input.isDefault === true;
+}
+
 apiRouter.get(
   "/logs/views",
   asyncHandler(async (req, res) => {
@@ -651,7 +656,12 @@ apiRouter.post(
       res.status(400).json({ error: parsed.error.flatten() });
       return;
     }
-    if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
+    const role = await requireTeamRole(userId, parsed.data.teamId, res);
+    if (role === null) return;
+    if (requestsSharedState(parsed.data) && !canManageShared(role)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
     const view = await logViewService.create({
       teamId: parsed.data.teamId,
       userId,
@@ -681,11 +691,15 @@ apiRouter.put(
     }
     const role = await requireTeamRole(userId, teamId, res);
     if (role === null) return;
+    if (requestsSharedState(parsed.data) && !canManageShared(role)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
     try {
       const view = await logViewService.update(String(req.params.id), {
         teamId,
         userId,
-        canManageShared: role === "OWNER" || role === "ADMIN",
+        canManageShared: canManageShared(role),
         ...parsed.data,
       });
       res.json({ view });
@@ -713,7 +727,7 @@ apiRouter.post(
       const view = await logViewService.duplicate(String(req.params.id), {
         teamId,
         userId,
-        canManageShared: role === "OWNER" || role === "ADMIN",
+        canManageShared: canManageShared(role),
         name,
       });
       res.status(201).json({ view });
@@ -740,7 +754,7 @@ apiRouter.delete(
       await logViewService.remove(String(req.params.id), {
         teamId,
         userId,
-        canManageShared: role === "OWNER" || role === "ADMIN",
+        canManageShared: canManageShared(role),
       });
       res.status(204).end();
     } catch (error) {
@@ -1489,6 +1503,17 @@ apiRouter.put(
 // join token, so mere membership must not be enough (cross-tenant IDOR /
 // privilege escalation otherwise).
 function canManageInvites(role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER"): boolean {
+  return role === "OWNER" || role === "ADMIN";
+}
+
+// Shared log-view state is team-wide: a shared view is visible to every
+// member, and isDefault: true makes LogViewService clear the default flag of
+// every shared view in the team. Only OWNER/ADMIN may create or edit that
+// state; private views stay open to every member, VIEWER included. This is
+// the single place the rule lives: the POST and PUT handlers gate on it
+// before any mutation, and the service-level update, duplicate and remove
+// paths receive it as their canManageShared input.
+function canManageShared(role: TeamRoleName): boolean {
   return role === "OWNER" || role === "ADMIN";
 }
 
