@@ -243,7 +243,9 @@ export function routeSatisfiesVerify(route: RouteDecl, sourceFile: ts.SourceFile
 
 // Follows a writeRoute resolver argument to the factory call that builds it:
 // the inline call itself, or the initializer of the top-level `const` an
-// identifier names. Null for any other form.
+// identifier names. Null for any other form. Only a `const` counts: a `let` or
+// `var` binding could be reassigned to any function after its checked
+// initializer, and that function would run before the write gate.
 export function resolveToCall(
   expression: ts.Expression,
   sourceFile: ts.SourceFile,
@@ -252,6 +254,7 @@ export function resolveToCall(
   if (ts.isIdentifier(expression)) {
     for (const statement of sourceFile.statements) {
       if (!ts.isVariableStatement(statement)) continue;
+      if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) continue;
       for (const declaration of statement.declarationList.declarations) {
         if (
           ts.isIdentifier(declaration.name) &&

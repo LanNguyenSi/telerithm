@@ -37,7 +37,15 @@ import type { NextFunction, Request, Response, Router } from "express";
 //
 // The registered Express handler is tagged (`isWriteRouteHandler`) so a
 // runtime route-table test can verify that a team-scoped write route is served
-// by this wrapper and by nothing else, whatever spelling registered it.
+// by this wrapper and by nothing else.
+//
+// Threat model: the wrapper and its tests guard against ACCIDENTAL gaps, a
+// route author who forgets the wrapper or puts work before the gate. They do
+// not promise to catch deliberately obfuscated code: an aliased or
+// index-accessed registration, a route registered at request time or only
+// under a config value the tests do not build, a monkey-patched imported
+// schema, or behaviour hidden inside a known middleware. Those are left to code
+// review.
 //
 // This module takes its collaborators as arguments (`createWriteRoute`) so it
 // can be unit-tested without constructing the live Prisma/ClickHouse/Redis

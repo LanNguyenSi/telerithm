@@ -87,7 +87,8 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
   `apiRouter`, `apiRouter["delete"](...)`). Jeder `writeRoute`-Aufruf muss genau
   `(method, path, resolver, handler)` haben (ein weiteres Argument wäre ein
   Middleware vor dem Gate), als Top-Level-Anweisung, mit einem Resolver aus
-  `teamFromBody`/`teamFromResource`, dessen Argumente einfache Bezeichner sind
+  `teamFromBody`/`teamFromResource` (inline oder in einer Top-Level-`const`;
+  eine `let`- oder `var`-Bindung ließe sich neu zuweisen), dessen Argumente einfache Bezeichner sind
   (Body-Schema aus `validation/schemas` importiert, Loader eine Top-Level-
   Konstante) plus ein String-Literal als Not-found-Meldung; lokale
   Deklarationen oder Aliase von `teamFromBody`, `teamFromResource`,
@@ -98,33 +99,52 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
   Auth, Resolver, Gate, Handler; ein abgelehnter Aufrufer erreicht weder den
   Handler noch dessen Default-Parameter, Tagged Templates oder `new`-Ausdrücke.
 - Laufzeit-Routentabelle: `backend/tests/unit/route-table.test.ts` baut die
-  echte App mit `createApp()` (gleiche Modul-Mocks wie `api.test.ts`) und läuft
-  den Express-Layer-Stack rekursiv ab, gemountete Router eingeschlossen. Sie
-  verlangt: jede App- und Router-Middleware steht auf einer bekannten Liste;
+  echte App mit `createApp()` (gleiche Modul-Mocks wie `api.test.ts`), und zwar
+  für jede Kombination der Config-Werte, auf die `createApp()` und die Services
+  verzweigen (`nodeEnv` development/production/test, `multiTenant` an/aus,
+  `trustProxy` gesetzt/ungesetzt; je ein frischer Modul-Graph per
+  `vi.resetModules()`), und läuft den Express-Layer-Stack rekursiv ab,
+  gemountete Router eingeschlossen. Sie
+  verlangt: jede App- und Router-Middleware steht auf einer bekannten Liste
+  (Name, Mount-Pfad, Arität; anonyme Layer zusätzlich mit einem Fragment ihres
+  Quelltexts); weder App noch API-Router tragen einen `param`-Callback (der
+  liefe vor dem Gate jeder `:id`-Route);
   außerhalb des einen API-Routers unter `/api/v1` gibt es keine mutierende
   Route; jede mutierende Route des API-Routers steht in `ROUTE_WRITE_GUARDS`
   (`backend/tests/unit/route-guards.ts`), eine "write"-Route wird von genau
   einem Handler bedient, nämlich dem, den `writeRoute` registriert und
   `write-route.ts` markiert (`isWriteRouteHandler`), eine Allowlist-Route nicht.
-  Damit ist S4 zur Laufzeit erkannt, unabhängig von der Schreibweise: ein
-  umbenanntes `Router`, ein Pfad als Konstante, ein zweiter Router in `app.ts`
-  oder ein mutierendes `app.use(...)` fallen als unbekannte Layer bzw.
-  unklassifizierte Routen auf. Der statische AST-Test bleibt für das, was die
+  Damit fallen die versehentlichen Formen von S4 zur Laufzeit auf: ein
+  umbenanntes `Router`, ein Pfad als Konstante, ein zweiter Router in `app.ts`,
+  ein mutierendes `app.use(...)` oder eine Registrierung, die nur unter einem
+  der Config-Werte oben existiert, erscheinen als unbekannte Layer bzw.
+  unklassifizierte Routen. Der statische AST-Test bleibt für das, was die
   Laufzeittabelle nicht sieht: die Form der `writeRoute`-Aufrufe und ihrer
   Resolver-Argumente, die Bindung an die echten `requireAuth` und
   `requireTeamWriteRole`, die Stelle, an der der Wrapper den Handler nach dem
   Gate aufruft, und der statische Scan über `backend/src` (`Router()` und
   `createWriteRoute` je einmal, `express()` nur in `app.ts` und
-  `config/index.ts`, keine Registrierung außerhalb von `router.ts`): er sieht
-  Code außerhalb von `createApp()`, etwa eine Registrierung auf der App in
-  `server.ts` oder eine zweite Express-App im selben Prozess, die die
-  Laufzeittabelle nicht abläuft.
+  `config/index.ts`, keine Registrierung außerhalb von `router.ts`): er liest
+  auch Code außerhalb von `createApp()`, etwa `server.ts`, erkennt dort aber
+  nur die aufgezählten Schreibweisen (Pfad als String- oder Template-Literal,
+  Mount per Bezeichner, der Name `apiRouter`); ein Pfad in einer Konstante oder
+  einem Array wird dort nicht erkannt.
+- Bedrohungsmodell: Wrapper und Meta-Tests richten sich gegen versehentliche
+  Lücken, also eine Route, die jemand ohne Wrapper oder mit Arbeit vor dem Gate
+  anlegt oder verschiebt. Bewusst verschleierte Registrierungen sind ein
+  Review-Punkt, kein Versprechen der Tests: Aliase oder Indexzugriffe auf den
+  Router außerhalb der erkannten Formen, Registrierungen erst zur Request-Zeit
+  (`req.app`) oder nur unter Config-Werten außerhalb der Matrix, ein ersetzter
+  bekannter Layer, der Name und Quelltext-Fragment beibehält, neues Verhalten
+  in einer bekannten Middleware (etwa ein `verify`-Callback von
+  `express.json`) und ein zur Laufzeit gepatchtes importiertes Schema.
 - Die früheren Sonderformen sind damit beantwortet: Seiteneffekte in den
   Gate-Argumenten (S0) lassen sich nicht schreiben, ein Middleware-Argument vor
   dem Handler (S1) lehnt die Formprüfung ab, Default-Parameter und Tagged
   Templates (S2, S3) laufen im Handler nach dem Gate, eine zweite Router-
   Instanz oder eine Registrierung aus einem anderen Modul (S4) findet die
-  Laufzeittabelle. Zwei Eingaben laufen vor dem Gate, weil das Gate das Team
+  Laufzeittabelle, soweit sie nicht bewusst verschleiert ist (siehe
+  Bedrohungsmodell). Zwei Eingaben laufen vor dem Gate, weil das Gate das Team
   braucht, das sie liefern, und der Wrapper sie nicht kapseln kann: der Loader
   von `teamFromResource` und das Body-Schema (samt `transform`, `refine` und
   `preprocess`) von `teamFromBody`/`teamFromResource`. Beide müssen frei von

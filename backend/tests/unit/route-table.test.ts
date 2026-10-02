@@ -15,17 +15,29 @@ import { ROUTE_WRITE_GUARDS, type Guard } from "./route-guards.js";
 // spellings it knows (callee names, literal paths, the apiRouter receiver). An
 // aliased Router(), a const path, a second router mounted in app.ts or an
 // inline mutating app.use(...) all register a route without any of those
-// spellings. This test closes the class at runtime instead: it builds the real
-// app with createApp(), walks the Express layer stack recursively (mounted
-// routers included) and requires that
+// spellings. This test checks the registered result at runtime instead: it
+// builds the real app with createApp(), under every combination of the config
+// values createApp() and the services branch on, walks the Express layer stack
+// recursively (mounted routers included) and requires that
 //   1. every layer the app and the API router carry is on a known list, so no
-//      router, middleware or route appears that nobody classified;
-//   2. no state-changing route exists outside the one API router mounted at
+//      router, middleware or route appears that nobody classified; anonymous
+//      layers are pinned by a fragment of their source, since name, mount and
+//      arity cannot tell two anonymous functions apart;
+//   2. neither the app nor the API router carries a param callback, which
+//      would run before the write gate of every route naming the parameter;
+//   3. no state-changing route exists outside the one API router mounted at
 //      /api/v1;
-//   3. every state-changing route of the API router is classified in
+//   4. every state-changing route of the API router is classified in
 //      ROUTE_WRITE_GUARDS: "write" routes are served by exactly one handler,
 //      the one writeRoute registered (write-route.ts tags it), and allowlisted
 //      routes are not served by the wrapper.
+// Threat model: these checks catch an accidental gap, a route or middleware
+// someone added or moved without the wrapper or a classification. They do not
+// promise to catch deliberate obfuscation: a known layer replaced by a look-alike
+// that keeps its name and source fragment, new behaviour inside a known
+// middleware, a route registered only at request time or under a config value
+// outside the matrix below, or a monkey-patched imported schema. Those are
+// code-review items.
 // The static scan stays for what the runtime table cannot see: that each
 // writeRoute call has the (method, path, resolver, handler) shape with plain
 // identifier factory arguments, and that the wrapper is bound to the real
@@ -33,28 +45,30 @@ import { ROUTE_WRITE_GUARDS, type Guard } from "./route-guards.js";
 // gate, handler) is proven in write-route.test.ts.
 
 // The same module mocks as tests/integration/api.test.ts, only as thin as
-// building the app needs: no request is sent here.
-vi.mock("../../src/config/index.js", () => ({
-  config: {
-    port: 4000,
-    host: "127.0.0.1",
-    nodeEnv: "test",
-    databaseUrl: "postgresql://test:test@localhost:5432/test",
-    clickhouseUrl: "http://localhost:8123",
-    logLevel: "silent",
-    corsOrigins: "*",
-    redisUrl: "redis://localhost:6379",
-    multiTenant: false,
-    registrationMode: "approval",
-    adminEmail: "admin@test.com",
-    openaiApiKey: undefined,
-    maxLookbackMs: 7 * 24 * 60 * 60 * 1000,
-    maxPageSize: 500,
-    maxSyncRuntimeMs: 1500,
-    notificationTestRateLimitWindowMs: 200,
-    notificationTestRateLimitMax: 3,
-  },
+// building the app needs: no request is sent here. The config object is
+// mutable so the audit can rebuild the app under every value createApp() and
+// router.ts branch on (see "under every config branch" below).
+const mockConfig = vi.hoisted(() => ({
+  port: 4000,
+  host: "127.0.0.1",
+  nodeEnv: "test",
+  databaseUrl: "postgresql://test:test@localhost:5432/test",
+  clickhouseUrl: "http://localhost:8123",
+  logLevel: "silent",
+  corsOrigins: "*",
+  redisUrl: "redis://localhost:6379",
+  multiTenant: false,
+  registrationMode: "approval",
+  adminEmail: "admin@test.com",
+  openaiApiKey: undefined,
+  maxLookbackMs: 7 * 24 * 60 * 60 * 1000,
+  maxPageSize: 500,
+  maxSyncRuntimeMs: 1500,
+  notificationTestRateLimitWindowMs: 200,
+  notificationTestRateLimitMax: 3,
+  trustProxy: undefined as number | undefined,
 }));
+vi.mock("../../src/config/index.js", () => ({ config: mockConfig }));
 vi.mock("../../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), fatal: vi.fn() },
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
@@ -86,6 +100,13 @@ interface Layer {
 
 function stackOf(app: express.Express): Layer[] {
   return (app as unknown as { _router: { stack: Layer[] } })._router.stack;
+}
+
+// Callbacks registered with router.param(...) / app.param(...). They are not
+// layers, yet they run before every handler of a route whose path names the
+// parameter, so before the write gate of every `:id` write route.
+function paramNamesOf(router: unknown): string[] {
+  return Object.keys((router as { params?: Record<string, unknown> }).params ?? {});
 }
 
 // "/api/v1" for the mount regexp Express 4 builds from app.use("/api/v1", ...).
@@ -129,6 +150,10 @@ interface AuditConfig {
   // Every non-route layer of the API router (router-level middleware).
   routerLayers: ExpectedLayer[];
   guards: Record<string, Guard>;
+  // Recognises the wrapper's handler tag. Defaults to this file's
+  // write-route.js import; an app built after vi.resetModules() carries the
+  // tag of its own fresh write-route.js instance.
+  isWrapped?: (handle: unknown) => boolean;
 }
 
 interface RouteEntry {
@@ -162,6 +187,13 @@ function compareLayers(where: string, actual: Layer[], expected: ExpectedLayer[]
   for (let i = 0; i < length; i += 1) {
     const got = actualDescriptions[i];
     const want = expected[i]?.layer;
+    if (want?.includes("<anonymous>") && !expected[i].sourceIncludes) {
+      // Name, mount and arity cannot tell one anonymous function from
+      // another, so a same-shaped swap would pass without a source fragment.
+      violations.push(
+        `${where}: known layer #${i} "${want}" is anonymous and needs a sourceIncludes fragment`,
+      );
+    }
     if (got !== want) {
       violations.push(
         `${where}: layer #${i} is ${got === undefined ? "missing" : `"${got}"`}, expected ${
@@ -181,9 +213,14 @@ function compareLayers(where: string, actual: Layer[], expected: ExpectedLayer[]
 }
 
 function auditApp(app: express.Express, config: AuditConfig): string[] {
+  const isWrapped = config.isWrapped ?? isWriteRouteHandler;
   const violations: string[] = [];
   const appStack = stackOf(app);
   violations.push(...compareLayers("app", appStack, config.appLayers));
+  const appRouter = (app as unknown as { _router: unknown })._router;
+  for (const name of paramNamesOf(appRouter)) {
+    violations.push(`app: param callback for :${name} runs before the handlers of every route naming it`);
+  }
 
   const entries: RouteEntry[] = [];
   collectRoutes(appStack, [], entries);
@@ -198,6 +235,11 @@ function auditApp(app: express.Express, config: AuditConfig): string[] {
     }
     const nonRoute = (apiLayer.handle.stack ?? []).filter((layer) => !layer.route);
     violations.push(...compareLayers("API router", nonRoute, config.routerLayers));
+    for (const name of paramNamesOf(apiLayer.handle)) {
+      violations.push(
+        `API router: param callback for :${name} runs before the write gate of every route naming it`,
+      );
+    }
   }
 
   const seen = new Set<string>();
@@ -221,7 +263,7 @@ function auditApp(app: express.Express, config: AuditConfig): string[] {
 
     const guard = config.guards[key];
     const served = entry.handlers.map((layer) => layer.handle);
-    const wrapped = served.some((handle) => isWriteRouteHandler(handle));
+    const wrapped = served.some((handle) => isWrapped(handle));
     if (!guard) {
       violations.push(`unclassified state-changing route ${key}`);
     } else if (guard.kind === "write") {
@@ -251,13 +293,17 @@ const REAL_APP_LAYERS: ExpectedLayer[] = [
   { layer: "middleware / corsMiddleware /3" },
   { layer: "middleware / jsonParser /3" },
   // express-rate-limit's general limiter: an anonymous async wrapper.
-  { layer: "middleware / <anonymous> /3" },
+  {
+    layer: "middleware / <anonymous> /3",
+    sourceIncludes: "await Promise.resolve(fn(request, response, next)).catch(next)",
+  },
   // The request-id, access-log and metrics middleware.
   { layer: "middleware / <anonymous> /3", sourceIncludes: "X-Request-Id" },
   { layer: "route get /metrics" },
   { layer: "middleware /docs swaggerInitFn /3" },
   { layer: "middleware /docs serveStatic /3" },
-  { layer: "middleware /docs <anonymous> /2" },
+  // swagger-ui-express setup(): serves the generated HTML page.
+  { layer: "middleware /docs <anonymous> /2", sourceIncludes: "generateHTML(req.swaggerDoc" },
   { layer: "route get /openapi.json" },
   { layer: "router /api/v1" },
   // The central error handler.
@@ -266,11 +312,12 @@ const REAL_APP_LAYERS: ExpectedLayer[] = [
 
 let realApp: express.Express;
 let realApiRouter: unknown;
+let realCreateApp: () => express.Express;
 
 beforeAll(async () => {
-  const { createApp } = await import("../../src/app.js");
+  ({ createApp: realCreateApp } = await import("../../src/app.js"));
   ({ apiRouter: realApiRouter } = await import("../../src/api/rest/router.js"));
-  realApp = createApp();
+  realApp = realCreateApp();
 });
 
 function realConfig(): AuditConfig {
@@ -302,6 +349,123 @@ describe("the runtime route table of createApp()", () => {
     );
     expect(entries.some((e) => e.method === "get" && e.chain.length === 1)).toBe(true);
     expect(entries.some((e) => e.method === "post" && !isWriteRouteHandler(e.handlers[0].handle))).toBe(true);
+  });
+
+  it("neither the app nor the API router carries a param callback", () => {
+    expect(paramNamesOf((realApp as unknown as { _router: unknown })._router)).toEqual([]);
+    expect(paramNamesOf(realApiRouter)).toEqual([]);
+  });
+
+  it("every anonymous layer of the app is pinned by a source fragment", () => {
+    const anonymous = REAL_APP_LAYERS.filter((entry) => entry.layer.includes("<anonymous>"));
+    expect(anonymous.length).toBeGreaterThan(0);
+    expect(anonymous.filter((entry) => !entry.sourceIncludes)).toEqual([]);
+  });
+});
+
+// --- Every config branch -------------------------------------------------------
+
+// createApp() branches on config.trustProxy (set or unset) and config.nodeEnv
+// (the CORS origin), and services it pulls in branch on config.multiTenant.
+// A mount or route added under one of those branches only would not exist in
+// the app built from the test config above, so the audit is repeated for the
+// app built under every combination. router.ts registers no route under a
+// config branch today; its config reads (rate-limit windows, page sizes) are
+// values, not branches, and are covered by the same rebuild.
+interface ConfigVariant {
+  nodeEnv: "development" | "production" | "test";
+  multiTenant: boolean;
+  trustProxy: number | undefined;
+}
+
+const CONFIG_MATRIX: ConfigVariant[] = (["development", "production", "test"] as const).flatMap((nodeEnv) =>
+  [true, false].flatMap((multiTenant) =>
+    [undefined, 1].map((trustProxy) => ({ nodeEnv, multiTenant, trustProxy })),
+  ),
+);
+
+function labelOf(variant: ConfigVariant): string {
+  return `nodeEnv=${variant.nodeEnv} multiTenant=${variant.multiTenant} trustProxy=${variant.trustProxy ?? "unset"}`;
+}
+
+const TEST_CONFIG = { ...mockConfig };
+
+// Runs `audit` once per variant with the config mock set to it and a fresh
+// module registry, so app.ts, router.ts and everything they import are
+// evaluated again under that config. Restores the test config afterwards.
+async function auditEveryConfig(
+  audit: (variant: ConfigVariant) => Promise<string[]>,
+): Promise<Record<string, string[]>> {
+  const results: Record<string, string[]> = {};
+  try {
+    for (const variant of CONFIG_MATRIX) {
+      Object.assign(mockConfig, TEST_CONFIG, variant);
+      vi.resetModules();
+      results[labelOf(variant)] = await audit(variant);
+    }
+  } finally {
+    Object.assign(mockConfig, TEST_CONFIG);
+  }
+  return results;
+}
+
+describe("the runtime route table under every config branch", () => {
+  it("covers every value createApp() and the services branch on", () => {
+    expect(new Set(CONFIG_MATRIX.map((v) => v.nodeEnv))).toEqual(
+      new Set(["development", "production", "test"]),
+    );
+    expect(new Set(CONFIG_MATRIX.map((v) => v.multiTenant))).toEqual(new Set([true, false]));
+    expect(new Set(CONFIG_MATRIX.map((v) => v.trustProxy))).toEqual(new Set([undefined, 1]));
+    expect(new Set(CONFIG_MATRIX.map(labelOf)).size).toBe(12);
+  });
+
+  it("the app built under each config passes the same audit", async () => {
+    const routers = new Set<unknown>();
+    const results = await auditEveryConfig(async (variant) => {
+      const { createApp } = await import("../../src/app.js");
+      const { apiRouter } = await import("../../src/api/rest/router.js");
+      const { isWriteRouteHandler: freshTag } = await import("../../src/api/rest/write-route.js");
+      routers.add(apiRouter);
+      const app = createApp();
+      const violations = auditApp(app, { ...realConfig(), apiRouter, isWrapped: freshTag });
+      // The rebuilt app really saw this variant (express defaults to false).
+      if (app.get("trust proxy") !== (variant.trustProxy ?? false)) {
+        violations.push(`trust proxy is ${String(app.get("trust proxy"))}, the config did not take effect`);
+      }
+      return violations;
+    });
+    expect(Object.keys(results)).toHaveLength(CONFIG_MATRIX.length);
+    // router.ts was evaluated again for every variant, not reused.
+    expect(routers.size).toBe(CONFIG_MATRIX.length);
+    expect(routers.has(realApiRouter)).toBe(false);
+    expect(results).toEqual(Object.fromEntries(Object.keys(results).map((label) => [label, []])));
+  }, 120_000);
+
+  // A miniature whose extra route exists only when one config key has one
+  // value: the matrix reports exactly the variants with that value, while the
+  // test config alone sees a clean app.
+  it.each([
+    ["nodeEnv", "production"],
+    ["multiTenant", true],
+    ["trustProxy", 1],
+  ] as const)("a route registered only when %s is %s is caught under that branch", async (key, value) => {
+    const audit = async (): Promise<string[]> => {
+      const built = build(({ app }) => {
+        if (mockConfig[key] === value) app.post("/widgets", noop);
+      });
+      return auditApp(built.app, controlConfig(built));
+    };
+    const results = await auditEveryConfig(audit);
+    const failing = Object.keys(results).filter((label) => results[label].length > 0);
+    expect(failing.sort()).toEqual(
+      CONFIG_MATRIX.filter((variant) => variant[key] === value)
+        .map(labelOf)
+        .sort(),
+    );
+    for (const label of failing) {
+      expect(results[label].join("\n")).toMatch(/state-changing route POST \/widgets outside the API router/);
+    }
+    expect(await audit()).toEqual([]);
   });
 });
 
@@ -532,6 +696,57 @@ describe("controls: each escape a spelling-based scan misses is reported at runt
     expect(auditApp(built.app, controlConfig(built)).join("\n")).toMatch(
       /the API router is not mounted on the app/,
     );
+  });
+
+  it("a param callback on the API router or on the app", () => {
+    const onRouter = build(({ apiRouter }) => {
+      apiRouter.param("id", (_req, _res, next) => next());
+    });
+    expect(auditApp(onRouter.app, controlConfig(onRouter))).toEqual([
+      "API router: param callback for :id runs before the write gate of every route naming it",
+    ]);
+    const onApp = build(({ app }) => {
+      app.param("id", (_req, _res, next) => next());
+    });
+    expect(auditApp(onApp.app, controlConfig(onApp))).toEqual([
+      "app: param callback for :id runs before the handlers of every route naming it",
+    ]);
+  });
+
+  it("each anonymous layer of the real app swapped for a same-shaped function", () => {
+    const pinned = REAL_APP_LAYERS.flatMap((entry, index) => (entry.sourceIncludes ? [index] : []));
+    expect(pinned.length).toBeGreaterThanOrEqual(4);
+    for (const index of pinned) {
+      const app = realCreateApp();
+      const layer = stackOf(app)[index];
+      // Same name ("<anonymous>"), mount and arity as the original.
+      const swap =
+        layer.handle.length === 4
+          ? (_err: unknown, _req: unknown, _res: unknown, next: () => void) => next()
+          : layer.handle.length === 3
+            ? (_req: unknown, _res: unknown, next: () => void) => next()
+            : (_req: unknown, res: { end: () => void }) => res.end();
+      expect(swap.length).toBe(layer.handle.length);
+      layer.handle = swap as unknown as Layer["handle"];
+      expect(auditApp(app, realConfig())).toEqual([
+        `app: layer #${index} "${REAL_APP_LAYERS[index].layer}" is not the expected function (source lacks "${REAL_APP_LAYERS[index].sourceIncludes}")`,
+      ]);
+    }
+  });
+
+  it("a known anonymous layer listed without a source fragment", () => {
+    const built = build(({ app }) => {
+      app.use((_req: Request, _res: Response, next: NextFunction) => next());
+    });
+    const [query, init, router] = controlConfig(built).appLayers;
+    expect(
+      auditApp(built.app, {
+        ...controlConfig(built),
+        appLayers: [query, init, { layer: "middleware / <anonymous> /3" }, router],
+      }),
+    ).toEqual([
+      'app: known layer #2 "middleware / <anonymous> /3" is anonymous and needs a sourceIncludes fragment',
+    ]);
   });
 
   it("an allowlist entry without a real justification", () => {

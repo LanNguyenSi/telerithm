@@ -374,9 +374,14 @@ function findWriteRouteBindingViolations(sourceFile: ts.SourceFile): string[] {
 // instance. Another module could still add a mutating route that bypasses the
 // wrapper: on a second Router(), on apiRouter imported from router.ts, on an
 // express app or sub-app, or through a mounted router. This scan is static
-// and covers all of src/; it complements the runtime route table (which is
-// authoritative for everything createApp() builds, and cannot see code that
-// runs outside it, such as a registration on the app in server.ts):
+// and reads all of src/, but it only recognises the spellings listed below
+// (a literal or template path, a bare identifier mount, the name apiRouter); a
+// path held in a const or an array, or a call through index access, is not
+// recognised. It complements the runtime route table, which checks what
+// createApp() registers under each config value it builds and cannot see code
+// that runs outside createApp(), such as server.ts. Deliberately obfuscated
+// registrations are a code-review item, not something this scan promises to
+// catch:
 //   - Router() / express.Router() / new Router() is called exactly once, in
 //     router.ts;
 //   - express() is called only in app.ts (the app) and config/index.ts (a
@@ -782,6 +787,23 @@ describe("writeRoute call shapes", () => {
       violations(`
         const widgetTeam = async (req, res) => null;
         writeRoute("post", "/w", widgetTeam, async () => {});`),
+    ).toHaveLength(1);
+  });
+
+  it("rejects a resolver held in a let or var binding, which could be reassigned (negative control)", () => {
+    // The checked initializer is a real factory call, but the binding is
+    // reassigned to an arbitrary function before any request arrives.
+    expect(
+      violations(`
+        let widgetTeam = teamFromBody(schema);
+        export const defaultWidgetTeam = widgetTeam;
+        widgetTeam = async (req) => { await sideEffect(); return null; };
+        writeRoute("post", "/w", widgetTeam, async () => {});`),
+    ).toHaveLength(1);
+    expect(
+      violations(`
+        var widgetTeam = teamFromResource(loadWidgetTeamId, "Widget not found");
+        writeRoute("delete", "/w/:id", widgetTeam, async () => {});`),
     ).toHaveLength(1);
   });
 
