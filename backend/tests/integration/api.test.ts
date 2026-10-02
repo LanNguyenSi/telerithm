@@ -1874,6 +1874,8 @@ describe("API Routes", () => {
           ["isShared and isDefault", { isShared: true, isDefault: true }],
         ])("returns 403 with no mutation for %s", async (_label, flags) => {
           asRole(role);
+          // A returned row makes a missing gate show as a 201 with the mock called.
+          mockedPrisma.logView.create.mockResolvedValue(viewRow({ ...flags }));
           const res = await viewApp
             .post("/api/v1/logs/views")
             .set("Authorization", "Bearer sess_admin")
@@ -1920,6 +1922,8 @@ describe("API Routes", () => {
         ])("returns 403 with no mutation on an own private view for %s", async (_label, flags) => {
           asRole(role);
           mockedPrisma.logView.findUnique.mockResolvedValueOnce(viewRow());
+          // A returned row makes a missing gate show as a 200 with the mock called.
+          mockedPrisma.logView.update.mockResolvedValue(viewRow({ ...flags }));
           const res = await viewApp
             .put("/api/v1/logs/views/view-own?teamId=t1")
             .set("Authorization", "Bearer sess_admin")
@@ -1958,6 +1962,156 @@ describe("API Routes", () => {
           expect(mockedPrisma.logView.update).toHaveBeenCalledTimes(1);
           expect(mockedPrisma.logView.updateMany).not.toHaveBeenCalled();
         });
+      });
+    });
+
+    describe("canManageShared reaches the update, duplicate and delete paths", () => {
+      // Own app instance, same reason as the block above: the shared app's
+      // general rate limiter is nearly exhausted by the rest of the file.
+      let pathApp: supertest.Agent;
+      let pathServer: Server;
+
+      beforeAll(async () => {
+        const { createApp } = await import("../../src/app.js");
+        pathServer = await new Promise<Server>((resolve, reject) => {
+          const s = createApp().listen(0);
+          s.once("listening", () => resolve(s));
+          s.once("error", reject);
+        });
+        pathApp = supertest(pathServer);
+      });
+
+      afterAll(async () => {
+        if (!pathServer) return;
+        await new Promise<void>((resolve, reject) => {
+          pathServer.close((err) => (err ? reject(err) : resolve()));
+        });
+      });
+
+      const definition = { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 };
+      const stamp = new Date("2026-03-23T00:00:00.000Z");
+      // A shared default view owned by someone else (user-9), not the caller (user-1).
+      const foreignShared = (over: Record<string, unknown> = {}) => ({
+        id: "view-shared",
+        teamId: "t1",
+        ownerUserId: "user-9",
+        name: "Team view",
+        isShared: true,
+        isDefault: true,
+        definition,
+        createdAt: stamp,
+        updatedAt: stamp,
+        ...over,
+      });
+      const asRole = (role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER") => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+          id: "member-1",
+          teamId: "t1",
+          userId: "user-1",
+          role,
+          joinedAt: stamp,
+        });
+      };
+
+      describe.each(["MEMBER", "VIEWER"] as const)("another user's shared view as %s", (role) => {
+        it("PUT is 403 with no update", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignShared());
+          mockedPrisma.logView.update.mockResolvedValue(foreignShared({ name: "Hijacked" }));
+          const res = await pathApp
+            .put("/api/v1/logs/views/view-shared?teamId=t1")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ name: "Hijacked" });
+          expect(res.status).toBe(403);
+          expect(mockedPrisma.logView.update).not.toHaveBeenCalled();
+        });
+
+        it("DELETE is 403 with no delete", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignShared());
+          mockedPrisma.logView.delete.mockResolvedValue(foreignShared());
+          const res = await pathApp
+            .delete("/api/v1/logs/views/view-shared?teamId=t1")
+            .set("Authorization", "Bearer sess_admin");
+          expect(res.status).toBe(403);
+          expect(mockedPrisma.logView.delete).not.toHaveBeenCalled();
+        });
+
+        it("duplicate creates a private copy", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignShared());
+          mockedPrisma.logView.create.mockResolvedValueOnce(
+            foreignShared({ id: "copy", ownerUserId: "user-1", isShared: false, isDefault: false }),
+          );
+          const res = await pathApp
+            .post("/api/v1/logs/views/view-shared/duplicate")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ teamId: "t1" });
+          expect(res.status).toBe(201);
+          expect(mockedPrisma.logView.create).toHaveBeenCalledTimes(1);
+          const data = mockedPrisma.logView.create.mock.calls[0][0].data;
+          expect(data.isShared).toBe(false);
+          expect(data.isDefault).toBe(false);
+          expect(data.ownerUserId).toBe("user-1");
+        });
+      });
+
+      describe.each(["OWNER", "ADMIN"] as const)("another user's shared view as %s", (role) => {
+        it("PUT renames it (200)", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignShared());
+          mockedPrisma.logView.update.mockResolvedValueOnce(foreignShared({ name: "Renamed" }));
+          const res = await pathApp
+            .put("/api/v1/logs/views/view-shared?teamId=t1")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ name: "Renamed" });
+          expect(res.status).toBe(200);
+          expect(mockedPrisma.logView.update).toHaveBeenCalledTimes(1);
+        });
+
+        it("DELETE removes it (204)", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignShared());
+          mockedPrisma.logView.delete.mockResolvedValueOnce(foreignShared());
+          const res = await pathApp
+            .delete("/api/v1/logs/views/view-shared?teamId=t1")
+            .set("Authorization", "Bearer sess_admin");
+          expect(res.status).toBe(204);
+          expect(mockedPrisma.logView.delete).toHaveBeenCalledTimes(1);
+        });
+
+        it("duplicate keeps isShared true and never copies the default flag", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignShared());
+          mockedPrisma.logView.create.mockResolvedValueOnce(
+            foreignShared({ id: "copy", ownerUserId: "user-1", isDefault: false }),
+          );
+          const res = await pathApp
+            .post("/api/v1/logs/views/view-shared/duplicate")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ teamId: "t1" });
+          expect(res.status).toBe(201);
+          const data = mockedPrisma.logView.create.mock.calls[0][0].data;
+          expect(data.isShared).toBe(true);
+          expect(data.isDefault).toBe(false);
+        });
+      });
+
+      it("VIEWER PUT with only a name on an own private view is 200", async () => {
+        asRole("VIEWER");
+        mockedPrisma.logView.findUnique.mockResolvedValueOnce(
+          foreignShared({ ownerUserId: "user-1", isShared: false, isDefault: false }),
+        );
+        mockedPrisma.logView.update.mockResolvedValueOnce(
+          foreignShared({ ownerUserId: "user-1", isShared: false, isDefault: false, name: "Renamed" }),
+        );
+        const res = await pathApp
+          .put("/api/v1/logs/views/view-shared?teamId=t1")
+          .set("Authorization", "Bearer sess_admin")
+          .send({ name: "Renamed" });
+        expect(res.status).toBe(200);
+        expect(mockedPrisma.logView.update).toHaveBeenCalledTimes(1);
       });
     });
 

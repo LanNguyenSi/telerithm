@@ -625,17 +625,6 @@ apiRouter.get(
   }),
 );
 
-// Shared log-view state is team-wide: a shared view is visible to every
-// member, and isDefault: true makes LogViewService clear the default flag of
-// every shared view in the team. Only OWNER/ADMIN may create or edit that
-// state; private views stay open to every member, VIEWER included. This is
-// the single place the rule lives: the POST and PUT handlers gate on it
-// before any mutation, and the service-level update, duplicate and remove
-// paths receive it as their canManageShared input.
-function canManageShared(role: TeamRoleName): boolean {
-  return role === "OWNER" || role === "ADMIN";
-}
-
 // True when a create or update payload touches team-wide view state.
 function requestsSharedState(input: { isShared?: boolean; isDefault?: boolean }): boolean {
   return input.isShared === true || input.isDefault === true;
@@ -1514,6 +1503,17 @@ apiRouter.put(
 // join token, so mere membership must not be enough (cross-tenant IDOR /
 // privilege escalation otherwise).
 function canManageInvites(role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER"): boolean {
+  return role === "OWNER" || role === "ADMIN";
+}
+
+// Shared log-view state is team-wide: a shared view is visible to every
+// member, and isDefault: true makes LogViewService clear the default flag of
+// every shared view in the team. Only OWNER/ADMIN may create or edit that
+// state; private views stay open to every member, VIEWER included. This is
+// the single place the rule lives: the POST and PUT handlers gate on it
+// before any mutation, and the service-level update, duplicate and remove
+// paths receive it as their canManageShared input.
+function canManageShared(role: TeamRoleName): boolean {
   return role === "OWNER" || role === "ADMIN";
 }
 

@@ -101,7 +101,13 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
   Teams). `canManageShared` greift außerdem beim Ändern oder Löschen fremder
   Shared-Views. `POST /logs/views/:id/duplicate` prüft `canRead`
   (Shared-View oder eigene) und übernimmt `isShared` nur, wenn
-  `canManageShared` gilt (agent-tasks `765bb823`).
+  `canManageShared` gilt (agent-tasks `765bb823`). `isDefault: true` ist für
+  Nicht-Admins auch auf einer privaten View gesperrt, weil der Service das
+  Default-Flag teamweit zurücksetzt. Offene Lücke: ein Nicht-Admin, der eine
+  bereits geteilte oder als Default markierte View besitzt (vor dieser
+  Änderung angelegt, oder nach einer Herabstufung vom Admin), kann sie weiter
+  ändern, auf privat zurückstellen und löschen; bestehende Daten werden nicht
+  migriert.
 - Nach dem Merge prüft der Operator in Produktion, ob VIEWER-Mitgliedschaften
   existieren (`SELECT count(*) FROM "TeamMember" WHERE role = 'VIEWER'`), weil
   deren bisheriger Schreibzugriff mit dieser Regel endet.
