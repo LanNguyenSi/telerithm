@@ -16,6 +16,8 @@ export function SavedViewBar({
   onRename,
   onDelete,
   onSetDefault,
+  canManageShared = true,
+  sharedDisabledReason,
 }: {
   views: SavedLogView[];
   selectedId: string;
@@ -28,6 +30,8 @@ export function SavedViewBar({
   onRename: () => void;
   onDelete: () => void;
   onSetDefault: () => void;
+  canManageShared?: boolean;
+  sharedDisabledReason?: string;
 }) {
   const selected = views.find((view) => view.id === selectedId) ?? null;
 
@@ -83,7 +87,8 @@ export function SavedViewBar({
         <button
           type="button"
           onClick={onSetDefault}
-          disabled={!selected}
+          disabled={!selected || !canManageShared}
+          title={!canManageShared ? sharedDisabledReason : undefined}
           className="rounded-md border border-line px-2 py-1 text-xs text-ink hover:bg-slate-900/5 disabled:opacity-50 dark:hover:bg-white/5"
         >
           Set Default

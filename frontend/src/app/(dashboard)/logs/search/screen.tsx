@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useLogAuth } from "@/components/logs/log-auth-context";
+import { SHARED_VIEWS_REASON, canManageSharedViews, useLogAuth } from "@/components/logs/log-auth-context";
 import { FacetSidebar } from "@/components/logs/facet-sidebar";
 import { FieldExplorer } from "@/components/logs/field-explorer";
 import { HistogramStrip } from "@/components/logs/histogram-strip";
@@ -46,6 +46,7 @@ import type {
 
 export function SearchScreen() {
   const { team, token } = useLogAuth();
+  const canManageShared = canManageSharedViews(team.role);
   const router = useRouter();
   const search = useLogSearch();
   const {
@@ -414,13 +415,16 @@ export function SearchScreen() {
           }}
           onSave={async () => {
             const defaultName = `View ${new Date().toLocaleString("de-DE")}`;
-            const result = await dialog.saveView("Ansicht speichern", defaultName);
+            const result = await dialog.saveView("Ansicht speichern", defaultName, {
+              canManageShared,
+              disabledReason: SHARED_VIEWS_REASON,
+            });
             if (!result) return;
             void createSavedLogView(token, {
               teamId: team.id,
               name: result.name,
-              isShared: result.shared,
-              isDefault: result.isDefault,
+              isShared: canManageShared && result.shared,
+              isDefault: canManageShared && result.isDefault,
               definition: currentDefinition,
             })
               .then(async ({ view }) => {
@@ -479,8 +483,10 @@ export function SearchScreen() {
                 setSavedViewsError(renameError instanceof Error ? renameError.message : "Rename failed"),
               );
           }}
+          canManageShared={canManageShared}
+          sharedDisabledReason={SHARED_VIEWS_REASON}
           onSetDefault={() => {
-            if (!selectedView) return;
+            if (!selectedView || !canManageShared) return;
             void updateSavedLogView(selectedView.id, team.id, token, { isDefault: true })
               .then(async ({ view }) => {
                 const { views } = await getSavedLogViews(team.id, token);

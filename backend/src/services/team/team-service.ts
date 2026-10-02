@@ -4,6 +4,7 @@ import type {
   RegistrationResult,
   Team,
   TeamInvite,
+  TeamWithRole,
   User,
 } from "../../types/domain.js";
 import { config } from "../../config/index.js";
@@ -101,7 +102,7 @@ export class TeamService {
     return this.createSession(user);
   }
 
-  async listTeamsForUser(userId: string): Promise<Team[]> {
+  async listTeamsForUser(userId: string): Promise<TeamWithRole[]> {
     const memberships = await prisma.teamMember.findMany({
       where: { userId },
       include: { team: true },
@@ -111,6 +112,7 @@ export class TeamService {
       name: m.team.name,
       slug: m.team.slug,
       createdAt: m.team.createdAt.toISOString(),
+      role: m.role,
     }));
   }
 

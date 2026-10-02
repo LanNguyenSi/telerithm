@@ -15,6 +15,7 @@ import type {
   SessionUser,
   Source,
   Team,
+  TeamWithRole,
 } from "@/types";
 
 export function getApiBaseUrl() {
@@ -98,7 +99,7 @@ function authedRequest<T>(path: string, token: string, init?: RequestInit): Prom
 }
 
 export async function getTeams(token: string) {
-  return authedRequest<{ teams: Team[] }>("/teams", token);
+  return authedRequest<{ teams: TeamWithRole[] }>("/teams", token);
 }
 
 export async function getOverview(teamId: string, token: string) {

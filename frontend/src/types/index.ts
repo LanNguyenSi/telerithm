@@ -104,6 +104,13 @@ export interface Team {
   createdAt: string;
 }
 
+export type TeamRole = "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
+
+/** A team as listed for the signed-in user: carries that user's own membership role. */
+export interface TeamWithRole extends Team {
+  role: TeamRole;
+}
+
 export interface SessionUser {
   id: string;
   email: string;
