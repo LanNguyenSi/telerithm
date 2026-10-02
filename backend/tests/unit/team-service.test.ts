@@ -16,6 +16,7 @@ const {
   mockTeamMemberDelete,
   mockTeamMemberFindFirst,
   mockTeamMemberUpsert,
+  mockTeamMemberFindMany,
   mockUserFindUnique,
   mockUserUpdate,
   mockTeamFindUnique,
@@ -35,6 +36,7 @@ const {
   mockTeamMemberDelete: vi.fn(),
   mockTeamMemberFindFirst: vi.fn(),
   mockTeamMemberUpsert: vi.fn(),
+  mockTeamMemberFindMany: vi.fn(),
   mockUserFindUnique: vi.fn(),
   mockUserUpdate: vi.fn(),
   mockTeamFindUnique: vi.fn(),
@@ -74,6 +76,7 @@ vi.mock("../../src/repositories/prisma.js", () => ({
       delete: mockTeamMemberDelete,
       findFirst: mockTeamMemberFindFirst,
       upsert: mockTeamMemberUpsert,
+      findMany: mockTeamMemberFindMany,
     },
     user: {
       findUnique: mockUserFindUnique,
@@ -479,5 +482,51 @@ describe("TeamService.approveUser", () => {
 
     expect(mockTeamFindUnique).not.toHaveBeenCalled();
     expect(mockTeamMemberUpsert).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listTeamsForUser
+// ---------------------------------------------------------------------------
+
+describe("TeamService.listTeamsForUser", () => {
+  let service: TeamService;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    service = new TeamService();
+  });
+
+  it("carries the caller's own membership role on each team", async () => {
+    mockTeamMemberFindMany.mockResolvedValue([
+      {
+        userId: USER_ID,
+        role: "VIEWER",
+        team: { id: TEAM_A, name: "A", slug: "a", createdAt: new Date("2024-01-15T10:00:00.000Z") },
+      },
+      {
+        userId: USER_ID,
+        role: "OWNER",
+        team: { id: TEAM_B, name: "B", slug: "b", createdAt: new Date("2024-02-01T10:00:00.000Z") },
+      },
+    ]);
+
+    const teams = await service.listTeamsForUser(USER_ID);
+
+    expect(teams).toEqual([
+      { id: TEAM_A, name: "A", slug: "a", createdAt: "2024-01-15T10:00:00.000Z", role: "VIEWER" },
+      { id: TEAM_B, name: "B", slug: "b", createdAt: "2024-02-01T10:00:00.000Z", role: "OWNER" },
+    ]);
+  });
+
+  it("reads only the caller's memberships and never loads other members", async () => {
+    mockTeamMemberFindMany.mockResolvedValue([]);
+
+    await service.listTeamsForUser(USER_ID);
+
+    expect(mockTeamMemberFindMany).toHaveBeenCalledExactlyOnceWith({
+      where: { userId: USER_ID },
+      include: { team: true },
+    });
   });
 });

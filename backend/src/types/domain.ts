@@ -164,6 +164,11 @@ export interface Team {
   createdAt: string;
 }
 
+/** A team as listed for its caller: carries the caller's own membership role only. */
+export interface TeamWithRole extends Team {
+  role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
+}
+
 export interface TeamInvite {
   id: string;
   teamId: string;

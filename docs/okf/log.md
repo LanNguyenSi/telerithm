@@ -2,6 +2,10 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-02T07:15:49Z, re-verified and re-stamped ingestion-pipeline.md (task 3c2adfe9):
+  backend/src/types/domain.ts gained a `TeamWithRole` type; the six
+  `SourceType` values this doc cites are unchanged.
+
 - 2026-10-02T05:54:06Z, re-verified and re-stamped api-authz-and-team-scoping.md
   (task 765bb823): `canManageShared` moved next to `canManageInvites`, so the
   router.ts citations below the log-view routes were re-pointed; the saved-view

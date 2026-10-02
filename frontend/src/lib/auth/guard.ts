@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSession } from "./session";
 import { getTeams } from "@/lib/api/client";
-import type { SessionUser, Team } from "@/types";
+import type { SessionUser, TeamWithRole } from "@/types";
 
 export async function requireSession(): Promise<{ token: string; user: SessionUser }> {
   const session = await getSession();
@@ -21,7 +21,7 @@ export async function requireAdmin(): Promise<{ token: string; user: SessionUser
  * Get the current authenticated session and first team.
  * Redirects to /login if no session exists.
  */
-export async function requireAuth(): Promise<{ token: string; user: SessionUser; team: Team }> {
+export async function requireAuth(): Promise<{ token: string; user: SessionUser; team: TeamWithRole }> {
   const session = await requireSession();
   const { teams } = await getTeams(session.token);
   const team = teams[0];
