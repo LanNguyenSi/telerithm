@@ -2,6 +2,14 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-02T05:54:06Z, re-verified and re-stamped api-authz-and-team-scoping.md
+  (task 765bb823): `canManageShared` moved next to `canManageInvites`, so the
+  router.ts citations below the log-view routes were re-pointed; the saved-view
+  paragraph now states the remaining gap (a non-admin owner of an already
+  shared or default view can still edit, unshare and delete it, existing data
+  is not migrated) and that MEMBER and VIEWER cannot set `isDefault` even on a
+  private view.
+
 - 2026-10-02T05:41:22Z, re-verified and re-stamped api-authz-and-team-scoping.md
   (task 765bb823): the saved-view routes now gate team-wide state. POST and
   PUT `/logs/views` answer 403 before any service call when a non-admin sets
