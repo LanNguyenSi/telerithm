@@ -85,12 +85,76 @@ describe.each(["OWNER", "ADMIN"] as const)("log view controls for %s", (role) =>
   });
 });
 
+describe("fail-closed defaults", () => {
+  it("treats an absent role as not allowed", () => {
+    expect(canManageSharedViews(undefined as unknown as TeamRole)).toBe(false);
+  });
+
+  it("disables the dialog options when the prop is omitted at runtime", () => {
+    const onConfirm = vi.fn();
+    render(
+      <Dialog
+        open
+        variant="save-view"
+        title="Ansicht speichern"
+        defaultName="My view"
+        {...({} as { canManageShared: boolean })}
+        disabledReason={SHARED_VIEWS_REASON}
+        onClose={() => {}}
+        onConfirm={onConfirm}
+      />,
+    );
+    expect(screen.getByLabelText("Team-weit teilen")).toBeDisabled();
+    expect(screen.getByLabelText("Als Standardansicht setzen")).toBeDisabled();
+  });
+
+  it("disables Set Default when the bar prop is omitted at runtime", () => {
+    render(
+      <SavedViewBar
+        views={[view]}
+        selectedId="v1"
+        unsaved={false}
+        loading={false}
+        onSelect={() => {}}
+        onSave={() => {}}
+        onOverwrite={() => {}}
+        onDuplicate={() => {}}
+        onRename={() => {}}
+        onDelete={() => {}}
+        onSetDefault={() => {}}
+        {...({} as { canManageShared: boolean })}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Set Default" })).toBeDisabled();
+  });
+
+  it("never submits shared or default when permission is lost after the boxes were ticked", () => {
+    const onConfirm = vi.fn();
+    const props = {
+      open: true,
+      variant: "save-view" as const,
+      title: "Ansicht speichern",
+      defaultName: "My view",
+      disabledReason: SHARED_VIEWS_REASON,
+      onClose: () => {},
+      onConfirm,
+    };
+    const { rerender } = render(<Dialog {...props} canManageShared={true} />);
+    fireEvent.click(screen.getByLabelText("Team-weit teilen"));
+    fireEvent.click(screen.getByLabelText("Als Standardansicht setzen"));
+    rerender(<Dialog {...props} canManageShared={false} />);
+    fireEvent.click(screen.getByRole("button", { name: /speichern|bestätigen|ok/i }));
+    expect(onConfirm).toHaveBeenCalledWith({ name: "My view", shared: false, isDefault: false });
+  });
+});
+
 describe.each(["MEMBER", "VIEWER"] as const)("log view controls for %s", (role) => {
   it("disables Set Default with the reason and does not call through", () => {
     const onSetDefault = renderBar(role);
     const button = screen.getByRole("button", { name: "Set Default" });
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("title", SHARED_VIEWS_REASON);
+    expect(button.getAttribute("aria-describedby")).toBe(screen.getByText(SHARED_VIEWS_REASON).id);
     fireEvent.click(button);
     expect(onSetDefault).not.toHaveBeenCalled();
   });

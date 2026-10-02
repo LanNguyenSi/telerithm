@@ -4,6 +4,8 @@ import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import type { SavedLogView } from "@/types";
 
+const SET_DEFAULT_HINT_ID = "saved-view-set-default-reason";
+
 export function SavedViewBar({
   views,
   selectedId,
@@ -16,7 +18,7 @@ export function SavedViewBar({
   onRename,
   onDelete,
   onSetDefault,
-  canManageShared = true,
+  canManageShared,
   sharedDisabledReason,
 }: {
   views: SavedLogView[];
@@ -30,10 +32,11 @@ export function SavedViewBar({
   onRename: () => void;
   onDelete: () => void;
   onSetDefault: () => void;
-  canManageShared?: boolean;
+  canManageShared: boolean;
   sharedDisabledReason?: string;
 }) {
   const selected = views.find((view) => view.id === selectedId) ?? null;
+  const setDefaultHint = !canManageShared ? sharedDisabledReason : undefined;
 
   return (
     <Card className="flex flex-wrap items-center gap-2">
@@ -89,6 +92,7 @@ export function SavedViewBar({
           onClick={onSetDefault}
           disabled={!selected || !canManageShared}
           title={!canManageShared ? sharedDisabledReason : undefined}
+          aria-describedby={setDefaultHint ? SET_DEFAULT_HINT_ID : undefined}
           className="rounded-md border border-line px-2 py-1 text-xs text-ink hover:bg-slate-900/5 disabled:opacity-50 dark:hover:bg-white/5"
         >
           Set Default
@@ -102,6 +106,11 @@ export function SavedViewBar({
           Delete
         </button>
       </div>
+      {setDefaultHint ? (
+        <p id={SET_DEFAULT_HINT_ID} className="basis-full text-right text-xs text-muted">
+          {setDefaultHint}
+        </p>
+      ) : null}
     </Card>
   );
 }

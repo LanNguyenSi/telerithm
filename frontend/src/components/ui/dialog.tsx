@@ -21,8 +21,8 @@ type DialogProps = {
   | {
       variant: "save-view";
       defaultName?: string;
-      /** When false, the share and default options are disabled and `disabledReason` is shown. */
-      canManageShared?: boolean;
+      /** Required: anything other than true disables the share and default options and shows `disabledReason`. */
+      canManageShared: boolean;
       disabledReason?: string;
       onConfirm: (data: { name: string; shared: boolean; isDefault: boolean }) => void;
     }
@@ -72,7 +72,7 @@ export function Dialog(props: DialogProps) {
       props.onConfirm(inputValue.trim());
     } else if (props.variant === "save-view") {
       if (!inputValue.trim()) return;
-      const allowed = props.canManageShared !== false;
+      const allowed = props.canManageShared === true;
       props.onConfirm({ name: inputValue.trim(), shared: allowed && shared, isDefault: allowed && isDefault });
     }
     onClose();
@@ -119,7 +119,7 @@ export function Dialog(props: DialogProps) {
               <input
                 type="checkbox"
                 checked={shared}
-                disabled={props.canManageShared === false}
+                disabled={props.canManageShared !== true}
                 onChange={(e) => setShared(e.target.checked)}
                 className="rounded border-line"
               />
@@ -129,13 +129,13 @@ export function Dialog(props: DialogProps) {
               <input
                 type="checkbox"
                 checked={isDefault}
-                disabled={props.canManageShared === false}
+                disabled={props.canManageShared !== true}
                 onChange={(e) => setIsDefault(e.target.checked)}
                 className="rounded border-line"
               />
               Als Standardansicht setzen
             </label>
-            {props.canManageShared === false && props.disabledReason ? (
+            {props.canManageShared !== true && props.disabledReason ? (
               <p className="text-xs text-muted">{props.disabledReason}</p>
             ) : null}
           </div>
@@ -171,7 +171,7 @@ type DialogState =
   | ({ open: true } & (
       | { variant: "confirm"; title: string; description?: string; resolve: (ok: boolean) => void }
       | { variant: "prompt"; title: string; description?: string; defaultValue?: string; resolve: (value: string | null) => void }
-      | { variant: "save-view"; title: string; description?: string; defaultName?: string; canManageShared?: boolean; disabledReason?: string; resolve: (data: { name: string; shared: boolean; isDefault: boolean } | null) => void }
+      | { variant: "save-view"; title: string; description?: string; defaultName?: string; canManageShared: boolean; disabledReason?: string; resolve: (data: { name: string; shared: boolean; isDefault: boolean } | null) => void }
     ));
 
 export function useDialog() {
@@ -189,9 +189,9 @@ export function useDialog() {
     });
   }, []);
 
-  const saveView = useCallback((title: string, defaultName?: string, sharing?: { canManageShared: boolean; disabledReason?: string }): Promise<{ name: string; shared: boolean; isDefault: boolean } | null> => {
+  const saveView = useCallback((title: string, defaultName: string | undefined, sharing: { canManageShared: boolean; disabledReason?: string }): Promise<{ name: string; shared: boolean; isDefault: boolean } | null> => {
     return new Promise((resolve) => {
-      setState({ open: true, variant: "save-view", title, description: "Name und Optionen für die Ansicht festlegen.", defaultName, canManageShared: sharing?.canManageShared, disabledReason: sharing?.disabledReason, resolve });
+      setState({ open: true, variant: "save-view", title, description: "Name und Optionen für die Ansicht festlegen.", defaultName, canManageShared: sharing.canManageShared, disabledReason: sharing.disabledReason, resolve });
     });
   }, []);
 
