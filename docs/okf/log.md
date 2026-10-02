@@ -2,6 +2,13 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-02T05:41:22Z, re-verified and re-stamped api-authz-and-team-scoping.md
+  (task 765bb823): the saved-view routes now gate team-wide state. POST and
+  PUT `/logs/views` answer 403 before any service call when a non-admin sets
+  `isShared` or `isDefault` (`canManageShared`, `requestsSharedState`), while
+  private views stay open to every member; router.ts citations moved with the
+  inserted predicate and the line count was updated.
+
 - 2026-10-01T11:32:19Z, re-verified and re-stamped api-authz-and-team-scoping.md
   (task 2a52b2b1): the write-gate placement claim now states the actual
   guarantee (a syntactic check that does not see side effects in gate
