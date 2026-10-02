@@ -20,8 +20,9 @@ their areas; these docs deliberately do not duplicate them.
   caller models in `router.ts` (session Bearer, X-API-Key pinned to a single
   source, global admin) and the `writeRoute` wrapper that authenticates,
   resolves the team and applies the `canWrite` rule (VIEWER read-only) before
-  any team-scoped mutating handler runs, made mandatory by AST meta-tests
-  plus a static scan for registrations on another router instance.
+  any team-scoped mutating handler runs, made mandatory by a runtime route-table
+  test over the real app plus AST meta-tests for the call shapes and a static
+  scan for code outside `createApp()`.
 - [ClickHouse tenant row-scoping](clickhouse-tenant-row-scoping.md), the
   second, independent tenancy layer below `router.ts`: `team_id` as the
   first `WHERE` condition in every query method, and the dynamic

@@ -2,6 +2,16 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-02T07:47:58Z, re-verified and re-stamped api-authz-and-team-scoping.md
+  (task 10b54786): a runtime route-table test (`route-table.test.ts`) now
+  walks the Express stack of the real app and makes the wrapper mandatory
+  whatever the spelling of a registration, so the aliased-router, second-mount
+  and inline `app.use` escapes are detected; the AST tests keep the call
+  shapes, the factory arguments (plain identifiers, no inline schema or
+  loader), the wrapper binding and a scan for code outside `createApp()`. The
+  body schema is documented next to the loader as a second input that runs
+  before the gate and must be free of side effects.
+
 - 2026-10-02T07:14:07Z, re-verified and re-stamped api-authz-and-team-scoping.md
   (task 10b54786): team-scoped mutating routes are registered through the
   `writeRoute` wrapper (write-route.ts), which runs authentication, team
