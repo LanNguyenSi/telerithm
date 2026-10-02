@@ -1,11 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import path from "node:path";
 import ts from "typescript";
+import {
+  STATE_CHANGING_METHODS,
+  extractRoutes,
+  findResolverFactoryCall,
+  findUnrecognizedApiRouterUsages,
+  loadRouterSourceFile,
+  routeKey,
+  routeSatisfiesVerify,
+  type RouteDecl,
+  type Verify,
+} from "./router-ast.js";
 
 // Structural guard for the by-id-write-route team-scoping convention (see
-// `requireResourceTeam`'s doc comment in router.ts, and ENGINEERING.md).
+// `teamFromResource` in write-route.ts and `requireResourceTeam` in router.ts,
+// and ENGINEERING.md).
 //
 // On 2026-07-12 four cross-tenant IDORs were found and fixed in
 // backend/src/api/rest/router.ts, all the same shape: a state-changing route
@@ -20,9 +29,10 @@ import ts from "typescript";
 // live Prisma/ClickHouse/Redis-backed services as a side effect of module
 // load) and enumerates every state-changing (POST/PUT/PATCH/DELETE) route
 // whose path has a `:param`. Every such route MUST have an entry in
-// ROUTE_TEAM_GUARDS below: either `{ kind: "resolver" }`, naming a
-// requireResourceTeam-built resolver the handler must call, or
-// `{ kind: "allowlist" }`, an explicit, justified exception.
+// ROUTE_TEAM_GUARDS below: either `{ kind: "resolver" }`, naming the loader
+// of the teamFromResource resolver the route is registered with (writeRoute
+// then authorizes the loaded resource's team), or `{ kind: "allowlist" }`, an
+// explicit, justified exception.
 //
 // Two independent things make this a *structural* guard rather than a
 // convention:
@@ -40,38 +50,25 @@ import ts from "typescript";
 // appearing only in a comment (a prior version of this test had exactly that
 // false-negative; see the "comment-only mentions" regression tests below,
 // which pin the fix).
-const ROUTER_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../src/api/rest/router.ts",
-);
-
-const STATE_CHANGING_METHODS = new Set(["post", "put", "patch", "delete"]);
-const HTTP_METHOD_NAMES = new Set(["get", "post", "put", "patch", "delete"]);
-
-// A guard's runtime evidence requirement: either a real call to a named
-// function/method (`type: "call"`, optionally also requiring a specific
-// identifier to appear among that call's own arguments), or a bare
-// identifier reference (`type: "identifier"`, for middleware passed by
-// reference rather than invoked directly, e.g. `authenticateApiKey`).
-type Verify =
-  | { type: "call"; callee: string; alsoReferences?: string }
-  | { type: "identifier"; name: string };
-
+// "resolver": the route is registered through writeRoute with a
+// teamFromResource(<loaderName>, ...) team resolver (inline, or via a top-level
+// const), i.e. the team is derived from the loaded resource, not from the
+// request. "allowlist": an explicit, justified exception.
 type Guard =
-  | { kind: "resolver"; resolverName: string }
+  | { kind: "resolver"; loaderName: string }
   | { kind: "allowlist"; reason: string; verify?: Verify };
 
 // Every state-changing route in router.ts whose path contains a `:param`,
 // keyed by "METHOD /path" exactly as declared there.
 const ROUTE_TEAM_GUARDS: Record<string, Guard> = {
-  // --- Resource-derived team resolvers, built via requireResourceTeam ---
-  "POST /alerts/rules/:id/mute": { kind: "resolver", resolverName: "requireRuleWriteTeam" },
-  "POST /alerts/rules/:id/unmute": { kind: "resolver", resolverName: "requireRuleWriteTeam" },
-  "DELETE /maintenance-windows/:id": { kind: "resolver", resolverName: "requireMaintenanceWindowWriteTeam" },
-  "POST /alerts/incidents/:id/acknowledge": { kind: "resolver", resolverName: "requireIncidentWriteTeam" },
-  "POST /alerts/incidents/:id/resolve": { kind: "resolver", resolverName: "requireIncidentWriteTeam" },
-  "POST /alerts/incidents/:id/reopen": { kind: "resolver", resolverName: "requireIncidentWriteTeam" },
-  "PUT /issues/:id": { kind: "resolver", resolverName: "requireIssueWriteTeam" },
+  // --- Resource-derived team resolvers, built via teamFromResource ---
+  "POST /alerts/rules/:id/mute": { kind: "resolver", loaderName: "loadRuleTeamId" },
+  "POST /alerts/rules/:id/unmute": { kind: "resolver", loaderName: "loadRuleTeamId" },
+  "DELETE /maintenance-windows/:id": { kind: "resolver", loaderName: "loadMaintenanceWindowTeamId" },
+  "POST /alerts/incidents/:id/acknowledge": { kind: "resolver", loaderName: "loadIncidentTeamId" },
+  "POST /alerts/incidents/:id/resolve": { kind: "resolver", loaderName: "loadIncidentTeamId" },
+  "POST /alerts/incidents/:id/reopen": { kind: "resolver", loaderName: "loadIncidentTeamId" },
+  "PUT /issues/:id": { kind: "resolver", loaderName: "loadIssueTeamId" },
 
   // --- Explicit, justified allowlist (never a silent skip) ---
   "POST /ingest/:sourceId": {
@@ -144,9 +141,9 @@ const ROUTE_TEAM_GUARDS: Record<string, Guard> = {
     kind: "allowlist",
     reason:
       "Loads the invite by id and derives its team inline (the same resource-derived pattern as " +
-      "requireResourceTeam), but also requires canManageInvites (OWNER/ADMIN) on top of plain membership, " +
-      "which requireResourceTeam does not model. Kept inline rather than forcing an awkward fit onto the " +
-      "shared factory.",
+      "teamFromResource behind writeRoute), but also requires canManageInvites (OWNER/ADMIN) on top of plain " +
+      "membership, which the write gate does not model. Kept inline rather than forcing an awkward fit onto " +
+      "writeRoute.",
     verify: { type: "call", callee: "requireTeamRole", alsoReferences: "invite" },
   },
   "PUT /admin/users/:id": {
@@ -176,190 +173,17 @@ const ROUTE_TEAM_GUARDS: Record<string, Guard> = {
   },
 };
 
-interface RouteDecl {
-  method: string;
-  routePath: string;
-  // The AST nodes for every argument after the path string (rate limiters,
-  // auth middleware, the asyncHandler body, ...), kept as nodes (not text) so
-  // verification can walk real CallExpression/Identifier nodes instead of
-  // substring-searching raw source text, which would also match comments.
-  argNodes: ts.Expression[];
+// True when the route's team resolver is `teamFromResource(<loaderName>, ...)`.
+// The factory call is found as an AST node, so a comment mentioning the name
+// cannot satisfy it.
+function routeResolvesTeamFrom(route: RouteDecl, sourceFile: ts.SourceFile, loaderName: string): boolean {
+  const call = findResolverFactoryCall(route, sourceFile);
+  if (!call || !ts.isIdentifier(call.expression) || call.expression.text !== "teamFromResource") return false;
+  const [loader] = call.arguments;
+  return loader !== undefined && ts.isIdentifier(loader) && loader.text === loaderName;
 }
 
-// Walks a router.ts-shaped AST for `apiRouter.<method>("path", ...middleware)`
-// call expressions and collects, per route, its HTTP method, its path, and
-// the argument nodes after the path.
-function extractRoutes(sourceFile: ts.SourceFile): RouteDecl[] {
-  const routes: RouteDecl[] = [];
-
-  function visit(node: ts.Node): void {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "apiRouter" &&
-      HTTP_METHOD_NAMES.has(node.expression.name.text.toLowerCase())
-    ) {
-      const [pathArg, ...rest] = node.arguments;
-      if (pathArg && ts.isStringLiteral(pathArg)) {
-        routes.push({
-          method: node.expression.name.text.toLowerCase(),
-          routePath: pathArg.text,
-          argNodes: rest,
-        });
-      }
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
-  return routes;
-}
-
-// Fails loudly (as data for a test assertion, not a thrown error) on any
-// `apiRouter.<member>(...)` call extractRoutes does not understand: a member
-// name outside get/post/put/patch/delete (`.route()` chaining, `.use()`
-// sub-router mounting, ...), or a recognized method whose first argument
-// isn't a plain string literal (a template literal or variable path).
-// Without this, such a route would silently never reach ROUTE_TEAM_GUARDS
-// classification at all — the "every route is classified" test can only
-// catch gaps in routes it can see.
-function findUnrecognizedApiRouterUsages(
-  sourceFile: ts.SourceFile,
-): Array<{ snippet: string; reason: string }> {
-  const issues: Array<{ snippet: string; reason: string }> = [];
-
-  function visit(node: ts.Node): void {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "apiRouter"
-    ) {
-      const member = node.expression.name.text;
-      const snippet = node.getText(sourceFile).split("\n")[0].trim();
-      if (!HTTP_METHOD_NAMES.has(member.toLowerCase())) {
-        issues.push({
-          snippet,
-          reason:
-            `apiRouter.${member}(...) is not one of get/post/put/patch/delete. extractRoutes only recognizes ` +
-            "those five direct method calls with a string-literal path and would silently skip this " +
-            "registration (e.g. .route() chaining or .use() sub-router mounting). Extend extractRoutes to " +
-            "handle this shape, then classify any resulting routes in ROUTE_TEAM_GUARDS.",
-        });
-      } else {
-        const [pathArg] = node.arguments;
-        if (!pathArg || !ts.isStringLiteral(pathArg)) {
-          issues.push({
-            snippet,
-            reason:
-              `apiRouter.${member}(...) does not have a plain string literal as its first argument (e.g. a ` +
-              "template literal or a variable path). extractRoutes cannot statically extract a path from this " +
-              "call and would silently skip it. Extend extractRoutes to handle this shape.",
-          });
-        }
-      }
-    }
-    // Any other reference to the `apiRouter` identifier is a registration shape
-    // the call-based walk above cannot see: an alias (`const r = apiRouter;
-    // r.post(...)`), element access (`apiRouter["delete"](...)`), a detached
-    // method (`const f = apiRouter.post`), destructuring or passing the router
-    // on. Only the declaration and the `apiRouter.<member>(` callee position
-    // (handled above) are accepted.
-    if (ts.isIdentifier(node) && node.text === "apiRouter" && !isRecognizedApiRouterReference(node)) {
-      issues.push({
-        snippet: (node.parent ?? node).getText(sourceFile).split("\n")[0].trim(),
-        reason:
-          "apiRouter is referenced in a position other than its declaration or an `apiRouter.<method>(` call " +
-          "(an alias, element access such as apiRouter['delete'](...), a detached method or a pass-through). " +
-          "extractRoutes would silently skip routes registered that way. Register routes with a direct " +
-          `apiRouter.<method>("path", ...) call, or extend extractRoutes and classify the resulting routes in ROUTE_TEAM_GUARDS.`,
-      });
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(sourceFile);
-  return issues;
-}
-
-// True for the two positions of the `apiRouter` identifier that are not an
-// escape hatch: its own declaration, and the object of a property access that
-// is itself the callee of a call (`apiRouter.get(...)`, `apiRouter.use(...)`;
-// whether the member is a supported method is judged by the caller).
-function isRecognizedApiRouterReference(identifier: ts.Identifier): boolean {
-  const parent = identifier.parent;
-  if (ts.isVariableDeclaration(parent) && parent.name === identifier) return true;
-  return (
-    ts.isPropertyAccessExpression(parent) &&
-    parent.expression === identifier &&
-    ts.isCallExpression(parent.parent) &&
-    parent.parent.expression === parent
-  );
-}
-
-// True if `root`'s subtree contains a CallExpression whose callee's exact
-// source text equals `calleeText` (e.g. "requireIncidentTeam" or
-// "subscriptionService.update"). Comments are trivia, not AST nodes, so
-// `ts.forEachChild` never visits them — a comment merely mentioning the name
-// cannot satisfy this.
-function findCallByCallee(
-  root: ts.Node,
-  sourceFile: ts.SourceFile,
-  calleeText: string,
-): ts.CallExpression | null {
-  let match: ts.CallExpression | null = null;
-
-  function visit(node: ts.Node): void {
-    if (match) return;
-    if (ts.isCallExpression(node) && node.expression.getText(sourceFile) === calleeText) {
-      match = node;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(root);
-  return match;
-}
-
-// True if `root`'s subtree contains an Identifier node with text `name`
-// (a reference, not a comment).
-function containsIdentifier(root: ts.Node, name: string): boolean {
-  let found = false;
-
-  function visit(node: ts.Node): void {
-    if (found) return;
-    if (ts.isIdentifier(node) && node.text === name) {
-      found = true;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(root);
-  return found;
-}
-
-function routeCallsResolver(route: RouteDecl, sourceFile: ts.SourceFile, resolverName: string): boolean {
-  return route.argNodes.some((node) => findCallByCallee(node, sourceFile, resolverName) !== null);
-}
-
-function routeSatisfiesVerify(route: RouteDecl, sourceFile: ts.SourceFile, verify: Verify): boolean {
-  if (verify.type === "identifier") {
-    return route.argNodes.some((node) => containsIdentifier(node, verify.name));
-  }
-  for (const node of route.argNodes) {
-    const call = findCallByCallee(node, sourceFile, verify.callee);
-    if (call) {
-      return verify.alsoReferences ? containsIdentifier(call, verify.alsoReferences) : true;
-    }
-  }
-  return false;
-}
-
-const routerSource = readFileSync(ROUTER_PATH, "utf8");
-const routerSourceFile = ts.createSourceFile(ROUTER_PATH, routerSource, ts.ScriptTarget.Latest, true);
+const routerSourceFile = loadRouterSourceFile();
 const allRoutes = extractRoutes(routerSourceFile);
 const writeIdRoutes = allRoutes.filter(
   (r) => STATE_CHANGING_METHODS.has(r.method) && /:[A-Za-z0-9_]+/.test(r.routePath),
@@ -380,7 +204,7 @@ describe("router.ts: by-id write routes must declare a team-scoping guard", () =
   });
 
   it("every state-changing by-id route is classified in ROUTE_TEAM_GUARDS", () => {
-    const actual = new Set(writeIdRoutes.map((r) => `${r.method.toUpperCase()} ${r.routePath}`));
+    const actual = new Set(writeIdRoutes.map(routeKey));
     const registered = new Set(Object.keys(ROUTE_TEAM_GUARDS));
 
     const unclassified = [...actual].filter((key) => !registered.has(key));
@@ -389,8 +213,8 @@ describe("router.ts: by-id write routes must declare a team-scoping guard", () =
     expect(
       unclassified,
       "New state-changing by-id route(s) added to router.ts with no team-scoping classification. Add an " +
-        'entry to ROUTE_TEAM_GUARDS in this test: either { kind: "resolver" } naming a requireResourceTeam-built ' +
-        'resolver the route must call, or a justified { kind: "allowlist" }.',
+        'entry to ROUTE_TEAM_GUARDS in this test: either { kind: "resolver" } naming the loader the route\'s ' +
+        'teamFromResource resolver must use, or a justified { kind: "allowlist" }.',
     ).toEqual([]);
     expect(
       stale,
@@ -399,7 +223,7 @@ describe("router.ts: by-id write routes must declare a team-scoping guard", () =
   });
 
   for (const route of writeIdRoutes) {
-    const key = `${route.method.toUpperCase()} ${route.routePath}`;
+    const key = routeKey(route);
     const guard = ROUTE_TEAM_GUARDS[key];
 
     it(`${key} enforces its declared guard`, () => {
@@ -410,9 +234,13 @@ describe("router.ts: by-id write routes must declare a team-scoping guard", () =
       }
       if (guard.kind === "resolver") {
         expect(
-          routeCallsResolver(route, routerSourceFile, guard.resolverName),
-          `Expected ${key} to actually call ${guard.resolverName}(...) to resolve and authorize the resource's ` +
-            "team (a mention in a comment does not count).",
+          route.via,
+          `Expected ${key} to be registered through writeRoute (write gate applied before the handler).`,
+        ).toBe("writeRoute");
+        expect(
+          routeResolvesTeamFrom(route, routerSourceFile, guard.loaderName),
+          `Expected ${key} to resolve its team with teamFromResource(${guard.loaderName}, ...) so the resource's ` +
+            "owning team is authorized (a mention in a comment does not count).",
         ).toBe(true);
       } else if (guard.verify) {
         expect(
@@ -438,49 +266,67 @@ describe("router.ts: by-id write routes must declare a team-scoping guard", () =
   // Regression tests for the false-negative this test used to have: an
   // earlier version checked `handlerText.includes(resolverName + "(")` over
   // the raw source text of the whole handler, which also matches the
-  // resolver name appearing only in a comment. Switching to real AST
-  // CallExpression matching (findCallByCallee/routeCallsResolver above)
-  // fixes that; these tests pin the fix against regressing back to a
-  // substring check.
+  // resolver name appearing only in a comment. Matching real AST nodes
+  // (findResolverFactoryCall/routeResolvesTeamFrom above) fixes that; these
+  // tests pin the fix against regressing back to a substring check.
   describe("comment-only mentions do not satisfy a guard", () => {
-    it("a resolver name mentioned only in a comment is NOT detected as an actual call (negative control)", () => {
+    it("a loader mentioned only in a comment is NOT detected (negative control)", () => {
       const synthetic = `
-        apiRouter.delete(
+        writeRoute(
+          "delete",
           "/widgets/:id",
-          asyncHandler(async (req, res) => {
-            // requireMaintenanceWindowTeam( used to be called here; a naive
-            // substring check over the handler's source text would still
-            // "see" this comment and wrongly consider the route guarded.
-            const userId = await requireAuth(req, res);
-            if (userId === null) return;
-            await prisma.widget.delete({ where: { id: String(req.params.id) } });
+          teamFromResource(loadOtherTeamId, "Widget not found"),
+          async ({ req, res }) => {
+            // loadWidgetTeamId used to be the loader here; a naive substring
+            // check over the handler's source text would still "see" it.
             res.status(204).end();
-          }),
+          },
         );
       `;
       const syntheticFile = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
       const [route] = extractRoutes(syntheticFile);
       expect(route).toBeDefined();
-      expect(routeCallsResolver(route, syntheticFile, "requireMaintenanceWindowTeam")).toBe(false);
+      expect(routeResolvesTeamFrom(route, syntheticFile, "loadWidgetTeamId")).toBe(false);
     });
 
-    it("a resolver name that IS actually called IS detected (positive control)", () => {
+    it("an inline teamFromResource(loader, ...) IS detected (positive control)", () => {
       const synthetic = `
-        apiRouter.delete(
+        writeRoute(
+          "delete",
           "/widgets/:id",
-          asyncHandler(async (req, res) => {
-            const userId = await requireAuth(req, res);
-            if (userId === null) return;
-            const teamId = await requireMaintenanceWindowTeam(String(req.params.id), userId, res);
-            if (teamId === null) return;
-            await prisma.widget.delete({ where: { id: String(req.params.id), teamId } });
+          teamFromResource(loadWidgetTeamId, "Widget not found"),
+          async ({ res }) => {
             res.status(204).end();
-          }),
+          },
         );
       `;
       const syntheticFile = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
       const [route] = extractRoutes(syntheticFile);
-      expect(routeCallsResolver(route, syntheticFile, "requireMaintenanceWindowTeam")).toBe(true);
+      expect(routeResolvesTeamFrom(route, syntheticFile, "loadWidgetTeamId")).toBe(true);
+    });
+
+    it("a resolver held in a top-level const IS detected (positive control)", () => {
+      const synthetic = `
+        const widgetTeam = teamFromResource(loadWidgetTeamId, "Widget not found");
+        writeRoute("delete", "/widgets/:id", widgetTeam, async ({ res }) => {
+          res.status(204).end();
+        });
+      `;
+      const syntheticFile = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      const [route] = extractRoutes(syntheticFile);
+      expect(routeResolvesTeamFrom(route, syntheticFile, "loadWidgetTeamId")).toBe(true);
+    });
+
+    it("a handler that only calls the loader itself is NOT a resolver (negative control)", () => {
+      const synthetic = `
+        writeRoute("delete", "/widgets/:id", teamFromBody(widgetSchema), async ({ res }) => {
+          await loadWidgetTeamId("x");
+          res.status(204).end();
+        });
+      `;
+      const syntheticFile = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
+      const [route] = extractRoutes(syntheticFile);
+      expect(routeResolvesTeamFrom(route, syntheticFile, "loadWidgetTeamId")).toBe(false);
     });
   });
 

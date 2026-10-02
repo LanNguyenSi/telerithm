@@ -13,6 +13,7 @@ import { SubscriptionService } from "../../services/subscription/subscription-se
 import { assertSafeUrl } from "../../services/notification/url-guard.js";
 import { TeamService } from "../../services/team/team-service.js";
 import { ForbiddenError, NotFoundError } from "../../errors.js";
+import { createWriteRoute, teamFromBody, teamFromResource, type TeamRoleName } from "./write-route.js";
 import {
   addUserToTeamSchema,
   createInviteSchema,
@@ -67,6 +68,11 @@ function asyncHandler(fn: (req: Request, res: Response, next: NextFunction) => P
     fn(req, res, next).catch(next);
   };
 }
+
+// The only way to register a team-scoped mutating route: authentication, team
+// resolution and the team write gate run before the handler (see
+// write-route.ts). Bound to apiRouter here, the one router instance.
+const writeRoute = createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole });
 
 // 2.1 — Strict rate limit for auth endpoints
 const authLimiter = rateLimit({
@@ -364,21 +370,10 @@ apiRouter.get(
   }),
 );
 
-apiRouter.post(
-  "/sources",
-  asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
-    const parsed = createSourceSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
-    }
-    if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;
-    const source = await teamService.createSource(parsed.data.teamId, parsed.data.name, parsed.data.type);
-    res.status(201).json({ source });
-  }),
-);
+writeRoute("post", "/sources", teamFromBody(createSourceSchema), async ({ res, input }) => {
+  const source = await teamService.createSource(input.teamId, input.name, input.type);
+  res.status(201).json({ source });
+});
 
 // 2.5 — Ingest with API-Key auth + rate limit + sanitization
 apiRouter.post(
@@ -835,34 +830,22 @@ apiRouter.get(
 
 // --- Mute / Unmute ---
 
-// Resolve an alert rule's team and require the caller's membership on it
-// with a write-capable role, otherwise any authenticated user could mute
-// another team's rule by enumerating its id and silence their alerting
-// (cross-tenant IDOR), and a read-only VIEWER could silence its own team's.
-// Built on requireResourceTeam (see its doc comment below for the shared
-// pattern).
-const requireRuleWriteTeam = requireResourceTeam(
-  (ruleId) =>
-    prisma.alertRule
-      .findUnique({ where: { id: ruleId }, select: { teamId: true } })
-      .then((rule) => rule?.teamId ?? null),
-  "Alert rule not found",
-  "write",
-);
+// Resolve an alert rule's team; writeRoute then requires the caller's
+// membership on it with a write-capable role, otherwise any authenticated user
+// could mute another team's rule by enumerating its id and silence their
+// alerting (cross-tenant IDOR), and a read-only VIEWER could silence its own
+// team's. The loader only reads (see teamFromResource in write-route.ts).
+const loadRuleTeamId = (ruleId: string) =>
+  prisma.alertRule
+    .findUnique({ where: { id: ruleId }, select: { teamId: true } })
+    .then((rule) => rule?.teamId ?? null);
 
-apiRouter.post(
+writeRoute(
+  "post",
   "/alerts/rules/:id/mute",
-  asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
-    const parsed = muteRuleSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
-    }
-    const teamId = await requireRuleWriteTeam(String(req.params.id), userId, res);
-    if (teamId === null) return;
-    const muteUntil = new Date(Date.now() + parsed.data.durationMinutes * 60_000);
+  teamFromResource(loadRuleTeamId, "Alert rule not found", muteRuleSchema),
+  async ({ req, res, teamId, input }) => {
+    const muteUntil = new Date(Date.now() + input.durationMinutes * 60_000);
     try {
       const rule = await prisma.alertRule.update({
         where: { id: String(req.params.id), teamId },
@@ -873,16 +856,14 @@ apiRouter.post(
       if (handlePrismaError(error, res, { notFound: "Alert rule not found" })) return;
       throw error;
     }
-  }),
+  },
 );
 
-apiRouter.post(
+writeRoute(
+  "post",
   "/alerts/rules/:id/unmute",
-  asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
-    const teamId = await requireRuleWriteTeam(String(req.params.id), userId, res);
-    if (teamId === null) return;
+  teamFromResource(loadRuleTeamId, "Alert rule not found"),
+  async ({ req, res, teamId }) => {
     try {
       const rule = await prisma.alertRule.update({
         where: { id: String(req.params.id), teamId },
@@ -893,7 +874,7 @@ apiRouter.post(
       if (handlePrismaError(error, res, { notFound: "Alert rule not found" })) return;
       throw error;
     }
-  }),
+  },
 );
 
 // --- Maintenance Windows ---
@@ -918,55 +899,38 @@ apiRouter.get(
   }),
 );
 
-apiRouter.post(
-  "/maintenance-windows",
-  asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
-    const parsed = maintenanceWindowSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
-    }
-    if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;
-    try {
-      const window = await prisma.maintenanceWindow.create({
-        data: {
-          teamId: parsed.data.teamId,
-          name: parsed.data.name,
-          startsAt: new Date(parsed.data.startsAt),
-          endsAt: new Date(parsed.data.endsAt),
-        },
-      });
-      res.status(201).json({ window });
-    } catch (error) {
-      if (handlePrismaError(error, res, { conflict: "Maintenance window already exists" })) return;
-      throw error;
-    }
-  }),
-);
+writeRoute("post", "/maintenance-windows", teamFromBody(maintenanceWindowSchema), async ({ res, input }) => {
+  try {
+    const window = await prisma.maintenanceWindow.create({
+      data: {
+        teamId: input.teamId,
+        name: input.name,
+        startsAt: new Date(input.startsAt),
+        endsAt: new Date(input.endsAt),
+      },
+    });
+    res.status(201).json({ window });
+  } catch (error) {
+    if (handlePrismaError(error, res, { conflict: "Maintenance window already exists" })) return;
+    throw error;
+  }
+});
 
-// Resolve a maintenance window's team and require the caller's membership on
-// it with a write-capable role, otherwise any authenticated user could delete
-// another team's window by enumerating its id, re-arming that team's alerting
-// mid-maintenance (cross-tenant IDOR). Built on requireResourceTeam.
-const requireMaintenanceWindowWriteTeam = requireResourceTeam(
-  (windowId) =>
-    prisma.maintenanceWindow
-      .findUnique({ where: { id: windowId }, select: { teamId: true } })
-      .then((window) => window?.teamId ?? null),
-  "Maintenance window not found",
-  "write",
-);
+// Resolve a maintenance window's team; writeRoute then requires the caller's
+// membership on it with a write-capable role, otherwise any authenticated user
+// could delete another team's window by enumerating its id, re-arming that
+// team's alerting mid-maintenance (cross-tenant IDOR).
+const loadMaintenanceWindowTeamId = (windowId: string) =>
+  prisma.maintenanceWindow
+    .findUnique({ where: { id: windowId }, select: { teamId: true } })
+    .then((window) => window?.teamId ?? null);
 
-apiRouter.delete(
+writeRoute(
+  "delete",
   "/maintenance-windows/:id",
-  asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
+  teamFromResource(loadMaintenanceWindowTeamId, "Maintenance window not found"),
+  async ({ req, res, teamId }) => {
     const windowId = String(req.params.id);
-    const teamId = await requireMaintenanceWindowWriteTeam(windowId, userId, res);
-    if (teamId === null) return;
     try {
       await prisma.maintenanceWindow.delete({ where: { id: windowId, teamId } });
       res.status(204).end();
@@ -974,7 +938,7 @@ apiRouter.delete(
       if (handlePrismaError(error, res, { notFound: "Maintenance window not found" })) return;
       throw error;
     }
-  }),
+  },
 );
 
 apiRouter.get(
@@ -1078,16 +1042,15 @@ async function requireTeamRole(
   }
 }
 
-type TeamRoleName = "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
-
 // The single place that decides which team roles may mutate team-scoped data:
 // OWNER, ADMIN and MEMBER write, VIEWER is read-only. Written as an allow
 // list so a role added later is read-only until someone opts it in here.
 // Every team-scoped write route reaches this predicate through
-// requireTeamWriteRole (directly, or via a requireResourceTeam resolver built
-// in "write" mode); tests/unit/router-write-role.test.ts enforces that every
-// state-changing route is classified. Exported only so the tests can pin its
-// truth table.
+// requireTeamWriteRole, which the writeRoute wrapper (write-route.ts) applies
+// before any handler runs; tests/unit/router-write-role.test.ts enforces that
+// every state-changing route is either registered through writeRoute or a
+// justified allowlist entry. Exported only so the tests can pin its truth
+// table.
 export function canWrite(role: TeamRoleName): boolean {
   return role === "OWNER" || role === "ADMIN" || role === "MEMBER";
 }
@@ -1110,40 +1073,26 @@ async function requireTeamWriteRole(
   return role;
 }
 
-// Structural guard for by-id write routes: loads a resource by id, derives
-// its owning team via `loadTeamId`, and requires the caller's membership on
-// that team before the route is allowed to touch it. Otherwise any
-// authenticated user could mutate another team's resource by enumerating its
-// id (cross-tenant IDOR) — this is the exact bug class fixed across four PRs
-// on 2026-07-12: #97 (invites), #98 (incident actions/timeline), #100
-// (alert-rule mute/unmute), #101 (maintenance-window delete). Three of the
-// four (#98, #100, #101) had each hand-rolled a near-identical "load by id,
-// check team" helper; #97 (invites) used inline per-route checks instead. A
-// related fix landed the same day for a read path with no by-id write route
-// (#102, async query-job polling; tracked separately as agent-tasks
-// 9d86d755, a listed dependency of this guard) — out of scope here.
-// Configuring a new by-id resource is one call: point `loadTeamId` at a
-// lookup that resolves the resource's teamId (or null when the resource does
-// not exist). Returns the teamId on success, or null once a 404/403 has
-// already been sent.
+// Membership-only resolver for by-id READ routes: loads a resource by id,
+// derives its owning team via `loadTeamId`, and requires the caller's
+// membership on that team (404 when the resource does not exist, 403 for a
+// non-member). Without the team check any authenticated user could read
+// another team's resource by enumerating its id (cross-tenant IDOR; the bug
+// class fixed across four PRs on 2026-07-12: #97 invites, #98 incident
+// actions/timeline, #100 alert-rule mute/unmute, #101 maintenance-window
+// delete). Returns the teamId on success, or null once a 404/403 has already
+// been sent.
 //
-// `mode` picks the membership gate: "read" requires membership only
-// (requireTeamRole), "write" additionally requires a role that canWrite
-// (requireTeamWriteRole, so a VIEWER gets 403). A resolver that guards a
-// mutating route must be built in "write" mode; it is deliberately a required
-// argument so the choice is always visible at the instantiation.
-//
-// This factory alone does not stop a future route from skipping the check
-// entirely — nothing forces a handler to call it. The structural enforcement
-// (every state-changing route must call a write gate, or be in a documented,
-// justified allowlist) lives in tests/unit/router-write-role.test.ts, and the
-// by-id team-resolution half in tests/unit/router-team-scoping.test.ts, not
-// in this file; both read this file's route table via the TypeScript AST, so
-// they fail on any new state-changing route that isn't classified there.
+// This is deliberately not a write gate: it checks membership only, so a
+// VIEWER passes. A mutating route cannot use it to skip the write rule,
+// because every state-changing route must be registered through writeRoute
+// (teamFromResource resolves the team there, the wrapper applies the write
+// gate) or be a justified allowlist entry; tests/unit/router-write-role.test.ts
+// fails on anything else, and tests/unit/router-team-scoping.test.ts covers the
+// by-id team-resolution half.
 function requireResourceTeam(
   loadTeamId: (id: string) => Promise<string | null>,
   notFoundMessage: string,
-  mode: "read" | "write",
 ): (id: string, userId: string, res: Response) => Promise<string | null> {
   return async (id, userId, res) => {
     const teamId = await loadTeamId(id);
@@ -1151,11 +1100,7 @@ function requireResourceTeam(
       res.status(404).json({ error: notFoundMessage });
       return null;
     }
-    // Fail closed: only an explicit "read" gets the membership-only gate.
-    const role =
-      mode === "read"
-        ? await requireTeamRole(userId, teamId, res)
-        : await requireTeamWriteRole(userId, teamId, res);
+    const role = await requireTeamRole(userId, teamId, res);
     if (role === null) return null;
     return teamId;
   };
@@ -1203,61 +1148,43 @@ function handleServiceError(error: unknown, res: Response): boolean {
   return false;
 }
 
-// Resolve an incident's team (via its rule) and require the caller's
-// membership on it, otherwise any authenticated user could mutate or read any
-// incident by enumerating its id (cross-tenant IDOR). Built on
-// requireResourceTeam. Two resolvers share one lookup: the read resolver
-// (membership only, used by the timeline so a VIEWER can still read it) and
-// the write resolver (membership plus a write-capable role, used by
-// acknowledge/resolve/reopen).
+// Resolve an incident's team (via its rule), otherwise any authenticated user
+// could mutate or read any incident by enumerating its id (cross-tenant
+// IDOR). The acknowledge/resolve/reopen writes go through writeRoute, which
+// adds the write gate; the timeline keeps a membership-only resolver
+// (requireResourceTeam) so a VIEWER can still read it.
 const loadIncidentTeamId = (incidentId: string) =>
   prisma.alertIncident
     .findUnique({ where: { id: incidentId }, select: { rule: { select: { teamId: true } } } })
     .then((incident) => incident?.rule.teamId ?? null);
-const requireIncidentTeam = requireResourceTeam(loadIncidentTeamId, "Incident not found", "read");
-const requireIncidentWriteTeam = requireResourceTeam(loadIncidentTeamId, "Incident not found", "write");
+const requireIncidentTeam = requireResourceTeam(loadIncidentTeamId, "Incident not found");
+const incidentTeam = teamFromResource(loadIncidentTeamId, "Incident not found");
 
-apiRouter.post(
+writeRoute(
+  "post",
   "/alerts/incidents/:id/acknowledge",
-  asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
-    const teamId = await requireIncidentWriteTeam(String(req.params.id), userId, res);
-    if (teamId === null) return;
+  incidentTeam,
+  async ({ req, res, userId, teamId }) => {
     const parsed = incidentActionSchema.safeParse(req.body);
     const comment = parsed.success ? parsed.data.comment : undefined;
     const incident = await alertService.acknowledgeIncident(String(req.params.id), teamId, userId, comment);
     res.json({ incident });
-  }),
+  },
 );
 
-apiRouter.post(
-  "/alerts/incidents/:id/resolve",
-  asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
-    const teamId = await requireIncidentWriteTeam(String(req.params.id), userId, res);
-    if (teamId === null) return;
-    const parsed = incidentActionSchema.safeParse(req.body);
-    const comment = parsed.success ? parsed.data.comment : undefined;
-    const incident = await alertService.resolveIncident(String(req.params.id), teamId, userId, comment);
-    res.json({ incident });
-  }),
-);
+writeRoute("post", "/alerts/incidents/:id/resolve", incidentTeam, async ({ req, res, userId, teamId }) => {
+  const parsed = incidentActionSchema.safeParse(req.body);
+  const comment = parsed.success ? parsed.data.comment : undefined;
+  const incident = await alertService.resolveIncident(String(req.params.id), teamId, userId, comment);
+  res.json({ incident });
+});
 
-apiRouter.post(
-  "/alerts/incidents/:id/reopen",
-  asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
-    const teamId = await requireIncidentWriteTeam(String(req.params.id), userId, res);
-    if (teamId === null) return;
-    const parsed = incidentActionSchema.safeParse(req.body);
-    const comment = parsed.success ? parsed.data.comment : undefined;
-    const incident = await alertService.reopenIncident(String(req.params.id), teamId, userId, comment);
-    res.json({ incident });
-  }),
-);
+writeRoute("post", "/alerts/incidents/:id/reopen", incidentTeam, async ({ req, res, userId, teamId }) => {
+  const parsed = incidentActionSchema.safeParse(req.body);
+  const comment = parsed.success ? parsed.data.comment : undefined;
+  const incident = await alertService.reopenIncident(String(req.params.id), teamId, userId, comment);
+  res.json({ incident });
+});
 
 apiRouter.get(
   "/alerts/incidents/:id/timeline",
@@ -1452,48 +1379,38 @@ apiRouter.get(
   }),
 );
 
-// Resolve an issue's team and require the caller's membership on it with a
-// write-capable role, otherwise any authenticated user could change status of
-// or reassign any issue by enumerating its id (cross-tenant IDOR). Built on
-// requireResourceTeam.
-const requireIssueWriteTeam = requireResourceTeam(
-  (issueId) => issueService.getById(issueId).then((issue) => issue?.teamId ?? null),
-  "Issue not found",
-  "write",
-);
+// Resolve an issue's team; writeRoute then requires the caller's membership
+// on it with a write-capable role, otherwise any authenticated user could
+// change status of or reassign any issue by enumerating its id (cross-tenant
+// IDOR).
+const loadIssueTeamId = (issueId: string) =>
+  issueService.getById(issueId).then((issue) => issue?.teamId ?? null);
 
-apiRouter.put(
+writeRoute(
+  "put",
   "/issues/:id",
-  asyncHandler(async (req, res) => {
-    const userId = await requireAuth(req, res);
-    if (userId === null) return;
-    const parsed = issueUpdateSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: parsed.error.flatten() });
-      return;
-    }
-    const teamId = await requireIssueWriteTeam(String(req.params.id), userId, res);
-    if (teamId === null) return;
+  teamFromResource(loadIssueTeamId, "Issue not found", issueUpdateSchema),
+  async ({ req, res, teamId, input }) => {
     let issue;
-    if (parsed.data.status) {
-      issue = await issueService.updateStatus(String(req.params.id), parsed.data.status);
+    if (input.status) {
+      issue = await issueService.updateStatus(String(req.params.id), input.status);
     }
-    if (parsed.data.assigneeId !== undefined) {
+    if (input.assigneeId !== undefined) {
       // An assignee must be a member of the issue's team; reject cross-team
       // or non-member user ids.
-      if (parsed.data.assigneeId !== null) {
+      if (input.assigneeId !== null) {
         const assigneeMembership = await prisma.teamMember.findUnique({
-          where: { teamId_userId: { teamId, userId: parsed.data.assigneeId } },
+          where: { teamId_userId: { teamId, userId: input.assigneeId } },
         });
         if (!assigneeMembership) {
           res.status(400).json({ error: "Assignee is not a member of the issue's team" });
           return;
         }
       }
-      issue = await issueService.assign(String(req.params.id), parsed.data.assigneeId);
+      issue = await issueService.assign(String(req.params.id), input.assigneeId);
     }
     res.json({ issue });
-  }),
+  },
 );
 
 // --- Team Invites ---
