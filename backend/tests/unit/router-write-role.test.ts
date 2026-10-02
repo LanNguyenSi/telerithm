@@ -14,8 +14,8 @@ import {
   routeKey,
   routeSatisfiesVerify,
   type RouteDecl,
-  type Verify,
 } from "./router-ast.js";
+import { ROUTE_WRITE_GUARDS, type Guard } from "./route-guards.js";
 
 // Structural guard for the "VIEWER is read-only on team-scoped writes" rule
 // (see `canWrite` / `requireTeamWriteRole` in router.ts, `writeRoute` in
@@ -42,192 +42,26 @@ import {
 //      instance or on apiRouter (S4).
 // A new mutating route with neither the wrapper nor an allowlist entry fails
 // CI, whatever shape its handler has.
+//
+// This file reads source text, so it only sees the spellings it knows. The
+// authoritative S4 answer is route-table.test.ts, which walks the Express
+// stack of the real app and so sees every registration however it is spelled
+// (aliased Router, const path, a second router mounted in app.ts, an inline
+// mutating app.use). What stays here is what that runtime table cannot see:
+// the writeRoute call shapes and their factory arguments, the binding, the
+// handler-after-gate position inside write-route.ts, and the scan of src for
+// code outside createApp() (a route added to the app in server.ts, a second
+// express app in the same process).
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
 
 // Resolver factories a writeRoute call may use (write-route.ts).
 const RESOLVER_FACTORIES = new Set(["teamFromBody", "teamFromResource"]);
+// Names router.ts must only use as the write-route.ts imports (and the one
+// top-level `const writeRoute` binding), never declare or alias locally.
+const WRAPPER_NAMES = new Set(["teamFromBody", "teamFromResource", "writeRoute", "createWriteRoute"]);
+const WRITE_ROUTE_MODULE = "./write-route.js";
+const SCHEMA_MODULE = "../../validation/schemas.js";
 const WRITE_ROUTE_METHODS = new Set(["post", "put", "patch", "delete"]);
-
-// "write": a team-scoped mutation registered through writeRoute (VIEWER gets
-// 403). "allowlist": an explicit, justified exception registered with
-// apiRouter.<method> (reading POST, per-user, invite, admin, ingest, ...).
-type Guard = { kind: "write" } | { kind: "allowlist"; reason: string; verify?: Verify };
-
-// Every state-changing route in router.ts, keyed "METHOD /path" exactly as
-// declared there.
-const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
-  // --- Team-scoped writes through writeRoute: VIEWER gets 403 ---
-  "POST /sources": { kind: "write" },
-  "POST /alerts/rules/:id/mute": { kind: "write" },
-  "POST /alerts/rules/:id/unmute": { kind: "write" },
-  "POST /maintenance-windows": { kind: "write" },
-  "DELETE /maintenance-windows/:id": { kind: "write" },
-  "POST /alerts/incidents/:id/acknowledge": { kind: "write" },
-  "POST /alerts/incidents/:id/resolve": { kind: "write" },
-  "POST /alerts/incidents/:id/reopen": { kind: "write" },
-  "PUT /issues/:id": { kind: "write" },
-
-  // --- Explicit, justified allowlist (never a silent skip) ---
-  "POST /auth/register": {
-    kind: "allowlist",
-    reason: "Public sign-up, no session and no team yet; abuse is bounded by authLimiter.",
-    verify: { type: "identifier", name: "authLimiter" },
-  },
-  "POST /auth/login": {
-    kind: "allowlist",
-    reason: "Public login, no session and no team yet; abuse is bounded by authLimiter.",
-    verify: { type: "identifier", name: "authLimiter" },
-  },
-  "POST /teams": {
-    kind: "allowlist",
-    reason:
-      "Creates a brand-new team for the authenticated caller, who becomes its owner; there is no existing team " +
-      "membership or role to check yet.",
-    verify: { type: "call", callee: "requireAuth" },
-  },
-  "POST /ingest/:sourceId": {
-    kind: "allowlist",
-    reason:
-      "Machine ingestion authenticated by an API key pinned 1:1 to a single source (authenticateApiKey); there " +
-      "is no user session and no team role to apply.",
-    verify: { type: "identifier", name: "authenticateApiKey" },
-  },
-  "POST /ingest/:sourceId/raw": {
-    kind: "allowlist",
-    reason: "Same API-key boundary as POST /ingest/:sourceId.",
-    verify: { type: "identifier", name: "authenticateApiKey" },
-  },
-  "POST /logs/search": {
-    kind: "allowlist",
-    reason:
-      "Reading POST (the filter payload is too large for a query string); it mutates nothing, so a VIEWER may " +
-      "use it. Team membership is still required via requireTeamRole.",
-    verify: { type: "call", callee: "requireTeamRole" },
-  },
-  "POST /logs/context": {
-    kind: "allowlist",
-    reason: "Reading POST like POST /logs/search; mutates nothing, membership required.",
-    verify: { type: "call", callee: "requireTeamRole" },
-  },
-  "POST /logs/facets": {
-    kind: "allowlist",
-    reason: "Reading POST like POST /logs/search; mutates nothing, membership required.",
-    verify: { type: "call", callee: "requireTeamRole" },
-  },
-  "POST /logs/histogram": {
-    kind: "allowlist",
-    reason: "Reading POST like POST /logs/search; mutates nothing, membership required.",
-    verify: { type: "call", callee: "requireTeamRole" },
-  },
-  "POST /logs/patterns": {
-    kind: "allowlist",
-    reason: "Reading POST like POST /logs/search; mutates nothing, membership required.",
-    verify: { type: "call", callee: "requireTeamRole" },
-  },
-  "POST /query/natural": {
-    kind: "allowlist",
-    reason:
-      "Reading POST: translates a natural-language question into an explained query and mutates no team data; " +
-      "membership required via requireTeamRole.",
-    verify: { type: "call", callee: "requireTeamRole" },
-  },
-  "POST /logs/views": {
-    kind: "allowlist",
-    reason:
-      "Saved-view model (owner plus canManageShared), outside the team write rule: any member, VIEWER included, " +
-      "may create a private view, because it is per-user state. Team-wide state is gated inside the handler: " +
-      "isShared: true or isDefault: true (which clears the default flag of every shared view in the team) " +
-      "needs canManageShared (OWNER/ADMIN) and otherwise answers 403 before any service call. " +
-      "Membership is required via requireTeamRole.",
-    verify: { type: "call", callee: "requireTeamRole" },
-  },
-  "PUT /logs/views/:id": {
-    kind: "allowlist",
-    reason:
-      "Saved-view model, outside the team write rule: LogViewService lets the owner of a view update it and " +
-      "OWNER/ADMIN (canManageShared) update shared views, so a VIEWER may edit its own private view. " +
-      "Team-wide state is gated inside the handler: isShared: true or isDefault: true needs canManageShared " +
-      "(OWNER/ADMIN) and otherwise answers 403 before the service runs, so no default flag is cleared.",
-    verify: { type: "call", callee: "requireTeamRole" },
-  },
-  "POST /logs/views/:id/duplicate": {
-    kind: "allowlist",
-    reason:
-      "Saved-view model: LogViewService.duplicate checks canRead (shared view or the caller's own) and keeps " +
-      "isShared only when canManageShared is true.",
-    verify: { type: "call", callee: "requireTeamRole" },
-  },
-  "DELETE /logs/views/:id": {
-    kind: "allowlist",
-    reason: "Same saved-view owner/canManageShared model as PUT /logs/views/:id.",
-    verify: { type: "call", callee: "requireTeamRole" },
-  },
-  "POST /subscriptions": {
-    kind: "allowlist",
-    reason:
-      "Subscriptions are per-user (the row is keyed to the caller's userId), not shared team data, so the team " +
-      "write rule does not apply; membership is still required via requireTeamRole.",
-    verify: { type: "call", callee: "subscriptionService.create", alsoReferences: "userId" },
-  },
-  "PUT /subscriptions/:id": {
-    kind: "allowlist",
-    reason: "Per-user subscription: the update is scoped by (id, userId) in SubscriptionService.",
-    verify: { type: "call", callee: "subscriptionService.update", alsoReferences: "userId" },
-  },
-  "DELETE /subscriptions/:id": {
-    kind: "allowlist",
-    reason: "Per-user subscription: the delete is scoped by (id, userId) in SubscriptionService.",
-    verify: { type: "call", callee: "subscriptionService.delete", alsoReferences: "userId" },
-  },
-  "POST /subscriptions/:id/test": {
-    kind: "allowlist",
-    reason:
-      "Per-user subscription: loads it with (id, userId) and only sends a test notification to the caller's own " +
-      "channel; no team data is mutated.",
-    verify: { type: "call", callee: "prisma.alertSubscription.findFirst", alsoReferences: "userId" },
-  },
-  "POST /teams/:id/invites": {
-    kind: "allowlist",
-    reason: "Invite management has its own stricter rule: canManageInvites (OWNER/ADMIN only).",
-    verify: { type: "call", callee: "canManageInvites" },
-  },
-  "POST /invites/:token/accept": {
-    kind: "allowlist",
-    reason:
-      "Authorization is the unforgeable, single-use, expiring invite token itself (capability token); the " +
-      "accepting user is not a team member yet, so there is no role to check.",
-  },
-  "DELETE /invites/:id": {
-    kind: "allowlist",
-    reason: "Invite management has its own stricter rule: canManageInvites (OWNER/ADMIN only).",
-    verify: { type: "call", callee: "canManageInvites" },
-  },
-  "PUT /admin/users/:id": {
-    kind: "allowlist",
-    reason: "requireAdmin gates on the global admin role, which supersedes team roles by design.",
-    verify: { type: "call", callee: "requireAdmin" },
-  },
-  "POST /admin/users/:id/approve": {
-    kind: "allowlist",
-    reason: "Same requireAdmin global-admin gate as PUT /admin/users/:id.",
-    verify: { type: "call", callee: "requireAdmin" },
-  },
-  "POST /admin/users/:id/add-to-team": {
-    kind: "allowlist",
-    reason: "Same requireAdmin global-admin gate as PUT /admin/users/:id.",
-    verify: { type: "call", callee: "requireAdmin" },
-  },
-  "DELETE /admin/users/:id/remove-from-team/:teamId": {
-    kind: "allowlist",
-    reason: "Same requireAdmin global-admin gate as PUT /admin/users/:id.",
-    verify: { type: "call", callee: "requireAdmin" },
-  },
-  "DELETE /admin/teams/:id/members/:userId": {
-    kind: "allowlist",
-    reason: "Same requireAdmin global-admin gate as PUT /admin/users/:id.",
-    verify: { type: "call", callee: "requireAdmin" },
-  },
-};
 
 // --- Classification ------------------------------------------------------
 
@@ -266,12 +100,137 @@ function firstLine(node: ts.Node, sourceFile: ts.SourceFile): string {
   return node.getText(sourceFile).split("\n")[0].trim();
 }
 
+type TopLevelDeclaration = ts.ImportSpecifier | ts.VariableDeclaration;
+
+// The top-level import specifiers and variable declarations that bind `name`.
+function topLevelDeclarations(sourceFile: ts.SourceFile, name: string): TopLevelDeclaration[] {
+  const found: TopLevelDeclaration[] = [];
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) if (element.name.text === name) found.push(element);
+      }
+    } else if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name) && declaration.name.text === name) found.push(declaration);
+      }
+    }
+  }
+  return found;
+}
+
+function importSource(specifier: ts.ImportSpecifier): string {
+  const declaration = specifier.parent.parent.parent;
+  return ts.isStringLiteral(declaration.moduleSpecifier) ? declaration.moduleSpecifier.text : "";
+}
+
+// A body schema: a plain identifier imported, without renaming, from
+// validation/schemas. The schema (with every transform, refinement and
+// preprocess step it carries) runs before the write gate, so it may not be an
+// inline expression written next to the route.
+function isImportedSchema(arg: ts.Expression, sourceFile: ts.SourceFile): boolean {
+  if (!ts.isIdentifier(arg)) return false;
+  const declarations = topLevelDeclarations(sourceFile, arg.text);
+  return (
+    declarations.length === 1 &&
+    ts.isImportSpecifier(declarations[0]) &&
+    declarations[0].propertyName === undefined &&
+    importSource(declarations[0]) === SCHEMA_MODULE
+  );
+}
+
+// A loader: a plain identifier naming a top-level const arrow or function
+// expression in router.ts. The loader runs before the write gate and must only
+// read; its body is the one place that rule is left to code review.
+function isTopLevelLoader(arg: ts.Expression, sourceFile: ts.SourceFile): boolean {
+  if (!ts.isIdentifier(arg)) return false;
+  const declarations = topLevelDeclarations(sourceFile, arg.text);
+  if (declarations.length !== 1) return false;
+  const [declaration] = declarations;
+  return (
+    ts.isVariableDeclaration(declaration) &&
+    (declaration.parent.flags & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined &&
+    (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))
+  );
+}
+
+// The arguments of a resolver factory call are the code a route supplies that
+// runs BEFORE the write gate (the loader and the body schema), so they are
+// restricted to forms whose code does not sit inline in the route:
+//   teamFromBody(<imported schema>)
+//   teamFromResource(<top-level loader const>, "<message literal>"[, <imported schema>])
+function factoryArgumentProblem(factory: ts.CallExpression, sourceFile: ts.SourceFile): string | null {
+  const name = (factory.expression as ts.Identifier).text;
+  const args = factory.arguments;
+  if (name === "teamFromBody") {
+    if (args.length !== 1 || !isImportedSchema(args[0], sourceFile)) {
+      return `teamFromBody takes exactly one body schema, a plain identifier imported from ${SCHEMA_MODULE}.`;
+    }
+    return null;
+  }
+  if (args.length < 2 || args.length > 3) {
+    return "teamFromResource takes (loader, message) or (loader, message, body schema).";
+  }
+  if (!isTopLevelLoader(args[0], sourceFile)) {
+    return "teamFromResource's loader must be a plain identifier naming a top-level const arrow function.";
+  }
+  if (!ts.isStringLiteral(args[1])) {
+    return "teamFromResource's not-found message must be a string literal.";
+  }
+  if (args[2] !== undefined && !isImportedSchema(args[2], sourceFile)) {
+    return `teamFromResource's body schema must be a plain identifier imported from ${SCHEMA_MODULE}.`;
+  }
+  return null;
+}
+
+// router.ts may use teamFromBody, teamFromResource, writeRoute and
+// createWriteRoute only as the write-route.ts imports and as the one top-level
+// `const writeRoute` binding. A local declaration of the same name (a nested
+// `const teamFromBody = ...`, a parameter, a renamed import) would let a
+// look-alike pass the shape checks while running arbitrary code before the
+// gate. A call and the checked bindings are the only recognised positions.
+function findWrapperNameShadowing(sourceFile: ts.SourceFile): Issue[] {
+  const issues: Issue[] = [];
+  function visit(node: ts.Node): void {
+    if (ts.isIdentifier(node) && WRAPPER_NAMES.has(node.text)) {
+      const parent = node.parent;
+      const isCallee = ts.isCallExpression(parent) && parent.expression === node;
+      const isWrapperImport =
+        ts.isImportSpecifier(parent) &&
+        parent.name === node &&
+        parent.propertyName === undefined &&
+        importSource(parent) === WRITE_ROUTE_MODULE;
+      const isWriterBinding =
+        node.text === "writeRoute" &&
+        ts.isVariableDeclaration(parent) &&
+        parent.name === node &&
+        ts.isVariableStatement(parent.parent.parent) &&
+        parent.parent.parent.parent === sourceFile;
+      if (!isCallee && !isWrapperImport && !isWriterBinding) {
+        issues.push({
+          snippet: firstLine(parent, sourceFile),
+          reason:
+            `${node.text} is used other than as the write-route.ts import or a direct call (a local ` +
+            "declaration, alias or pass-through); a look-alike could run code before the write gate.",
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return issues;
+}
+
 // Every `writeRoute(...)` call must be exactly (method, path, resolver,
 // handler): no extra argument (a middleware would run before the gate), a
 // literal method and path, a resolver built by an approved factory (inline or
-// via a top-level const), and a function (or a named function) as handler.
-// Any other mention of the identifier `writeRoute` (alias, detached, passed
-// on) is reported too.
+// via a top-level const) whose own arguments are plain identifiers and a
+// string literal, and a function (or a named function) as handler. The call
+// itself is a top-level statement, so the identifiers it names resolve at
+// module scope. Any other mention of the identifier `writeRoute` (alias,
+// detached, passed on) is reported too.
 function findWriteRouteShapeViolations(sourceFile: ts.SourceFile): Issue[] {
   const issues: Issue[] = [];
 
@@ -283,6 +242,14 @@ function findWriteRouteShapeViolations(sourceFile: ts.SourceFile): Issue[] {
     ) {
       const snippet = firstLine(node, sourceFile);
       const args = node.arguments;
+      if (!(ts.isExpressionStatement(node.parent) && node.parent.parent === sourceFile)) {
+        issues.push({
+          snippet,
+          reason:
+            "writeRoute must be called as a top-level statement of router.ts, so the identifiers it names " +
+            "resolve at module scope and cannot be shadowed.",
+        });
+      }
       if (args.length !== 4 || args.some((a) => ts.isSpreadElement(a))) {
         issues.push({
           snippet,
@@ -316,6 +283,9 @@ function findWriteRouteShapeViolations(sourceFile: ts.SourceFile): Issue[] {
               "writeRoute's team resolver must be a teamFromBody(...) or teamFromResource(...) call, inline or " +
               "held in a top-level const; any other function could do work before the write gate.",
           });
+        } else {
+          const problem = factoryArgumentProblem(factory, sourceFile);
+          if (problem) issues.push({ snippet, reason: problem });
         }
         if (!(ts.isArrowFunction(handler) || ts.isFunctionExpression(handler) || ts.isIdentifier(handler))) {
           issues.push({ snippet, reason: "writeRoute's handler must be a function or a named function." });
@@ -404,7 +374,9 @@ function findWriteRouteBindingViolations(sourceFile: ts.SourceFile): string[] {
 // instance. Another module could still add a mutating route that bypasses the
 // wrapper: on a second Router(), on apiRouter imported from router.ts, on an
 // express app or sub-app, or through a mounted router. This scan is static
-// and covers all of src/ (it is not a runtime route table):
+// and covers all of src/; it complements the runtime route table (which is
+// authoritative for everything createApp() builds, and cannot see code that
+// runs outside it, such as a registration on the app in server.ts):
 //   - Router() / express.Router() / new Router() is called exactly once, in
 //     router.ts;
 //   - express() is called only in app.ts (the app) and config/index.ts (a
@@ -549,6 +521,10 @@ describe("router.ts: every state-changing route is writeRoute-registered or a ju
 
   it("every writeRoute call is exactly (method, path, team resolver, handler)", () => {
     expect(findWriteRouteShapeViolations(routerSourceFile)).toEqual([]);
+  });
+
+  it("router.ts neither declares nor aliases teamFromBody, teamFromResource, writeRoute or createWriteRoute", () => {
+    expect(findWrapperNameShadowing(routerSourceFile)).toEqual([]);
   });
 
   it("writeRoute is bound to apiRouter with the real requireAuth and requireTeamWriteRole", () => {
@@ -749,8 +725,16 @@ describe("a new mutating route without the wrapper and without an allowlist entr
 });
 
 describe("writeRoute call shapes", () => {
+  // What router.ts has in scope: the wrapper imports, a body schema imported
+  // from validation/schemas and a top-level loader.
+  const PREAMBLE = `
+    import { createWriteRoute, teamFromBody, teamFromResource } from "./write-route.js";
+    import { schema, otherSchema } from "../../validation/schemas.js";
+    const loadWidgetTeamId = async (id: string) => null;
+  `;
+
   function violations(source: string): Issue[] {
-    return findWriteRouteShapeViolations(parseSource("synthetic.ts", source));
+    return findWriteRouteShapeViolations(parseSource("synthetic.ts", PREAMBLE + source));
   }
 
   it("accepts the four-argument form with an inline resolver (positive control)", () => {
@@ -764,6 +748,14 @@ describe("writeRoute call shapes", () => {
       violations(`
         const widgetTeam = teamFromResource(loadWidgetTeamId, "Widget not found");
         writeRoute("delete", "/w/:id", widgetTeam, removeWidget);`),
+    ).toEqual([]);
+  });
+
+  it("accepts a loader plus a message plus an imported body schema (positive control)", () => {
+    expect(
+      violations(
+        `writeRoute("put", "/w/:id", teamFromResource(loadWidgetTeamId, "Widget not found", otherSchema), async () => {});`,
+      ),
     ).toEqual([]);
   });
 
@@ -813,6 +805,162 @@ describe("writeRoute call shapes", () => {
         `const writeRoute = createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole });`,
       ),
     ).toEqual([]);
+  });
+
+  it("rejects a writeRoute call that is not a top-level statement (negative control)", () => {
+    expect(
+      violations(`
+        function register() {
+          const schema = z.object({}).transform(() => sideEffect());
+          writeRoute("post", "/w", teamFromBody(schema), async () => {});
+        }`),
+    ).not.toEqual([]);
+    expect(violations(`{ writeRoute("post", "/w", teamFromBody(schema), async () => {}); }`)).not.toEqual([]);
+  });
+});
+
+// The arguments of a resolver factory are the code a route supplies that runs
+// before the write gate: the body schema (with its transforms and
+// refinements) and the loader. Inline expressions in those slots were an
+// unchecked pre-gate side-effect path.
+describe("resolver factory arguments run before the write gate, so only named, reviewable code may sit there", () => {
+  const PREAMBLE = `
+    import { createWriteRoute, teamFromBody, teamFromResource } from "./write-route.js";
+    import { schema, otherSchema } from "../../validation/schemas.js";
+    import { prisma } from "../../repositories/prisma.js";
+    const loadWidgetTeamId = async (id: string) => null;
+    const loadViaCall = makeLoader();
+    async function loadDeclared(id: string) { return null; }
+    const localSchema = z.object({ teamId: z.string() });
+  `;
+
+  function violations(source: string): Issue[] {
+    return findWriteRouteShapeViolations(parseSource("synthetic.ts", PREAMBLE + source));
+  }
+
+  it("a side-effecting transform written inline on the body schema is rejected", () => {
+    expect(
+      violations(
+        `writeRoute("post", "/w", teamFromBody(schema.transform((v) => { void prisma.widget.delete({}); return v; })), async () => {});`,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("a refinement or preprocess call, an object with safeParse and a local schema are rejected", () => {
+    expect(
+      violations(`writeRoute("post", "/w", teamFromBody(schema.refine(sideEffect)), async () => {});`),
+    ).toHaveLength(1);
+    expect(
+      violations(
+        `writeRoute("post", "/w", teamFromBody({ safeParse: (v) => sideEffect(v) }), async () => {});`,
+      ),
+    ).toHaveLength(1);
+    expect(violations(`writeRoute("post", "/w", teamFromBody(localSchema), async () => {});`)).toHaveLength(
+      1,
+    );
+  });
+
+  it("an inline body schema on teamFromResource is rejected", () => {
+    expect(
+      violations(
+        `writeRoute("put", "/w/:id", teamFromResource(loadWidgetTeamId, "Not found", schema.transform(sideEffect)), async () => {});`,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("an inline loader, a loader from a call and a loader that is not a const arrow are rejected", () => {
+    expect(
+      violations(
+        `writeRoute("delete", "/w/:id", teamFromResource(async (id) => { await sideEffect(id); return null; }, "Not found"), async () => {});`,
+      ),
+    ).toHaveLength(1);
+    expect(
+      violations(
+        `writeRoute("delete", "/w/:id", teamFromResource(loadViaCall, "Not found"), async () => {});`,
+      ),
+    ).toHaveLength(1);
+    expect(
+      violations(
+        `writeRoute("delete", "/w/:id", teamFromResource(loadDeclared, "Not found"), async () => {});`,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("a message that is not a string literal and a wrong argument count are rejected", () => {
+    expect(
+      violations(
+        `writeRoute("delete", "/w/:id", teamFromResource(loadWidgetTeamId, message), async () => {});`,
+      ),
+    ).toHaveLength(1);
+    expect(
+      violations(`writeRoute("delete", "/w/:id", teamFromResource(loadWidgetTeamId), async () => {});`),
+    ).toHaveLength(1);
+    expect(violations(`writeRoute("post", "/w", teamFromBody(), async () => {});`)).toHaveLength(1);
+    expect(
+      violations(`writeRoute("post", "/w", teamFromBody(schema, otherSchema), async () => {});`),
+    ).toHaveLength(1);
+  });
+
+  it("a resolver const built from an inline schema is rejected where it is used", () => {
+    expect(
+      violations(`
+        const widgetTeam = teamFromBody(schema.transform(sideEffect));
+        writeRoute("post", "/w", widgetTeam, async () => {});`),
+    ).toHaveLength(1);
+  });
+
+  it("a renamed schema import is rejected (the checked name must be the imported one)", () => {
+    const issues = findWriteRouteShapeViolations(
+      parseSource(
+        "synthetic.ts",
+        `
+        import { teamFromBody } from "./write-route.js";
+        import { schema as renamed } from "../../validation/schemas.js";
+        writeRoute("post", "/w", teamFromBody(renamed), async () => {});`,
+      ),
+    );
+    expect(issues).toHaveLength(1);
+  });
+});
+
+describe("router.ts may not shadow or alias the wrapper names (look-alike factories)", () => {
+  function shadowing(source: string): Issue[] {
+    return findWrapperNameShadowing(parseSource("synthetic.ts", source));
+  }
+
+  const IMPORTS = `import { createWriteRoute, teamFromBody, teamFromResource } from "./write-route.js";`;
+
+  it("the real shapes are accepted: the imports, the binding and direct calls (positive control)", () => {
+    expect(
+      shadowing(`
+        ${IMPORTS}
+        const writeRoute = createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole });
+        writeRoute("post", "/w", teamFromBody(schema), async () => {});
+        writeRoute("put", "/w/:id", teamFromResource(load, "Not found"), async () => {});`),
+    ).toEqual([]);
+  });
+
+  it("a locally shadowed teamFromBody in a nested block is rejected", () => {
+    expect(
+      shadowing(`
+        ${IMPORTS}
+        {
+          const teamFromBody = (schema) => async () => ({ teamId: sideEffect(), input: 1 });
+          writeRoute("post", "/w", teamFromBody(schema), async () => {});
+        }`),
+    ).not.toEqual([]);
+  });
+
+  it("a function, parameter, class or renamed import with a wrapper name is rejected", () => {
+    expect(shadowing(`function teamFromResource(load, message) { return sideEffect(); }`)).not.toEqual([]);
+    expect(shadowing(`const register = (writeRoute) => writeRoute("post", "/w", a, b);`)).not.toEqual([]);
+    expect(shadowing(`import { teamFromBody as teamFromBody2 } from "./write-route.js";`)).not.toEqual([]);
+    expect(shadowing(`import { teamFromBody } from "./elsewhere.js";`)).not.toEqual([]);
+  });
+
+  it("a nested writeRoute binding and a detached createWriteRoute are rejected", () => {
+    expect(shadowing(`{ const writeRoute = (...args) => {}; }`)).not.toEqual([]);
+    expect(shadowing(`const factory = createWriteRoute;`)).not.toEqual([]);
   });
 });
 

@@ -86,21 +86,52 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
   Router-Registrierung, die der Test nicht klassifizieren kann (Alias von
   `apiRouter`, `apiRouter["delete"](...)`). Jeder `writeRoute`-Aufruf muss genau
   `(method, path, resolver, handler)` haben (ein weiteres Argument wäre ein
-  Middleware vor dem Gate), mit einem Resolver aus `teamFromBody`/
-  `teamFromResource`; die Bindung `createWriteRoute({ router: apiRouter,
-  requireAuth, requireTeamWriteRole })` ist festgenagelt. Ein statischer Scan
-  über `backend/src` erkennt eine zweite `Router()`-Instanz, `apiRouter` aus
-  einem anderen Modul, Routen direkt an der Express-App und fremde Mounts (S4).
+  Middleware vor dem Gate), als Top-Level-Anweisung, mit einem Resolver aus
+  `teamFromBody`/`teamFromResource`, dessen Argumente einfache Bezeichner sind
+  (Body-Schema aus `validation/schemas` importiert, Loader eine Top-Level-
+  Konstante) plus ein String-Literal als Not-found-Meldung; lokale
+  Deklarationen oder Aliase von `teamFromBody`, `teamFromResource`,
+  `writeRoute` und `createWriteRoute` in `router.ts` sind verboten. Die Bindung
+  `createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole })`
+  ist festgenagelt.
   `backend/tests/unit/write-route.test.ts` belegt das Verhalten: Reihenfolge
   Auth, Resolver, Gate, Handler; ein abgelehnter Aufrufer erreicht weder den
   Handler noch dessen Default-Parameter, Tagged Templates oder `new`-Ausdrücke.
-  Die früheren Sonderformen sind damit beantwortet: Seiteneffekte in den
+- Laufzeit-Routentabelle: `backend/tests/unit/route-table.test.ts` baut die
+  echte App mit `createApp()` (gleiche Modul-Mocks wie `api.test.ts`) und läuft
+  den Express-Layer-Stack rekursiv ab, gemountete Router eingeschlossen. Sie
+  verlangt: jede App- und Router-Middleware steht auf einer bekannten Liste;
+  außerhalb des einen API-Routers unter `/api/v1` gibt es keine mutierende
+  Route; jede mutierende Route des API-Routers steht in `ROUTE_WRITE_GUARDS`
+  (`backend/tests/unit/route-guards.ts`), eine "write"-Route wird von genau
+  einem Handler bedient, nämlich dem, den `writeRoute` registriert und
+  `write-route.ts` markiert (`isWriteRouteHandler`), eine Allowlist-Route nicht.
+  Damit ist S4 zur Laufzeit erkannt, unabhängig von der Schreibweise: ein
+  umbenanntes `Router`, ein Pfad als Konstante, ein zweiter Router in `app.ts`
+  oder ein mutierendes `app.use(...)` fallen als unbekannte Layer bzw.
+  unklassifizierte Routen auf. Der statische AST-Test bleibt für das, was die
+  Laufzeittabelle nicht sieht: die Form der `writeRoute`-Aufrufe und ihrer
+  Resolver-Argumente, die Bindung an die echten `requireAuth` und
+  `requireTeamWriteRole`, die Stelle, an der der Wrapper den Handler nach dem
+  Gate aufruft, und der statische Scan über `backend/src` (`Router()` und
+  `createWriteRoute` je einmal, `express()` nur in `app.ts` und
+  `config/index.ts`, keine Registrierung außerhalb von `router.ts`): er sieht
+  Code außerhalb von `createApp()`, etwa eine Registrierung auf der App in
+  `server.ts` oder eine zweite Express-App im selben Prozess, die die
+  Laufzeittabelle nicht abläuft.
+- Die früheren Sonderformen sind damit beantwortet: Seiteneffekte in den
   Gate-Argumenten (S0) lassen sich nicht schreiben, ein Middleware-Argument vor
   dem Handler (S1) lehnt die Formprüfung ab, Default-Parameter und Tagged
-  Templates (S2, S3) laufen im Handler nach dem Gate, eine zweite Router-Instanz
-  (S4) findet der Scan. Grenzen: der an `teamFromResource` übergebene Loader
-  läuft vor dem Gate und darf nur lesen, was der Test nicht inspiziert (Review-
-  Punkt); der Scan ist statisch, keine Laufzeit-Routentabelle. Der Test prüft
+  Templates (S2, S3) laufen im Handler nach dem Gate, eine zweite Router-
+  Instanz oder eine Registrierung aus einem anderen Modul (S4) findet die
+  Laufzeittabelle. Zwei Eingaben laufen vor dem Gate, weil das Gate das Team
+  braucht, das sie liefern, und der Wrapper sie nicht kapseln kann: der Loader
+  von `teamFromResource` und das Body-Schema (samt `transform`, `refine` und
+  `preprocess`) von `teamFromBody`/`teamFromResource`. Beide müssen frei von
+  Seiteneffekten sein. Der Test erzwingt nur, dass sie benannt sind (Schema aus
+  `validation/schemas`, Loader als Top-Level-Konstante) und nicht inline neben
+  der Route stehen; was die benannte Funktion tut, ist ein Review-Punkt, den der
+  Test nicht inspiziert. Der Test prüft
   außerdem, dass `requireTeamWriteRole` `canWrite` aufruft und dass
   `requireResourceTeam` nur die Mitgliedschaft prüft. Das Verhalten (VIEWER 403
   und keine Mutation, MEMBER 2xx, Timeline für VIEWER 200) pinnen die

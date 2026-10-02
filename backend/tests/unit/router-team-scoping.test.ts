@@ -141,9 +141,9 @@ const ROUTE_TEAM_GUARDS: Record<string, Guard> = {
     kind: "allowlist",
     reason:
       "Loads the invite by id and derives its team inline (the same resource-derived pattern as " +
-      "requireResourceTeam), but also requires canManageInvites (OWNER/ADMIN) on top of plain membership, " +
-      "which requireResourceTeam does not model. Kept inline rather than forcing an awkward fit onto the " +
-      "shared factory.",
+      "teamFromResource behind writeRoute), but also requires canManageInvites (OWNER/ADMIN) on top of plain " +
+      "membership, which the write gate does not model. Kept inline rather than forcing an awkward fit onto " +
+      "writeRoute.",
     verify: { type: "call", callee: "requireTeamRole", alsoReferences: "invite" },
   },
   "PUT /admin/users/:id": {

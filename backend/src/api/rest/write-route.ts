@@ -20,10 +20,24 @@ import type { NextFunction, Request, Response, Router } from "express";
 //     in tests/unit/router-write-role.test.ts rejects it even under a cast);
 //   - the gate call lives in this module with fixed arguments, so a route
 //     cannot hang a side effect on the gate's arguments;
-//   - everything the route supplies (default-parameter initializers, tagged
-//     templates, `new` expressions, statements) sits inside the handler or in
-//     the team resolver, and both are only called by the wrapper, the handler
-//     only after the gate.
+//   - the handler (with its default-parameter initializers, tagged templates,
+//     `new` expressions and statements) is only called by the wrapper, after
+//     the gate.
+//
+// Two route-supplied inputs DO run before the gate, because the gate needs the
+// team they produce, and the wrapper cannot sandbox them:
+//   - the loader given to `teamFromResource` (a lookup of the resource's team);
+//   - the body schema given to `teamFromBody` / `teamFromResource`, including
+//     any transform, refinement or preprocess step it carries, since the body
+//     is parsed to find or validate the team.
+// Both must be free of side effects. The meta-test accepts only plain
+// identifiers there (a schema imported from validation/schemas, a loader held
+// in a top-level const) and a string literal message, so neither can be an
+// inline expression; what those named functions do is code review's job.
+//
+// The registered Express handler is tagged (`isWriteRouteHandler`) so a
+// runtime route-table test can verify that a team-scoped write route is served
+// by this wrapper and by nothing else, whatever spelling registered it.
 //
 // This module takes its collaborators as arguments (`createWriteRoute`) so it
 // can be unit-tested without constructing the live Prisma/ClickHouse/Redis
@@ -47,9 +61,10 @@ export interface TeamTarget<TInput> {
 }
 
 // Resolves the team a request acts on. It runs after authentication and
-// before the write gate, so it must only read: it answers 400/404 itself and
-// returns null when it did. Build resolvers with `teamFromBody` and
-// `teamFromResource`; the meta-test accepts no other form.
+// before the write gate, so everything it calls (the body schema with its
+// transforms and refinements, the loader) must be free of side effects: it
+// answers 400/404 itself and returns null when it did. Build resolvers with
+// `teamFromBody` and `teamFromResource`; the meta-test accepts no other form.
 export type ResolveTeam<TInput> = (req: Request, res: Response) => Promise<TeamTarget<TInput> | null>;
 
 export interface WriteContext<TInput> {
@@ -78,6 +93,14 @@ export type WriteRoute = <TInput>(
   handler: WriteHandler<TInput>,
 ) => void;
 
+// Handlers this module registered. Only createWriteRoute adds to the set, so
+// membership proves a route handler is the wrapper's, not a look-alike.
+const writeRouteHandlers = new WeakSet<object>();
+
+export function isWriteRouteHandler(candidate: unknown): boolean {
+  return typeof candidate === "function" && writeRouteHandlers.has(candidate);
+}
+
 export function createWriteRoute(deps: WriteRouteDeps): WriteRoute {
   return function writeRoute<TInput>(
     method: WriteMethod,
@@ -85,7 +108,7 @@ export function createWriteRoute(deps: WriteRouteDeps): WriteRoute {
     resolveTeam: ResolveTeam<TInput>,
     handler: WriteHandler<TInput>,
   ): void {
-    deps.router[method](path, (req: Request, res: Response, next: NextFunction) => {
+    const registered = (req: Request, res: Response, next: NextFunction): void => {
       const run = async (): Promise<void> => {
         const userId = await deps.requireAuth(req, res);
         if (userId === null) return;
@@ -96,14 +119,17 @@ export function createWriteRoute(deps: WriteRouteDeps): WriteRoute {
         await handler({ req, res, userId, teamId: target.teamId, role, input: target.input });
       };
       run().catch(next);
-    });
+    };
+    writeRouteHandlers.add(registered);
+    deps.router[method](path, registered);
   };
 }
 
 // Team resolver for a route that names its team in the request body (POST
 // /sources, POST /maintenance-windows): validates the body (400 with the
 // flattened Zod error) and takes `teamId` from it. The handler receives the
-// validated body as `input`.
+// validated body as `input`. The schema runs before the gate, so it must be
+// free of side effects (see the header).
 export function teamFromBody<T extends { teamId: string }>(schema: BodySchema<T>): ResolveTeam<T> {
   return async (req, res) => {
     const parsed = schema.safeParse(req.body);
@@ -119,7 +145,8 @@ export function teamFromBody<T extends { teamId: string }>(schema: BodySchema<T>
 // parameter and takes the team that owns it (404 when the resource does not
 // exist). With a `bodySchema` the body is validated first (400) and handed to
 // the handler as `input`; without one, `input` is undefined and the handler
-// parses what it needs. `loadTeamId` must only read.
+// parses what it needs. `loadTeamId` and `bodySchema` run before the gate and
+// must be free of side effects (see the header).
 export function teamFromResource(
   loadTeamId: (id: string) => Promise<string | null>,
   notFoundMessage: string,

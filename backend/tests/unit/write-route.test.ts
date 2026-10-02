@@ -186,10 +186,12 @@ describe("writeRoute order: auth, then team resolution, then the write gate, the
     const h = harness();
     const handler = vi.fn();
     createWriteRoute(h.deps)("delete", "/w/:id", resolver(h.events, null), handler);
-    const { res } = await h.invoke(0);
+    const { res, next } = await h.invoke(0);
     expect(res.statusCode).toBe(404);
     expect(h.events).toEqual(["auth", "resolve"]);
     expect(handler).not.toHaveBeenCalled();
+    // Answering is the end of the request: nothing falls through to the error path.
+    expect(next).not.toHaveBeenCalled();
   });
 
   it("a denied write gate (403) stops before the handler: nothing of the handler runs", async () => {
