@@ -2,6 +2,16 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-02T07:14:07Z, re-verified and re-stamped api-authz-and-team-scoping.md
+  (task 10b54786): team-scoped mutating routes are registered through the
+  `writeRoute` wrapper (write-route.ts), which runs authentication, team
+  resolution and the write gate before the handler. `requireResourceTeam`
+  lost its mode argument and is the membership-only read resolver; the
+  write-role meta-test now makes the wrapper mandatory and scans src for
+  registrations on another router instance. router.ts citations were
+  re-pointed after the router shrank, and the shapes the earlier placement
+  check could not see are answered one by one.
+
 - 2026-10-02T05:54:06Z, re-verified and re-stamped api-authz-and-team-scoping.md
   (task 765bb823): `canManageShared` moved next to `canManageInvites`, so the
   router.ts citations below the log-view routes were re-pointed; the saved-view

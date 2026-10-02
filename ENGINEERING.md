@@ -17,24 +17,27 @@ erzwungen:
 - Jede state-changing (POST/PUT/PATCH/DELETE) Route mit einem `:id`-artigen
   Pfadparameter muss die Team-Zugehörigkeit der Zielressource prüfen, bevor
   sie mutiert wird — nicht nur, dass der Aufrufer eingeloggt ist.
-- Für Ressourcen, die per Prisma-Modell direkt (oder über eine einfache
-  Relation) auf `teamId` auflösbar sind, gibt es `requireResourceTeam(...)`
-  in `router.ts`: eine Factory, die "Ressource per id laden → teamId ziehen →
-  404 wenn fehlt → requireTeamRole → teamId zurückgeben" kapselt. Eine neue
-  Ressource anzuschließen ist eine Zeile (siehe `requireRuleWriteTeam`,
-  `requireMaintenanceWindowWriteTeam`, `requireIncidentWriteTeam`,
-  `requireIssueWriteTeam` und den Lese-Resolver `requireIncidentTeam` in
-  `router.ts`). Der dritte Parameter `mode` (`"read"` oder `"write"`) ist
-  Pflicht; siehe den Abschnitt zur Write-Rolle unten.
+- Team-gescopte mutierende Routen werden über `writeRoute(method, path,
+  resolveTeam, handler)` registriert (`backend/src/api/rest/write-route.ts`,
+  einmal in `router.ts` an `apiRouter` gebunden). Der Wrapper führt in fester
+  Reihenfolge Authentifizierung, Team-Auflösung und Write-Gate vor dem Handler
+  aus; siehe den Abschnitt zur Write-Rolle unten. Die Team-Auflösung für
+  by-id-Routen baut `teamFromResource(loadTeamId, notFoundMessage)`: Ressource
+  per id laden, `teamId` ziehen, 404 wenn sie fehlt. Eine neue Ressource
+  anzuschließen ist eine Loader-Zeile (siehe `loadRuleTeamId`,
+  `loadMaintenanceWindowTeamId`, `loadIncidentTeamId`, `loadIssueTeamId` in
+  `router.ts`). Für lesende by-id-Routen bleibt `requireResourceTeam(loader,
+  message)` die reine Mitgliedschaftsprüfung (Incident-Timeline).
 - Bewusste Ausnahmen (Ressource per-User statt per-Team gescoped,
   Admin-Routen, API-Key-Auth, Capability-Token-Routen, ...) sind erlaubt,
   müssen aber explizit begründet allowlistet werden, nicht stillschweigend
   übersprungen werden.
 - Die eigentliche Durchsetzung ist `backend/tests/unit/router-team-scoping.test.ts`:
   ein Meta-Test, der `router.ts` statisch per TypeScript-AST parst, jede
-  state-changing `:id`-Route findet und verlangt, dass sie entweder einen
-  registrierten Team-Resolver aufruft oder einen begründeten Allowlist-Eintrag
-  hat. Eine neue Route ohne Eintrag macht CI rot — die Klassifizierung selbst
+  state-changing `:id`-Route findet (`apiRouter.<method>` und `writeRoute`) und
+  verlangt, dass sie entweder über `writeRoute` mit einem
+  `teamFromResource(<Loader>, ...)`-Resolver registriert ist oder einen
+  begründeten Allowlist-Eintrag hat. Eine neue Route ohne Eintrag macht CI rot - die Klassifizierung selbst
   ist die Prüfung, nicht ein bestimmtes Implementierungsdetail. Mutation-
   verifiziert: ein temporärer Revert eines Team-Checks lässt den Test
   fehlschlagen.
@@ -58,38 +61,50 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
   später ergänzte Rolle ist also erst nach bewusstem Eintrag schreibberechtigt).
   Keine der team-gescopten Write-Routen vergleicht Rollen selbst für die
   Write-Entscheidung (die Log-View-Routen haben ein eigenes Modell, siehe unten).
-- Erreicht wird `canWrite` über `requireTeamWriteRole(userId, teamId, res)`
-  (Mitgliedschaft über `requireTeamRole`, danach `canWrite`, sonst 403) für Routen,
-  die die `teamId` aus dem Body nehmen (`POST /sources`, `POST /maintenance-windows`),
-  und über Write-Resolver, die `requireResourceTeam(loader, message, "write")`
-  baut, für by-id-Routen (Rule mute/unmute, Maintenance-Window löschen,
-  Incident acknowledge/resolve/reopen, `PUT /issues/:id`). Ein Resolver, der eine
-  mutierende Route schützt, muss im Modus `"write"` gebaut sein; lesende Routen
-  nutzen `requireTeamRole` bzw. einen `"read"`-Resolver.
+- Erreicht wird `canWrite` ausschließlich über den Wrapper `writeRoute`. Er
+  führt vor dem Handler aus: `requireAuth` (401), die Team-Auflösung
+  (`teamFromBody(schema)` nimmt die `teamId` aus dem validierten Body, `POST
+  /sources` und `POST /maintenance-windows`; `teamFromResource(loader, message,
+  schema?)` nimmt das Team der per `:id` geladenen Ressource, 404 wenn sie
+  fehlt, 400 bei ungültigem Body), danach `requireTeamWriteRole(userId, teamId,
+  res)` (Mitgliedschaft über `requireTeamRole`, danach `canWrite`, sonst 403).
+  Erst dann läuft der Handler, der `{ req, res, userId, teamId, role, input }`
+  erhält. Der Handler hat keinen Weg, vor dem Gate zu laufen: die Signatur hat
+  kein Middleware-Argument, der Gate-Aufruf steht im Wrapper mit festen
+  Argumenten, und der Handler wird an genau einer Stelle nach dem Gate
+  aufgerufen. Die neun Write-Routen (Rule mute/unmute, `POST /sources`,
+  `POST /maintenance-windows`, Maintenance-Window löschen, Incident
+  acknowledge/resolve/reopen, `PUT /issues/:id`) laufen darüber.
 - Durchsetzung: `backend/tests/unit/router-write-role.test.ts` parst `router.ts`
-  per TypeScript-AST und verlangt für JEDE state-changing Route (mit oder ohne
-  `:param`) einen Eintrag in `ROUTE_WRITE_GUARDS`: entweder `{ kind: "write", gate }`
-  (das Gate ist der erste Schritt nach Authentifizierung und Validierung, und
-  sein `null`-Ergebnis beendet den Handler per frühem `return`, also entweder
-  `if ((await gate(...)) === null) return;` oder `const x = await gate(...);`
-  unmittelbar gefolgt von `if (x === null) return;`; ein Kommentar zählt nicht)
-  oder einen begründeten Allowlist-Eintrag (lesender POST, per-User, Invites,
-  Log-Views, Admin, Ingest, Auth, `POST /teams`). Ein Gate nach einer Mutation,
-  ohne `null`-Prüfung oder ohne `return` lässt den Test rot werden, ebenso eine
-  neue, nicht klassifizierte mutierende Route oder eine Router-Registrierung,
-  die der Test nicht klassifizieren kann (Alias von `apiRouter`,
-  `apiRouter["delete"](...)`). Die Garantie ist rein syntaktisch: das Gate ist
-  ein Top-Level-Statement des Handler-Bodys, nur von zugelassenen Auth- und
-  Validierungs-Statements davor (siehe Test) und mit frühem Return bei
-  `null`. Der Test sieht keine Seiteneffekte in den Argumenten des Gate-Aufrufs,
-  in Middleware-Argumenten vor dem Handler, in Default-Parametern des Handlers
-  oder in Tagged Templates und `new`-Ausdrücken; diese Formen kommen in
-  `router.ts` heute nicht vor (Härtung ist ein eigener Task). Der Test prüft außerdem, dass
-  `requireTeamWriteRole` `canWrite` aufruft, dass jeder Write-Resolver im
-  Modus `"write"` gebaut ist und dass `requireResourceTeam` nur für `"read"`
-  die reine Mitgliedschaftsprüfung nimmt (fail-closed). Das Verhalten (VIEWER 403 und keine Mutation,
-  MEMBER 2xx, Timeline für VIEWER 200) pinnen die Route-Tests in
-  `backend/tests/integration/api.test.ts`.
+  per TypeScript-AST (gemeinsamer Walker in `backend/tests/unit/router-ast.ts`)
+  und verlangt für JEDE state-changing Route (mit oder ohne `:param`) einen
+  Eintrag in `ROUTE_WRITE_GUARDS`: entweder `{ kind: "write" }` (die Route ist
+  über `writeRoute` registriert) oder einen begründeten Allowlist-Eintrag
+  (lesender POST, per-User, Invites, Log-Views, Admin, Ingest, Auth, `POST
+  /teams`), registriert mit `apiRouter.<method>`. Eine neue mutierende Route
+  ohne Wrapper und ohne Allowlist-Eintrag macht CI rot, ebenso eine
+  Router-Registrierung, die der Test nicht klassifizieren kann (Alias von
+  `apiRouter`, `apiRouter["delete"](...)`). Jeder `writeRoute`-Aufruf muss genau
+  `(method, path, resolver, handler)` haben (ein weiteres Argument wäre ein
+  Middleware vor dem Gate), mit einem Resolver aus `teamFromBody`/
+  `teamFromResource`; die Bindung `createWriteRoute({ router: apiRouter,
+  requireAuth, requireTeamWriteRole })` ist festgenagelt. Ein statischer Scan
+  über `backend/src` erkennt eine zweite `Router()`-Instanz, `apiRouter` aus
+  einem anderen Modul, Routen direkt an der Express-App und fremde Mounts (S4).
+  `backend/tests/unit/write-route.test.ts` belegt das Verhalten: Reihenfolge
+  Auth, Resolver, Gate, Handler; ein abgelehnter Aufrufer erreicht weder den
+  Handler noch dessen Default-Parameter, Tagged Templates oder `new`-Ausdrücke.
+  Die früheren Sonderformen sind damit beantwortet: Seiteneffekte in den
+  Gate-Argumenten (S0) lassen sich nicht schreiben, ein Middleware-Argument vor
+  dem Handler (S1) lehnt die Formprüfung ab, Default-Parameter und Tagged
+  Templates (S2, S3) laufen im Handler nach dem Gate, eine zweite Router-Instanz
+  (S4) findet der Scan. Grenzen: der an `teamFromResource` übergebene Loader
+  läuft vor dem Gate und darf nur lesen, was der Test nicht inspiziert (Review-
+  Punkt); der Scan ist statisch, keine Laufzeit-Routentabelle. Der Test prüft
+  außerdem, dass `requireTeamWriteRole` `canWrite` aufruft und dass
+  `requireResourceTeam` nur die Mitgliedschaft prüft. Das Verhalten (VIEWER 403
+  und keine Mutation, MEMBER 2xx, Timeline für VIEWER 200) pinnen die
+  Route-Tests in `backend/tests/integration/api.test.ts`.
 - Nicht Teil dieser Regel: Invite-Verwaltung (`canManageInvites`, nur OWNER/ADMIN),
   Subscriptions (per-User) und die Admin-Routen (`requireAdmin`). Die
   Log-View-Routen (`/logs/views`) liegen ebenfalls außerhalb und sind für
