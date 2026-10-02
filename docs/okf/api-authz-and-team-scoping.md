@@ -3,7 +3,7 @@ type: invariant
 title: API authz and team scoping - three caller models, one by-id write-route convention
 description: router.ts (1767 lines, all authn/authz inline, no middleware directory) recognises three caller models - session Bearer via resolveUserId/requireAuth, X-API-Key pinned 1:1 to a single LogSource, and global admin via requireAdmin - and routes every team-scoped mutating endpoint through one wrapper, writeRoute (write-route.ts), that authenticates, resolves the team and applies the write gate (canWrite, VIEWER read-only) before the handler can run; a runtime route-table test over the real app (createApp) makes the wrapper mandatory (every mutating route is writeRoute-served or a justified allowlist entry, and every app and router layer is on a known list), while AST meta-tests pin the writeRoute call shapes, their factory arguments and the wrapper binding (tasks 2a52b2b1, 10b54786).
 tags: [authz, team-scoping, router, idor, security]
-timestamp: 2026-10-02T08:36:31Z
+timestamp: 2026-10-02T08:53:23Z
 sources:
   - backend/src/api/rest/router.ts
   - backend/src/api/rest/write-route.ts

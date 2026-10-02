@@ -2,6 +2,8 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-02T08:53:23Z, task 10b54786: `api-authz-and-team-scoping.md` now names the config keys the route-table matrix builds (nodeEnv, multiTenant, trustProxy) and that a registration behind any other key is not built until the key is added; re-verified against `route-table.test.ts` and re-stamped.
+
 - 2026-10-02T08:36:31Z, re-verified and re-stamped api-authz-and-team-scoping.md
   (task 10b54786): the route-table audit now rebuilds the app under every
   combination of nodeEnv, multiTenant and trustProxy, rejects `param`
