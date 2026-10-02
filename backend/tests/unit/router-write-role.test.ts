@@ -1,78 +1,71 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import ts from "typescript";
+import {
+  STATE_CHANGING_METHODS,
+  extractRoutes,
+  findCallByCallee,
+  findUnrecognizedApiRouterUsages,
+  loadRouterSourceFile,
+  parseSource,
+  resolveToCall,
+  routeKey,
+  routeSatisfiesVerify,
+  type RouteDecl,
+  type Verify,
+} from "./router-ast.js";
 
 // Structural guard for the "VIEWER is read-only on team-scoped writes" rule
-// (see `canWrite` / `requireTeamWriteRole` in router.ts, and ENGINEERING.md).
+// (see `canWrite` / `requireTeamWriteRole` in router.ts, `writeRoute` in
+// write-route.ts, and ENGINEERING.md).
 //
-// The rule has exactly one home: `canWrite(role)` in router.ts, reached through
-// `requireTeamWriteRole` (called directly by routes that take their teamId
-// from the body) or through a `requireResourceTeam` resolver built in "write"
-// mode (by-id routes). This test makes sure no state-changing route can skip
-// it unnoticed. Like router-team-scoping.test.ts it parses router.ts with the
-// TypeScript compiler API instead of importing it (importing would construct
-// live Prisma/ClickHouse/Redis-backed services as a module-load side effect).
-//
-// Difference to router-team-scoping.test.ts: that guard only covers routes
-// with a `:param`; this one classifies EVERY state-changing apiRouter route
-// (POST/PUT/PATCH/DELETE), with or without a path parameter, because
-// POST /sources and POST /maintenance-windows take their teamId from the body.
-//
-// Every state-changing route MUST appear in ROUTE_WRITE_GUARDS as either
-//   { kind: "write", gate }        the handler applies a write gate as its
-//                                  first step after authentication and
-//                                  validation, with the gate's null result
-//                                  ending the handler (see "Gate placement"
-//                                  below; a mention in a comment does not
-//                                  count), or
-//   { kind: "allowlist", reason }  an explicit, justified exception (reading
-//                                  POST, per-user, invite, admin, ingest, ...).
-// A route in router.ts that is missing here fails CI, so a new mutating route
-// cannot ship without someone deciding which of the two it is.
-const ROUTER_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "../../src/api/rest/router.ts",
-);
+// The rule has exactly one home, `canWrite(role)` in router.ts, and one way to
+// reach it from a route: `writeRoute(method, path, resolveTeam, handler)`. The
+// wrapper authenticates, resolves the team, applies `requireTeamWriteRole` and
+// only then calls the handler, so the gate cannot be skipped, reordered or
+// hung with side effects by a route author (write-route.test.ts proves that
+// behaviourally). This test makes the wrapper mandatory instead of
+// enumerating gate placements: it parses router.ts with the TypeScript
+// compiler API (it never imports it, which would construct live
+// Prisma/ClickHouse/Redis-backed services) and requires that
+//   1. every state-changing apiRouter route is either registered through
+//      writeRoute (ROUTE_WRITE_GUARDS kind "write") or a justified allowlist
+//      entry registered with apiRouter.<method> (kind "allowlist");
+//   2. every writeRoute call has exactly the shape (method, path, resolver,
+//      handler) with a resolver built by teamFromBody/teamFromResource, so
+//      nothing, in particular no middleware, can sit between the router and
+//      the gate;
+//   3. writeRoute is bound to apiRouter with the real auth and write-gate
+//      functions, and no other file registers routes on another router
+//      instance or on apiRouter (S4).
+// A new mutating route with neither the wrapper nor an allowlist entry fails
+// CI, whatever shape its handler has.
+const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
 
-const STATE_CHANGING_METHODS = new Set(["post", "put", "patch", "delete"]);
-const HTTP_METHOD_NAMES = new Set(["get", "post", "put", "patch", "delete"]);
+// Resolver factories a writeRoute call may use (write-route.ts).
+const RESOLVER_FACTORIES = new Set(["teamFromBody", "teamFromResource"]);
+const WRITE_ROUTE_METHODS = new Set(["post", "put", "patch", "delete"]);
 
-// Functions that apply the write rule. requireTeamWriteRole is the direct
-// helper; the others are requireResourceTeam resolvers built in "write" mode.
-const WRITE_GATES = [
-  "requireTeamWriteRole",
-  "requireRuleWriteTeam",
-  "requireMaintenanceWindowWriteTeam",
-  "requireIncidentWriteTeam",
-  "requireIssueWriteTeam",
-] as const;
-type WriteGate = (typeof WRITE_GATES)[number];
-
-// The subset of WRITE_GATES that must be a requireResourceTeam(..., "write")
-// instantiation (everything except the direct helper).
-const WRITE_RESOLVERS = WRITE_GATES.filter((g) => g !== "requireTeamWriteRole");
-
-type Verify =
-  | { type: "call"; callee: string; alsoReferences?: string }
-  | { type: "identifier"; name: string };
-
-type Guard = { kind: "write"; gate: WriteGate } | { kind: "allowlist"; reason: string; verify?: Verify };
+// "write": a team-scoped mutation registered through writeRoute (VIEWER gets
+// 403). "allowlist": an explicit, justified exception registered with
+// apiRouter.<method> (reading POST, per-user, invite, admin, ingest, ...).
+type Guard = { kind: "write" } | { kind: "allowlist"; reason: string; verify?: Verify };
 
 // Every state-changing route in router.ts, keyed "METHOD /path" exactly as
 // declared there.
 const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
-  // --- Team-scoped writes: VIEWER gets 403 ---
-  "POST /sources": { kind: "write", gate: "requireTeamWriteRole" },
-  "POST /alerts/rules/:id/mute": { kind: "write", gate: "requireRuleWriteTeam" },
-  "POST /alerts/rules/:id/unmute": { kind: "write", gate: "requireRuleWriteTeam" },
-  "POST /maintenance-windows": { kind: "write", gate: "requireTeamWriteRole" },
-  "DELETE /maintenance-windows/:id": { kind: "write", gate: "requireMaintenanceWindowWriteTeam" },
-  "POST /alerts/incidents/:id/acknowledge": { kind: "write", gate: "requireIncidentWriteTeam" },
-  "POST /alerts/incidents/:id/resolve": { kind: "write", gate: "requireIncidentWriteTeam" },
-  "POST /alerts/incidents/:id/reopen": { kind: "write", gate: "requireIncidentWriteTeam" },
-  "PUT /issues/:id": { kind: "write", gate: "requireIssueWriteTeam" },
+  // --- Team-scoped writes through writeRoute: VIEWER gets 403 ---
+  "POST /sources": { kind: "write" },
+  "POST /alerts/rules/:id/mute": { kind: "write" },
+  "POST /alerts/rules/:id/unmute": { kind: "write" },
+  "POST /maintenance-windows": { kind: "write" },
+  "DELETE /maintenance-windows/:id": { kind: "write" },
+  "POST /alerts/incidents/:id/acknowledge": { kind: "write" },
+  "POST /alerts/incidents/:id/resolve": { kind: "write" },
+  "POST /alerts/incidents/:id/reopen": { kind: "write" },
+  "PUT /issues/:id": { kind: "write" },
 
   // --- Explicit, justified allowlist (never a silent skip) ---
   "POST /auth/register": {
@@ -236,92 +229,109 @@ const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
   },
 };
 
-interface RouteDecl {
-  method: string;
-  routePath: string;
-  // Argument nodes after the path string, kept as AST nodes (not text) so
-  // verification walks real CallExpression/Identifier nodes and a comment
-  // mentioning a gate name can never satisfy it.
-  argNodes: ts.Expression[];
+// --- Classification ------------------------------------------------------
+
+interface Classification {
+  unclassified: string[];
+  stale: string[];
+  // A "write" entry registered with apiRouter, or an allowlist entry
+  // registered with writeRoute.
+  wrongRegistration: string[];
 }
 
-function extractRoutes(sourceFile: ts.SourceFile): RouteDecl[] {
-  const routes: RouteDecl[] = [];
-
-  function visit(node: ts.Node): void {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "apiRouter" &&
-      HTTP_METHOD_NAMES.has(node.expression.name.text.toLowerCase())
-    ) {
-      const [pathArg, ...rest] = node.arguments;
-      if (pathArg && ts.isStringLiteral(pathArg)) {
-        routes.push({
-          method: node.expression.name.text.toLowerCase(),
-          routePath: pathArg.text,
-          argNodes: rest,
-        });
-      }
+function classify(routes: RouteDecl[], guards: Record<string, Guard>): Classification {
+  const stateChanging = routes.filter((r) => STATE_CHANGING_METHODS.has(r.method));
+  const actual = new Map(stateChanging.map((r) => [routeKey(r), r]));
+  const unclassified = [...actual.keys()].filter((key) => !(key in guards));
+  const stale = Object.keys(guards).filter((key) => !actual.has(key));
+  const wrongRegistration: string[] = [];
+  for (const [key, route] of actual) {
+    const guard = guards[key];
+    if (!guard) continue;
+    if (guard.kind === "write" && route.via !== "writeRoute") {
+      wrongRegistration.push(`${key}: classified "write" but registered with apiRouter.${route.method}`);
     }
-    ts.forEachChild(node, visit);
+    if (guard.kind === "allowlist" && route.via === "writeRoute") {
+      wrongRegistration.push(`${key}: allowlisted but registered with writeRoute; classify it "write"`);
+    }
   }
-
-  visit(sourceFile);
-  return routes;
+  return { unclassified, stale, wrongRegistration };
 }
 
-// `apiRouter.<member>(...)` shapes extractRoutes does not understand (.route()
-// chaining, .use() sub-router mounts, a non-literal path) would silently
-// escape classification, so they are reported as data for a test assertion.
-function findUnrecognizedApiRouterUsages(
-  sourceFile: ts.SourceFile,
-): Array<{ snippet: string; reason: string }> {
-  const issues: Array<{ snippet: string; reason: string }> = [];
+// --- Registration shape --------------------------------------------------
+
+type Issue = { snippet: string; reason: string };
+
+function firstLine(node: ts.Node, sourceFile: ts.SourceFile): string {
+  return node.getText(sourceFile).split("\n")[0].trim();
+}
+
+// Every `writeRoute(...)` call must be exactly (method, path, resolver,
+// handler): no extra argument (a middleware would run before the gate), a
+// literal method and path, a resolver built by an approved factory (inline or
+// via a top-level const), and a function (or a named function) as handler.
+// Any other mention of the identifier `writeRoute` (alias, detached, passed
+// on) is reported too.
+function findWriteRouteShapeViolations(sourceFile: ts.SourceFile): Issue[] {
+  const issues: Issue[] = [];
 
   function visit(node: ts.Node): void {
     if (
       ts.isCallExpression(node) &&
-      ts.isPropertyAccessExpression(node.expression) &&
-      ts.isIdentifier(node.expression.expression) &&
-      node.expression.expression.text === "apiRouter"
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "writeRoute"
     ) {
-      const member = node.expression.name.text;
-      const snippet = node.getText(sourceFile).split("\n")[0].trim();
-      if (!HTTP_METHOD_NAMES.has(member.toLowerCase())) {
+      const snippet = firstLine(node, sourceFile);
+      const args = node.arguments;
+      if (args.length !== 4 || args.some((a) => ts.isSpreadElement(a))) {
         issues.push({
           snippet,
           reason:
-            `apiRouter.${member}(...) is not one of get/post/put/patch/delete; extractRoutes would silently skip ` +
-            "it. Extend extractRoutes, then classify any resulting routes in ROUTE_WRITE_GUARDS.",
+            "writeRoute takes exactly (method, path, resolveTeam, handler); an extra or spread argument could " +
+            "run a middleware before the write gate.",
         });
       } else {
-        const [pathArg] = node.arguments;
-        if (!pathArg || !ts.isStringLiteral(pathArg)) {
+        const [method, routePath, resolver, handler] = args;
+        if (!ts.isStringLiteral(method) || !WRITE_ROUTE_METHODS.has(method.text)) {
+          issues.push({
+            snippet,
+            reason: "writeRoute needs a literal post/put/patch/delete method as first argument.",
+          });
+        }
+        if (!ts.isStringLiteral(routePath)) {
+          issues.push({
+            snippet,
+            reason: "writeRoute needs a plain string literal path as second argument.",
+          });
+        }
+        const factory = resolveToCall(resolver, sourceFile);
+        if (
+          !factory ||
+          !ts.isIdentifier(factory.expression) ||
+          !RESOLVER_FACTORIES.has(factory.expression.text)
+        ) {
           issues.push({
             snippet,
             reason:
-              `apiRouter.${member}(...) has no plain string literal as its first argument; extractRoutes cannot ` +
-              "extract a path from it and would silently skip it.",
+              "writeRoute's team resolver must be a teamFromBody(...) or teamFromResource(...) call, inline or " +
+              "held in a top-level const; any other function could do work before the write gate.",
           });
         }
+        if (!(ts.isArrowFunction(handler) || ts.isFunctionExpression(handler) || ts.isIdentifier(handler))) {
+          issues.push({ snippet, reason: "writeRoute's handler must be a function or a named function." });
+        }
       }
-    }
-    // Any other reference to the `apiRouter` identifier is a registration shape
-    // the call-based walk above cannot see: an alias (`const r = apiRouter;
-    // r.post(...)`), element access (`apiRouter["delete"](...)`), a detached
-    // method (`const f = apiRouter.post`), destructuring or passing the router
-    // on. Only the declaration and the `apiRouter.<member>(` callee position
-    // (handled above) are accepted.
-    if (ts.isIdentifier(node) && node.text === "apiRouter" && !isRecognizedApiRouterReference(node)) {
+    } else if (
+      ts.isIdentifier(node) &&
+      node.text === "writeRoute" &&
+      !(ts.isVariableDeclaration(node.parent) && node.parent.name === node) &&
+      !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+    ) {
       issues.push({
-        snippet: (node.parent ?? node).getText(sourceFile).split("\n")[0].trim(),
+        snippet: firstLine(node.parent ?? node, sourceFile),
         reason:
-          "apiRouter is referenced in a position other than its declaration or an `apiRouter.<method>(` call " +
-          "(an alias, element access such as apiRouter['delete'](...), a detached method or a pass-through). " +
-          "extractRoutes would silently skip routes registered that way. Register routes with a direct " +
-          `apiRouter.<method>("path", ...) call, or extend extractRoutes and classify the resulting routes in ROUTE_WRITE_GUARDS.`,
+          "writeRoute is referenced other than by a direct call (alias, detached reference or pass-through); " +
+          "the walker cannot see routes registered that way.",
       });
     }
     ts.forEachChild(node, visit);
@@ -331,264 +341,179 @@ function findUnrecognizedApiRouterUsages(
   return issues;
 }
 
-// True for the two positions of the `apiRouter` identifier that are not an
-// escape hatch: its own declaration, and the object of a property access that
-// is itself the callee of a call (`apiRouter.get(...)`, `apiRouter.use(...)`;
-// whether the member is a supported method is judged by the caller).
-function isRecognizedApiRouterReference(identifier: ts.Identifier): boolean {
-  const parent = identifier.parent;
-  if (ts.isVariableDeclaration(parent) && parent.name === identifier) return true;
-  return (
-    ts.isPropertyAccessExpression(parent) &&
-    parent.expression === identifier &&
-    ts.isCallExpression(parent.parent) &&
-    parent.parent.expression === parent
-  );
-}
-
-// First CallExpression in `root`'s subtree whose callee's exact source text
-// equals `calleeText`. Comments are trivia, not AST nodes, so a comment
-// mentioning the name cannot match.
-function findCallByCallee(
-  root: ts.Node,
-  sourceFile: ts.SourceFile,
-  calleeText: string,
-): ts.CallExpression | null {
-  let match: ts.CallExpression | null = null;
-
-  function visit(node: ts.Node): void {
-    if (match) return;
-    if (ts.isCallExpression(node) && node.expression.getText(sourceFile) === calleeText) {
-      match = node;
-      return;
+// `const writeRoute = createWriteRoute({ router: apiRouter, requireAuth,
+// requireTeamWriteRole })` must exist exactly once, at the top level, with
+// exactly those three properties: the wrapper is bound to the one router, the
+// real auth function and the real write gate (swapping the gate for the
+// membership-only requireTeamRole would type-check).
+function findWriteRouteBindingViolations(sourceFile: ts.SourceFile): string[] {
+  const bindings: ts.VariableDeclaration[] = [];
+  for (const statement of sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.name.text === "writeRoute")
+        bindings.push(declaration);
     }
-    ts.forEachChild(node, visit);
   }
-
-  visit(root);
-  return match;
-}
-
-function containsIdentifier(root: ts.Node, name: string): boolean {
-  let found = false;
-
-  function visit(node: ts.Node): void {
-    if (found) return;
-    if (ts.isIdentifier(node) && node.text === name) {
-      found = true;
-      return;
-    }
-    ts.forEachChild(node, visit);
+  if (bindings.length !== 1)
+    return [`expected exactly one top-level writeRoute binding, found ${bindings.length}`];
+  const init = bindings[0].initializer;
+  if (
+    !init ||
+    !ts.isCallExpression(init) ||
+    !ts.isIdentifier(init.expression) ||
+    init.expression.text !== "createWriteRoute" ||
+    init.arguments.length !== 1 ||
+    !ts.isObjectLiteralExpression(init.arguments[0])
+  ) {
+    return ["writeRoute must be bound with createWriteRoute({ router, requireAuth, requireTeamWriteRole })"];
   }
-
-  visit(root);
-  return found;
-}
-
-function routeCallsGate(route: RouteDecl, sourceFile: ts.SourceFile, gate: string): boolean {
-  return route.argNodes.some((node) => findCallByCallee(node, sourceFile, gate) !== null);
-}
-
-// --- Gate placement -------------------------------------------------------
-//
-// Calling a write gate somewhere in the handler is not enough: a call whose
-// null result is ignored, or one that runs after a mutation, still lets a
-// VIEWER through. `checkGatePlacement` therefore pins the shape of the handler
-// body (the statements of the route's handler function, in order):
-//
-//   1. PRE-GATE statements (everything before the gate statement) may only be
-//      authentication and validation: `await requireAuth(...)` with its null
-//      early return, `<schema>.safeParse(...)` with its 400 early return, and
-//      plain reads such as `String(req.params.id)`. They may not contain any
-//      other await or call, assign, or delete anything.
-//   2. The GATE statement is a direct child of the handler body (not nested
-//      in a condition, loop, try or callback) and has exactly one of two
-//      shapes:
-//        a. `if ((await gate(...)) === null) return;`
-//        b. `const x = await gate(...);` IMMEDIATELY followed by
-//           `if (x === null) return;`
-//      where `return` is a bare return, directly or as the only statement of
-//      the `if` block, so a null result (the gate has already sent the 403 or
-//      404) ends the handler before anything else runs.
-//
-// Everything after the gate statement is unconstrained: by then the caller
-// is known to be a member whose role may write.
-const PRE_GATE_CALLEES = new Set(["requireAuth", "String"]);
-
-function isPermittedPreGateCallee(calleeText: string): boolean {
-  return (
-    PRE_GATE_CALLEES.has(calleeText) ||
-    calleeText.endsWith(".safeParse") ||
-    calleeText.endsWith(".error.flatten") ||
-    /^res\.status(\(\d+\)\.(json|end))?$/.test(calleeText)
-  );
-}
-
-// Reason the statement does not qualify as pre-gate (authentication or
-// validation only), or null when it does.
-function preGateViolation(statement: ts.Statement, sourceFile: ts.SourceFile): string | null {
-  let violation: string | null = null;
-
-  function visit(node: ts.Node): void {
-    if (violation) return;
-    if (ts.isAwaitExpression(node)) {
-      const operand = ts.isParenthesizedExpression(node.expression)
-        ? node.expression.expression
-        : node.expression;
-      if (!(ts.isCallExpression(operand) && operand.expression.getText(sourceFile) === "requireAuth")) {
-        violation = `awaits ${node.expression.getText(sourceFile).split("\n")[0]} before the write gate`;
-        return;
-      }
-    } else if (ts.isCallExpression(node)) {
-      const callee = node.expression.getText(sourceFile);
-      if (!isPermittedPreGateCallee(callee)) {
-        violation = `calls ${callee}(...) before the write gate`;
-        return;
-      }
+  const found = new Map<string, string>();
+  for (const property of init.arguments[0].properties) {
+    if (ts.isShorthandPropertyAssignment(property)) {
+      found.set(property.name.text, property.name.text);
     } else if (
-      (ts.isBinaryExpression(node) &&
-        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
-      ts.isDeleteExpression(node) ||
-      ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-        (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken))
+      ts.isPropertyAssignment(property) &&
+      ts.isIdentifier(property.name) &&
+      ts.isIdentifier(property.initializer)
     ) {
-      violation = `mutates state (${node.getText(sourceFile).split("\n")[0]}) before the write gate`;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(statement);
-  return violation;
-}
-
-function unwrapParens(expression: ts.Expression): ts.Expression {
-  let current = expression;
-  while (ts.isParenthesizedExpression(current)) current = current.expression;
-  return current;
-}
-
-// `<operand> === null` in either operand order; returns the operand or null.
-function nullComparisonOperand(expression: ts.Expression): ts.Expression | null {
-  const e = unwrapParens(expression);
-  if (!ts.isBinaryExpression(e) || e.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken)
-    return null;
-  if (e.right.kind === ts.SyntaxKind.NullKeyword) return e.left;
-  if (e.left.kind === ts.SyntaxKind.NullKeyword) return e.right;
-  return null;
-}
-
-// `if (<null check>) return;` or `if (<null check>) { return; }` without else.
-function isNullCheckThenBareReturn(statement: ts.Statement): statement is ts.IfStatement {
-  if (!ts.isIfStatement(statement) || statement.elseStatement) return false;
-  const then = statement.thenStatement;
-  if (ts.isReturnStatement(then)) return !then.expression;
-  return (
-    ts.isBlock(then) &&
-    then.statements.length === 1 &&
-    ts.isReturnStatement(then.statements[0]) &&
-    !then.statements[0].expression
-  );
-}
-
-// `await gate(...)` (parentheses allowed) with exactly the given callee.
-function isAwaitedGateCall(expression: ts.Expression, sourceFile: ts.SourceFile, gate: string): boolean {
-  const e = unwrapParens(expression);
-  return (
-    ts.isAwaitExpression(e) &&
-    ts.isCallExpression(unwrapParens(e.expression)) &&
-    (unwrapParens(e.expression) as ts.CallExpression).expression.getText(sourceFile) === gate
-  );
-}
-
-// Does `statement` (and, for shape b, its successor) form the gate statement?
-// Returns how many statements it consumes (1 or 2), or 0 when it is not one.
-function gateStatementLength(
-  statements: readonly ts.Statement[],
-  index: number,
-  sourceFile: ts.SourceFile,
-  gate: string,
-): number {
-  const statement = statements[index];
-  // Shape a: if ((await gate(...)) === null) return;
-  if (isNullCheckThenBareReturn(statement)) {
-    const operand = nullComparisonOperand(statement.expression);
-    if (operand && isAwaitedGateCall(operand, sourceFile, gate)) return 1;
-  }
-  // Shape b: const x = await gate(...); if (x === null) return;
-  if (ts.isVariableStatement(statement) && statement.declarationList.declarations.length === 1) {
-    const [declaration] = statement.declarationList.declarations;
-    const next = statements[index + 1];
-    if (
-      ts.isIdentifier(declaration.name) &&
-      declaration.initializer &&
-      isAwaitedGateCall(declaration.initializer, sourceFile, gate) &&
-      next &&
-      isNullCheckThenBareReturn(next)
-    ) {
-      const operand = nullComparisonOperand(next.expression);
-      if (operand && ts.isIdentifier(operand) && operand.text === declaration.name.text) return 2;
+      found.set(property.name.text, property.initializer.text);
+    } else {
+      return [`createWriteRoute got an unrecognized property: ${firstLine(property, sourceFile)}`];
     }
   }
-  return 0;
+  const expected: Record<string, string> = {
+    router: "apiRouter",
+    requireAuth: "requireAuth",
+    requireTeamWriteRole: "requireTeamWriteRole",
+  };
+  const violations: string[] = [];
+  for (const [name, value] of Object.entries(expected)) {
+    if (found.get(name) !== value)
+      violations.push(`createWriteRoute property ${name} must be ${value}, got ${found.get(name)}`);
+  }
+  for (const name of found.keys()) {
+    if (!(name in expected)) violations.push(`createWriteRoute has an unexpected property ${name}`);
+  }
+  return violations;
 }
 
-// The route's handler: the first function-like node inside the last argument
-// (the `async (req, res) => {...}` passed to asyncHandler).
-function findHandlerBody(route: RouteDecl): ts.Block | null {
-  const last = route.argNodes[route.argNodes.length - 1];
-  if (!last) return null;
-  let body: ts.Block | null = null;
-  let seen = false;
-  function visit(node: ts.Node): void {
-    if (seen) return;
-    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
-      seen = true;
-      if (ts.isBlock(node.body)) body = node.body;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(last);
-  return body;
+// --- Registrations outside router.ts (S4) ---------------------------------
+//
+// router.ts is the one place routes are registered, on the one router
+// instance. Another module could still add a mutating route that bypasses the
+// wrapper: on a second Router(), on apiRouter imported from router.ts, on an
+// express app or sub-app, or through a mounted router. This scan is static
+// and covers all of src/ (it is not a runtime route table):
+//   - Router() / express.Router() / new Router() is called exactly once, in
+//     router.ts;
+//   - express() is called only in app.ts (the app) and config/index.ts (a
+//     throwaway instance that validates the trust-proxy setting);
+//   - createWriteRoute is called exactly once, in router.ts;
+//   - outside router.ts nothing calls .post/.put/.patch/.delete/.all/.route
+//     with a path, and .use mounts only the two known paths in app.ts (and no
+//     bare identifier, which would be a router mounted by reference);
+//   - apiRouter is referenced outside router.ts only by app.ts, and there only
+//     as the import and as the router of app.use("/api/v1", apiRouter).
+const ROUTER_FILE = "api/rest/router.ts";
+const APP_FILE = "app.ts";
+const EXPRESS_CALL_FILES = new Set([APP_FILE, "config/index.ts"]);
+const APP_USE_PATHS = new Set(["/docs", "/api/v1"]);
+const MUTATING_REGISTRATION_MEMBERS = new Set(["post", "put", "patch", "delete", "all", "route"]);
+
+function isPathLike(node: ts.Node | undefined): boolean {
+  return node !== undefined && (ts.isStringLiteralLike(node) || ts.isTemplateExpression(node));
 }
 
-// Returns null when the route's handler applies `gate` in the required place,
-// otherwise a human-readable reason.
-function checkGatePlacement(route: RouteDecl, sourceFile: ts.SourceFile, gate: string): string | null {
-  if (!routeCallsGate(route, sourceFile, gate)) return `never calls ${gate}(...)`;
-  const body = findHandlerBody(route);
-  if (!body) return "has no handler function with a block body to inspect";
-  const statements = body.statements;
-  for (let i = 0; i < statements.length; i++) {
-    if (gateStatementLength(statements, i, sourceFile, gate) > 0) return null;
-    const violation = preGateViolation(statements[i], sourceFile);
-    if (violation) {
-      return (
-        `${violation}; the first statement that is not authentication or validation must be the ${gate} ` +
-        "gate with a null early return"
-      );
+function findRegistrationEscapes(files: Record<string, string>): string[] {
+  const violations: string[] = [];
+  let routerCalls = 0;
+  let writeRouteFactoryCalls = 0;
+
+  for (const [name, source] of Object.entries(files)) {
+    const sourceFile = parseSource(name, source);
+    const isRouterFile = name === ROUTER_FILE;
+
+    function visit(node: ts.Node): void {
+      if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+        const callee = node.expression;
+        const args = node.arguments ?? [];
+        const calleeName = ts.isIdentifier(callee)
+          ? callee.text
+          : ts.isPropertyAccessExpression(callee)
+            ? callee.name.text
+            : undefined;
+        if (calleeName === "Router") {
+          routerCalls += 1;
+          if (!isRouterFile) violations.push(`${name}: creates a Router (${firstLine(node, sourceFile)})`);
+        }
+        if (ts.isIdentifier(callee) && callee.text === "express" && !EXPRESS_CALL_FILES.has(name)) {
+          violations.push(`${name}: creates an express app (${firstLine(node, sourceFile)})`);
+        }
+        if (ts.isIdentifier(callee) && callee.text === "createWriteRoute") {
+          writeRouteFactoryCalls += 1;
+          if (!isRouterFile)
+            violations.push(`${name}: calls createWriteRoute (${firstLine(node, sourceFile)})`);
+        }
+        if (ts.isPropertyAccessExpression(callee) && !isRouterFile) {
+          const member = callee.name.text;
+          if (MUTATING_REGISTRATION_MEMBERS.has(member) && isPathLike(args[0])) {
+            violations.push(`${name}: registers a route outside router.ts (${firstLine(node, sourceFile)})`);
+          }
+          if (member === "use") {
+            const [first] = args;
+            if (isPathLike(first)) {
+              const mountPath = ts.isStringLiteralLike(first) ? first.text : undefined;
+              if (!(name === APP_FILE && mountPath !== undefined && APP_USE_PATHS.has(mountPath))) {
+                violations.push(
+                  `${name}: mounts something at an unexpected path (${firstLine(node, sourceFile)})`,
+                );
+              }
+            } else if (first !== undefined && ts.isIdentifier(first)) {
+              violations.push(`${name}: mounts ${first.text} by reference (${firstLine(node, sourceFile)})`);
+            }
+          }
+        }
+      }
+      if (ts.isIdentifier(node) && node.text === "apiRouter" && !isRouterFile) {
+        const parent = node.parent;
+        const isImport = ts.isImportSpecifier(parent);
+        const isAppMount =
+          ts.isCallExpression(parent) &&
+          ts.isPropertyAccessExpression(parent.expression) &&
+          parent.expression.name.text === "use" &&
+          parent.arguments.length === 2 &&
+          ts.isStringLiteral(parent.arguments[0]) &&
+          parent.arguments[0].text === "/api/v1" &&
+          parent.arguments[1] === node;
+        if (!(name === APP_FILE && (isImport || isAppMount))) {
+          violations.push(`${name}: references apiRouter (${firstLine(parent ?? node, sourceFile)})`);
+        }
+      }
+      ts.forEachChild(node, visit);
     }
+
+    visit(sourceFile);
   }
-  return (
-    `calls ${gate}(...), but not as a top-level \`if ((await ${gate}(...)) === null) return;\` or ` +
-    `\`const x = await ${gate}(...); if (x === null) return;\` before any other work (its null result must end ` +
-    "the handler)"
-  );
+
+  if (routerCalls !== 1) violations.push(`expected exactly one Router() call in src, found ${routerCalls}`);
+  if (writeRouteFactoryCalls !== 1) {
+    violations.push(`expected exactly one createWriteRoute call in src, found ${writeRouteFactoryCalls}`);
+  }
+  return violations;
 }
 
-function routeSatisfiesVerify(route: RouteDecl, sourceFile: ts.SourceFile, verify: Verify): boolean {
-  if (verify.type === "identifier") {
-    return route.argNodes.some((node) => containsIdentifier(node, verify.name));
-  }
-  for (const node of route.argNodes) {
-    const call = findCallByCallee(node, sourceFile, verify.callee);
-    if (call) {
-      return verify.alsoReferences ? containsIdentifier(call, verify.alsoReferences) : true;
+function readSrcFiles(dir: string = SRC_ROOT): Record<string, string> {
+  const files: Record<string, string> = {};
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      Object.assign(files, readSrcFiles(full));
+    } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+      files[path.relative(SRC_ROOT, full).split(path.sep).join("/")] = readFileSync(full, "utf8");
     }
   }
-  return false;
+  return files;
 }
 
 function findFunctionDeclarations(sourceFile: ts.SourceFile, name: string): ts.FunctionDeclaration[] {
@@ -601,36 +526,15 @@ function findFunctionDeclarations(sourceFile: ts.SourceFile, name: string): ts.F
   return found;
 }
 
-// `const <name> = requireResourceTeam(<loader>, <message>, <mode>)`: returns
-// the mode argument's string-literal value, or null when the declaration is
-// missing or not shaped like that.
-function resolverMode(sourceFile: ts.SourceFile, name: string): string | null {
-  let mode: string | null = null;
-  function visit(node: ts.Node): void {
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === name &&
-      node.initializer &&
-      ts.isCallExpression(node.initializer) &&
-      node.initializer.expression.getText(sourceFile) === "requireResourceTeam"
-    ) {
-      const modeArg = node.initializer.arguments[2];
-      if (modeArg && ts.isStringLiteral(modeArg)) mode = modeArg.text;
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(sourceFile);
-  return mode;
-}
-
-const routerSource = readFileSync(ROUTER_PATH, "utf8");
-const routerSourceFile = ts.createSourceFile(ROUTER_PATH, routerSource, ts.ScriptTarget.Latest, true);
+const routerSourceFile = loadRouterSourceFile();
 const allRoutes = extractRoutes(routerSourceFile);
 const stateChangingRoutes = allRoutes.filter((r) => STATE_CHANGING_METHODS.has(r.method));
+const srcFiles = readSrcFiles();
 
-describe("router.ts: every state-changing route is classified for the team write rule", () => {
-  it("found state-changing routes both with and without a :param (sanity check the AST walk isn't empty)", () => {
+describe("router.ts: every state-changing route is writeRoute-registered or a justified allowlist entry", () => {
+  it("found writeRoute and allowlisted routes, with and without a :param (sanity check the AST walk isn't empty)", () => {
+    expect(stateChangingRoutes.some((r) => r.via === "writeRoute")).toBe(true);
+    expect(stateChangingRoutes.some((r) => r.via === "apiRouter")).toBe(true);
     expect(stateChangingRoutes.some((r) => r.routePath.includes(":"))).toBe(true);
     expect(stateChangingRoutes.some((r) => !r.routePath.includes(":"))).toBe(true);
   });
@@ -643,37 +547,40 @@ describe("router.ts: every state-changing route is classified for the team write
     ).toEqual([]);
   });
 
-  it("every state-changing route is classified in ROUTE_WRITE_GUARDS", () => {
-    const actual = new Set(stateChangingRoutes.map((r) => `${r.method.toUpperCase()} ${r.routePath}`));
-    const registered = new Set(Object.keys(ROUTE_WRITE_GUARDS));
+  it("every writeRoute call is exactly (method, path, team resolver, handler)", () => {
+    expect(findWriteRouteShapeViolations(routerSourceFile)).toEqual([]);
+  });
 
-    const unclassified = [...actual].filter((key) => !registered.has(key));
-    const stale = [...registered].filter((key) => !actual.has(key));
+  it("writeRoute is bound to apiRouter with the real requireAuth and requireTeamWriteRole", () => {
+    expect(findWriteRouteBindingViolations(routerSourceFile)).toEqual([]);
+  });
 
+  it("every state-changing route is classified, and registered the way its classification says", () => {
+    const { unclassified, stale, wrongRegistration } = classify(allRoutes, ROUTE_WRITE_GUARDS);
     expect(
       unclassified,
-      "New state-changing route(s) in router.ts with no write-role classification. Add an entry to " +
-        'ROUTE_WRITE_GUARDS in this test: { kind: "write", gate } for a team-scoped mutation (VIEWER must get ' +
-        '403), or a justified { kind: "allowlist" } for a reading POST, per-user, invite, admin or ingest route.',
+      "New state-changing route(s) in router.ts that are neither registered through writeRoute nor allowlisted. " +
+        'Register a team-scoped mutation with writeRoute(...) and add { kind: "write" } to ROUTE_WRITE_GUARDS, ' +
+        'or add a justified { kind: "allowlist" } entry for a reading POST, per-user, invite, admin or ingest route.',
     ).toEqual([]);
     expect(
       stale,
       "ROUTE_WRITE_GUARDS has entries for routes no longer present in router.ts. Remove the stale entries.",
     ).toEqual([]);
+    expect(wrongRegistration).toEqual([]);
   });
 
   for (const route of stateChangingRoutes) {
-    const key = `${route.method.toUpperCase()} ${route.routePath}`;
+    const key = routeKey(route);
     const guard = ROUTE_WRITE_GUARDS[key];
 
-    it(`${key} enforces its declared guard`, () => {
+    it(`${key} is registered the way its guard declares`, () => {
       if (!guard) return; // reported by the classification test above
       if (guard.kind === "write") {
         expect(
-          checkGatePlacement(route, routerSourceFile, guard.gate),
-          `Expected ${key} to apply ${guard.gate} before any mutation, with its null result ending the handler ` +
-            "(a mention in a comment does not count; see the gate placement rules above).",
-        ).toBeNull();
+          route.via,
+          `${key} must be registered through writeRoute(...), not apiRouter.${route.method}`,
+        ).toBe("writeRoute");
       } else if (guard.verify) {
         expect(
           routeSatisfiesVerify(route, routerSourceFile, guard.verify),
@@ -693,17 +600,9 @@ describe("router.ts: every state-changing route is classified for the team write
       }
     }
   });
-
-  it("every write gate named for a route is one of the known write gates", () => {
-    for (const [key, guard] of Object.entries(ROUTE_WRITE_GUARDS)) {
-      if (guard.kind === "write") {
-        expect(WRITE_GATES as readonly string[], `${key} names an unknown write gate`).toContain(guard.gate);
-      }
-    }
-  });
 });
 
-describe("router.ts: the write rule has one home and the gates really apply it", () => {
+describe("router.ts: the write rule has one home and the wrapper applies it before the handler", () => {
   it("canWrite is declared exactly once", () => {
     expect(findFunctionDeclarations(routerSourceFile, "canWrite")).toHaveLength(1);
   });
@@ -715,341 +614,331 @@ describe("router.ts: the write rule has one home and the gates really apply it",
     expect(findCallByCallee(decls[0], routerSourceFile, "canWrite")).not.toBeNull();
   });
 
-  it('every write resolver is a requireResourceTeam(..., "write") instantiation', () => {
-    for (const name of WRITE_RESOLVERS) {
-      expect(resolverMode(routerSourceFile, name), `${name} must be built in "write" mode`).toBe("write");
-    }
-  });
-
-  it('the incident read resolver stays in "read" mode (the timeline remains readable for a VIEWER)', () => {
-    expect(resolverMode(routerSourceFile, "requireIncidentTeam")).toBe("read");
-  });
-
-  it('requireResourceTeam fails closed: only an explicit "read" mode gets requireTeamRole', () => {
+  it("requireResourceTeam (the read resolver) is membership-only and never claims to be a write gate", () => {
     const decls = findFunctionDeclarations(routerSourceFile, "requireResourceTeam");
     expect(decls).toHaveLength(1);
-    let conditional: ts.ConditionalExpression | null = null;
+    expect(findCallByCallee(decls[0], routerSourceFile, "requireTeamRole")).not.toBeNull();
+    expect(findCallByCallee(decls[0], routerSourceFile, "requireTeamWriteRole")).toBeNull();
+    // The timeline stays readable for a VIEWER: it is the one user of the read resolver.
+    expect(routerSourceFile.getText()).toContain("requireIncidentTeam(String(req.params.id), userId, res)");
+  });
+
+  it("write-route.ts calls the handler exactly once, and only after the write gate", () => {
+    const wrapperPath = path.join(SRC_ROOT, "api/rest/write-route.ts");
+    const wrapperFile = parseSource(wrapperPath, readFileSync(wrapperPath, "utf8"));
+    const gateCalls: ts.CallExpression[] = [];
+    const handlerCalls: ts.CallExpression[] = [];
     (function visit(node: ts.Node): void {
-      if (conditional) return;
-      if (ts.isConditionalExpression(node) && node.condition.getText(routerSourceFile).includes("mode")) {
-        conditional = node;
-        return;
+      if (ts.isCallExpression(node)) {
+        const callee = node.expression.getText(wrapperFile);
+        if (callee === "deps.requireTeamWriteRole") gateCalls.push(node);
+        if (callee === "handler") handlerCalls.push(node);
       }
       ts.forEachChild(node, visit);
-    })(decls[0]);
-    expect(conditional, "requireResourceTeam must branch on its mode").not.toBeNull();
-    const branch = conditional as unknown as ts.ConditionalExpression;
-    // The membership-only gate sits behind the explicit "read" comparison; a
-    // missing, misspelled or future mode falls through to the write gate.
-    expect(branch.condition.getText(routerSourceFile)).toBe('mode === "read"');
-    expect(findCallByCallee(branch.whenTrue, routerSourceFile, "requireTeamRole")).not.toBeNull();
-    expect(findCallByCallee(branch.whenTrue, routerSourceFile, "requireTeamWriteRole")).toBeNull();
-    expect(findCallByCallee(branch.whenFalse, routerSourceFile, "requireTeamWriteRole")).not.toBeNull();
-    expect(findCallByCallee(branch.whenFalse, routerSourceFile, "requireTeamRole")).toBeNull();
+    })(wrapperFile);
+    expect(gateCalls).toHaveLength(1);
+    expect(handlerCalls).toHaveLength(1);
+    expect(gateCalls[0].getStart()).toBeLessThan(handlerCalls[0].getStart());
   });
 
-  // Gate placement controls: a synthetic handler is run through the same
-  // classifier the real routes go through. The positive controls pin what is
-  // accepted; every negative control is a way a VIEWER could still reach a
-  // mutation while a gate call is present in the handler.
-  describe("the write gate must end the handler on null and precede any other work", () => {
-    const PROLOGUE = `
-            const userId = await requireAuth(req, res);
-            if (userId === null) return;
-            const parsed = widgetSchema.safeParse(req.body);
-            if (!parsed.success) {
-              res.status(400).json({ error: parsed.error.flatten() });
-              return;
-            }`;
+  it("no file in src registers a route outside router.ts or on another router instance (S4)", () => {
+    expect(findRegistrationEscapes(srcFiles)).toEqual([]);
+  });
+});
 
-    function placement(body: string, gate: string = "requireTeamWriteRole"): string | null {
-      const synthetic = `
-        apiRouter.post(
-          "/widgets",
-          asyncHandler(async (req, res) => {${body}
-          }),
-        );
-      `;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      const [route] = extractRoutes(file);
-      expect(route).toBeDefined();
-      return checkGatePlacement(route, file, gate);
-    }
+// --- Controls ---------------------------------------------------------------
+//
+// Synthetic registrations run through the same functions the real router.ts
+// goes through. The positive controls pin what is accepted; each negative
+// control is a way a VIEWER could still reach a mutation.
+const NO_GUARDS: Record<string, Guard> = {};
 
-    it("accepts `if ((await gate(...)) === null) return;` after auth and validation (positive control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;
-            await prisma.widget.create({ data: {} });`),
-      ).toBeNull();
-    });
+function routesOf(source: string): RouteDecl[] {
+  return extractRoutes(parseSource("synthetic.ts", source));
+}
 
-    it("accepts `const x = await gate(...)` immediately followed by `if (x === null) return;` (positive control)", () => {
-      expect(
-        placement(
-          `${PROLOGUE}
-            const teamId = await requireIncidentWriteTeam(String(req.params.id), userId, res);
-            if (teamId === null) return;
-            await prisma.widget.delete({ where: { id: String(req.params.id), teamId } });`,
-          "requireIncidentWriteTeam",
-        ),
-      ).toBeNull();
-    });
-
-    it("accepts the null check with a braced bare return and a flipped comparison (positive control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            if (null === (await requireTeamWriteRole(userId, parsed.data.teamId, res))) {
-              return;
-            }
-            await prisma.widget.create({ data: {} });`),
-      ).toBeNull();
-    });
-
-    it("rejects a gate call whose result is not checked (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            await requireTeamWriteRole(userId, parsed.data.teamId, res);
-            await prisma.widget.create({ data: {} });`),
-      ).not.toBeNull();
-    });
-
-    it("rejects `const x = await gate(...)` with no following null check (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            const role = await requireTeamWriteRole(userId, parsed.data.teamId, res);
-            await prisma.widget.create({ data: { role } });`),
-      ).not.toBeNull();
-    });
-
-    it("rejects a null check that is not immediately after the gate call (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            const role = await requireTeamWriteRole(userId, parsed.data.teamId, res);
-            await prisma.widget.create({ data: { role } });
-            if (role === null) return;`),
-      ).not.toBeNull();
-    });
-
-    it("rejects a null check that does not return (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) {
-              console.warn("forbidden");
-            }
-            await prisma.widget.create({ data: {} });`),
-      ).not.toBeNull();
-    });
-
-    it("rejects a return that carries a value or sits behind another statement (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) {
-              await prisma.widget.create({ data: {} });
-              return;
-            }`),
-      ).not.toBeNull();
-    });
-
-    it("rejects an inverted null check that returns for allowed callers (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) !== null) return;
-            await prisma.widget.create({ data: {} });`),
-      ).not.toBeNull();
-    });
-
-    it("rejects a gate that runs after a mutation (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            await prisma.widget.create({ data: {} });
-            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;`),
-      ).not.toBeNull();
-    });
-
-    it("rejects a gate that runs after another awaited lookup (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            const widget = await widgetService.get(parsed.data.id);
-            if ((await requireTeamWriteRole(userId, widget.teamId, res)) === null) return;
-            await prisma.widget.update({ where: { id: widget.id }, data: {} });`),
-      ).not.toBeNull();
-    });
-
-    it("rejects a gate that runs after an assignment (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            state.count += 1;
-            if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;`),
-      ).not.toBeNull();
-    });
-
-    it("rejects a gate nested in a condition (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            if (req.body.strict) {
-              if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;
-            }
-            await prisma.widget.create({ data: {} });`),
-      ).not.toBeNull();
-    });
-
-    it("rejects a gate nested in a callback (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            const check = async () => {
-              if ((await requireTeamWriteRole(userId, parsed.data.teamId, res)) === null) return;
-            };
-            await prisma.widget.create({ data: {} });`),
-      ).not.toBeNull();
-    });
-
-    it("rejects a handler that never calls the gate (negative control)", () => {
-      expect(
-        placement(`${PROLOGUE}
-            await prisma.widget.create({ data: {} });`),
-      ).not.toBeNull();
-    });
+describe("a new mutating route without the wrapper and without an allowlist entry is caught, whatever its shape", () => {
+  it("S0: a side effect in the arguments of an inline gate call", () => {
+    const { unclassified } = classify(
+      routesOf(`
+        apiRouter.post("/widgets", asyncHandler(async (req, res) => {
+          const userId = await requireAuth(req, res);
+          if (userId === null) return;
+          if ((await requireTeamWriteRole(userId, (await prisma.widget.create({ data: {} }), req.body.teamId), res)) === null) return;
+          await prisma.widget.create({ data: {} });
+        }));`),
+      NO_GUARDS,
+    );
+    expect(unclassified).toEqual(["POST /widgets"]);
   });
 
-  // Regression tests: a gate name that appears only in a comment must not
-  // count as a call (a substring check over the handler text would wrongly
-  // accept it), while a real call must.
-  describe("comment-only mentions do not satisfy a write gate", () => {
-    it("a gate mentioned only in a comment is NOT detected (negative control)", () => {
-      const synthetic = `
-        apiRouter.post(
-          "/widgets",
-          asyncHandler(async (req, res) => {
-            // requireTeamWriteRole( used to run here; a substring check over the
-            // handler text would still "see" this comment.
-            const userId = await requireAuth(req, res);
-            if (userId === null) return;
-            await requireTeamRole(userId, req.body.teamId, res);
-            await prisma.widget.create({ data: {} });
-          }),
-        );
-      `;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      const [route] = extractRoutes(file);
-      expect(route).toBeDefined();
-      expect(routeCallsGate(route, file, "requireTeamWriteRole")).toBe(false);
-    });
-
-    it("a gate that IS called is detected (positive control)", () => {
-      const synthetic = `
-        apiRouter.post(
-          "/widgets",
-          asyncHandler(async (req, res) => {
-            const userId = await requireAuth(req, res);
-            if (userId === null) return;
-            if ((await requireTeamWriteRole(userId, req.body.teamId, res)) === null) return;
-            await prisma.widget.create({ data: {} });
-          }),
-        );
-      `;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      const [route] = extractRoutes(file);
-      expect(routeCallsGate(route, file, "requireTeamWriteRole")).toBe(true);
-    });
-
-    it("a write resolver mentioned only in a comment is NOT detected (negative control)", () => {
-      const synthetic = `
-        apiRouter.delete(
-          "/widgets/:id",
-          asyncHandler(async (req, res) => {
-            // requireIncidentWriteTeam( was removed from this handler.
-            const teamId = await requireIncidentTeam(String(req.params.id), userId, res);
-            await prisma.widget.delete({ where: { id: String(req.params.id), teamId } });
-          }),
-        );
-      `;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      const [route] = extractRoutes(file);
-      expect(routeCallsGate(route, file, "requireIncidentWriteTeam")).toBe(false);
-    });
+  it("S1: a mutating middleware argument before the handler", () => {
+    const { unclassified } = classify(
+      routesOf(`
+        apiRouter.delete("/widgets/:id", mutatingMiddleware, asyncHandler(async (req, res) => {
+          const userId = await requireAuth(req, res);
+          if (userId === null) return;
+          if ((await requireTeamWriteRole(userId, req.body.teamId, res)) === null) return;
+        }));`),
+      NO_GUARDS,
+    );
+    expect(unclassified).toEqual(["DELETE /widgets/:id"]);
   });
 
-  // A new mutating route that nobody classified must be visible to the
-  // classification diff above, whether or not it has a :param.
-  describe("an unclassified mutating route is reported", () => {
-    it("a new POST without a :param is extracted as state-changing and absent from the registry", () => {
-      const synthetic = `apiRouter.post("/widgets", asyncHandler(async (req, res) => {}));`;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      const routes = extractRoutes(file).filter((r) => STATE_CHANGING_METHODS.has(r.method));
-      const keys = routes.map((r) => `${r.method.toUpperCase()} ${r.routePath}`);
-      expect(keys).toEqual(["POST /widgets"]);
-      expect(Object.keys(ROUTE_WRITE_GUARDS)).not.toContain("POST /widgets");
-    });
-
-    it("a new DELETE with a :param is extracted as state-changing and absent from the registry", () => {
-      const synthetic = `apiRouter.delete("/widgets/:id", asyncHandler(async (req, res) => {}));`;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      const keys = extractRoutes(file)
-        .filter((r) => STATE_CHANGING_METHODS.has(r.method))
-        .map((r) => `${r.method.toUpperCase()} ${r.routePath}`);
-      expect(keys).toEqual(["DELETE /widgets/:id"]);
-      expect(Object.keys(ROUTE_WRITE_GUARDS)).not.toContain("DELETE /widgets/:id");
-    });
+  it("S2: a default-parameter initializer on the handler", () => {
+    const { unclassified } = classify(
+      routesOf(`
+        apiRouter.put("/widgets/:id", asyncHandler(async (req, res, hook = prisma.widget.deleteMany()) => {
+          const userId = await requireAuth(req, res);
+          if (userId === null) return;
+          if ((await requireTeamWriteRole(userId, req.body.teamId, res)) === null) return;
+        }));`),
+      NO_GUARDS,
+    );
+    expect(unclassified).toEqual(["PUT /widgets/:id"]);
   });
 
-  describe("unrecognized apiRouter registration shapes are flagged, not silently skipped", () => {
-    it("flags .route() chaining", () => {
-      const synthetic = `apiRouter.route("/widgets/:id").delete(asyncHandler(async (req, res) => {}));`;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
-      expect(extractRoutes(file)).toEqual([]);
-    });
+  it("S3: a tagged template or new expression before the gate", () => {
+    const { unclassified } = classify(
+      routesOf(`
+        apiRouter.patch("/widgets/:id", asyncHandler(async (req, res) => {
+          const userId = await requireAuth(req, res);
+          if (userId === null) return;
+          audit\`touch \${req.params.id}\`;
+          new Sender().send();
+          if ((await requireTeamWriteRole(userId, req.body.teamId, res)) === null) return;
+        }));`),
+      NO_GUARDS,
+    );
+    expect(unclassified).toEqual(["PATCH /widgets/:id"]);
+  });
 
-    it("flags a non-literal (template-literal) path", () => {
-      const synthetic = "apiRouter.post(`/widgets/${id}`, asyncHandler(async (req, res) => {}));";
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
-      expect(extractRoutes(file)).toEqual([]);
-    });
+  it("a plain new POST route is unclassified (the baseline CI-red case)", () => {
+    const { unclassified } = classify(
+      routesOf(`apiRouter.post("/widgets", asyncHandler(async () => {}));`),
+      NO_GUARDS,
+    );
+    expect(unclassified).toEqual(["POST /widgets"]);
+  });
 
-    it("flags an aliased router (const alias = apiRouter; alias.post(...))", () => {
-      const synthetic = `const alias = apiRouter;\n        alias.post("/widgets", asyncHandler(async (req, res) => {}));`;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
-      expect(extractRoutes(file)).toEqual([]);
-    });
+  it('a route moved back from writeRoute to apiRouter.post is caught by its "write" classification', () => {
+    const { wrongRegistration } = classify(
+      routesOf(`apiRouter.post("/sources", asyncHandler(async () => {}));`),
+      { "POST /sources": { kind: "write" } },
+    );
+    expect(wrongRegistration).toHaveLength(1);
+  });
 
-    it('flags element-access registration (apiRouter["delete"](...))', () => {
-      const synthetic = `apiRouter["delete"]("/widgets/:id", asyncHandler(async (req, res) => {}));`;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
-      expect(extractRoutes(file)).toEqual([]);
-    });
+  it("an allowlisted route that moves onto writeRoute must be reclassified", () => {
+    const { wrongRegistration } = classify(
+      routesOf(`writeRoute("post", "/widgets", teamFromBody(widgetSchema), async () => {});`),
+      { "POST /widgets": { kind: "allowlist", reason: "a justification that is long enough" } },
+    );
+    expect(wrongRegistration).toHaveLength(1);
+  });
 
-    it("flags a detached method reference (const post = apiRouter.post)", () => {
-      const synthetic = `const post = apiRouter.post;`;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
+  it("a writeRoute registration is classified and extracted like an apiRouter one (positive control)", () => {
+    const routes = routesOf(`writeRoute("post", "/widgets", teamFromBody(widgetSchema), async () => {});`);
+    expect(routes.map((r) => [routeKey(r), r.via])).toEqual([["POST /widgets", "writeRoute"]]);
+    expect(classify(routes, { "POST /widgets": { kind: "write" } })).toEqual({
+      unclassified: [],
+      stale: [],
+      wrongRegistration: [],
     });
+  });
+});
 
-    it("flags destructuring the router (const { post } = apiRouter)", () => {
-      const synthetic = `const { post } = apiRouter;`;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
-    });
+describe("writeRoute call shapes", () => {
+  function violations(source: string): Issue[] {
+    return findWriteRouteShapeViolations(parseSource("synthetic.ts", source));
+  }
 
-    it("flags passing the router on (register(apiRouter))", () => {
-      const synthetic = `register(apiRouter);`;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      expect(findUnrecognizedApiRouterUsages(file).length).toBeGreaterThan(0);
-    });
+  it("accepts the four-argument form with an inline resolver (positive control)", () => {
+    expect(
+      violations(`writeRoute("post", "/w", teamFromBody(schema), async ({ res }) => { res.end(); });`),
+    ).toEqual([]);
+  });
 
-    it("does not flag the router's own declaration (negative control)", () => {
-      const synthetic = `export const apiRouter = Router();\n        apiRouter.get("/widgets", asyncHandler(async (req, res) => {}));`;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      expect(findUnrecognizedApiRouterUsages(file)).toEqual([]);
-    });
+  it("accepts a resolver held in a top-level const and a named handler (positive control)", () => {
+    expect(
+      violations(`
+        const widgetTeam = teamFromResource(loadWidgetTeamId, "Widget not found");
+        writeRoute("delete", "/w/:id", widgetTeam, removeWidget);`),
+    ).toEqual([]);
+  });
 
-    it("does not flag a normal, recognized route registration (negative control)", () => {
-      const synthetic = `apiRouter.post("/widgets", asyncHandler(async (req, res) => {}));`;
-      const file = ts.createSourceFile("synthetic.ts", synthetic, ts.ScriptTarget.Latest, true);
-      expect(findUnrecognizedApiRouterUsages(file)).toEqual([]);
-    });
+  it("S1: rejects a middleware argument before the handler (negative control)", () => {
+    expect(
+      violations(`writeRoute("post", "/w", teamFromBody(schema), mutatingMiddleware, async () => {});`),
+    ).toHaveLength(1);
+  });
+
+  it("S1: rejects a spread argument (negative control)", () => {
+    expect(violations(`writeRoute("post", "/w", ...rest);`).length).toBeGreaterThan(0);
+  });
+
+  it("S0: rejects a resolver that is an arbitrary function (negative control)", () => {
+    expect(
+      violations(
+        `writeRoute("post", "/w", async (req, res) => ({ teamId: await sideEffect(), input: 1 }), async () => {});`,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("rejects a resolver identifier that is not a factory result (negative control)", () => {
+    expect(
+      violations(`
+        const widgetTeam = async (req, res) => null;
+        writeRoute("post", "/w", widgetTeam, async () => {});`),
+    ).toHaveLength(1);
+  });
+
+  it("rejects a get method, a template path and a handler that is a call (negative controls)", () => {
+    expect(violations(`writeRoute("get", "/w", teamFromBody(schema), async () => {});`)).toHaveLength(1);
+    // eslint-disable-next-line no-template-curly-in-string
+    expect(violations('writeRoute("post", `/w/${id}`, teamFromBody(schema), async () => {});')).toHaveLength(
+      1,
+    );
+    expect(violations(`writeRoute("post", "/w", teamFromBody(schema), makeHandler());`)).toHaveLength(1);
+  });
+
+  it("rejects an alias or pass-through of writeRoute (negative control)", () => {
+    expect(violations(`const route = writeRoute;`)).toHaveLength(1);
+    expect(violations(`register(writeRoute);`)).toHaveLength(1);
+  });
+
+  it("does not flag the binding itself (negative control)", () => {
+    expect(
+      violations(
+        `const writeRoute = createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole });`,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("the writeRoute binding", () => {
+  function bindingViolations(source: string): string[] {
+    return findWriteRouteBindingViolations(parseSource("synthetic.ts", source));
+  }
+
+  it("accepts the real binding shape (positive control)", () => {
+    expect(
+      bindingViolations(
+        `const writeRoute = createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole });`,
+      ),
+    ).toEqual([]);
+  });
+
+  it("rejects the membership-only gate in place of the write gate (negative control)", () => {
+    expect(
+      bindingViolations(
+        `const writeRoute = createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole: requireTeamRole });`,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("rejects another router instance (negative control)", () => {
+    expect(
+      bindingViolations(
+        `const writeRoute = createWriteRoute({ router: otherRouter, requireAuth, requireTeamWriteRole });`,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("rejects a missing binding (negative control)", () => {
+    expect(bindingViolations(`const x = 1;`).length).toBeGreaterThan(0);
+  });
+
+  it("rejects a duplicated binding (negative control)", () => {
+    expect(
+      bindingViolations(`
+        const writeRoute = createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole });
+        const writeRoute = createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole });
+      `).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("ignores a same-named binding nested in a block (it is not the top-level wrapper)", () => {
+    expect(
+      bindingViolations(`
+        const writeRoute = createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole });
+        { const writeRoute = 2; }
+      `),
+    ).toEqual([]);
+  });
+});
+
+describe("S4: registrations outside router.ts are detected", () => {
+  const ROUTER_OK = `
+    export const apiRouter = Router();
+    const writeRoute = createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole });
+  `;
+  const APP_OK = `
+    import { apiRouter } from "./api/rest/router.js";
+    const app = express();
+    app.use("/docs", swaggerUi.serve);
+    app.use("/api/v1", apiRouter);
+  `;
+  const BASE: Record<string, string> = { [ROUTER_FILE]: ROUTER_OK, [APP_FILE]: APP_OK };
+
+  it("the unmodified shape is clean (positive control)", () => {
+    expect(findRegistrationEscapes(BASE)).toEqual([]);
+  });
+
+  it("a second Router() instance in another module", () => {
+    expect(
+      findRegistrationEscapes({
+        ...BASE,
+        "api/rest/extra.ts": `const second = Router(); second.post("/widgets", handler);`,
+      }),
+    ).not.toEqual([]);
+    expect(
+      findRegistrationEscapes({ ...BASE, "api/rest/extra.ts": `const second = express.Router();` }),
+    ).not.toEqual([]);
+  });
+
+  it("apiRouter imported and used from another module", () => {
+    expect(
+      findRegistrationEscapes({
+        ...BASE,
+        "api/rest/extra.ts": `import { apiRouter } from "./router.js"; apiRouter.post("/widgets", handler);`,
+      }),
+    ).not.toEqual([]);
+  });
+
+  it("a mutating route registered on the express app", () => {
+    expect(
+      findRegistrationEscapes({ ...BASE, [APP_FILE]: `${APP_OK}\napp.post("/widgets", handler);` }),
+    ).not.toEqual([]);
+  });
+
+  it("a router mounted at another path or by reference", () => {
+    expect(
+      findRegistrationEscapes({ ...BASE, [APP_FILE]: `${APP_OK}\napp.use("/extra", extraRouter);` }),
+    ).not.toEqual([]);
+    expect(findRegistrationEscapes({ ...BASE, [APP_FILE]: `${APP_OK}\napp.use(extraRouter);` })).not.toEqual(
+      [],
+    );
+  });
+
+  it("an extra createWriteRoute binding on another router", () => {
+    expect(
+      findRegistrationEscapes({
+        ...BASE,
+        "api/rest/extra.ts": `const r = createWriteRoute({ router: other, requireAuth, requireTeamWriteRole });`,
+      }),
+    ).not.toEqual([]);
+  });
+
+  it("a second express app outside app.ts and config/index.ts", () => {
+    expect(findRegistrationEscapes({ ...BASE, "api/rest/extra.ts": `const sub = express();` })).not.toEqual(
+      [],
+    );
+  });
+
+  it("the real src tree passes the scan, and the scan sees the real files (sanity check)", () => {
+    expect(Object.keys(srcFiles)).toEqual(
+      expect.arrayContaining([ROUTER_FILE, APP_FILE, "api/rest/write-route.ts"]),
+    );
   });
 });
