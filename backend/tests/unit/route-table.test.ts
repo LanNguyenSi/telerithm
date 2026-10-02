@@ -17,7 +17,7 @@ import { ROUTE_WRITE_GUARDS, type Guard } from "./route-guards.js";
 // inline mutating app.use(...) all register a route without any of those
 // spellings. This test checks the registered result at runtime instead: it
 // builds the real app with createApp(), under every combination of the config
-// values createApp() and the services branch on, walks the Express layer stack
+// keys it builds (nodeEnv, trustProxy, multiTenant; see below), walks the Express layer stack
 // recursively (mounted routers included) and requires that
 //   1. every layer the app and the API router carry is on a known list, so no
 //      router, middleware or route appears that nobody classified; anonymous
@@ -46,8 +46,8 @@ import { ROUTE_WRITE_GUARDS, type Guard } from "./route-guards.js";
 
 // The same module mocks as tests/integration/api.test.ts, only as thin as
 // building the app needs: no request is sent here. The config object is
-// mutable so the audit can rebuild the app under every value createApp() and
-// router.ts branch on (see "under every config branch" below).
+// mutable so the audit can rebuild the app under every combination of the
+// keys the matrix builds (see "Every config branch" below).
 const mockConfig = vi.hoisted(() => ({
   port: 4000,
   host: "127.0.0.1",
@@ -371,7 +371,11 @@ describe("the runtime route table of createApp()", () => {
 // the app built from the test config above, so the audit is repeated for the
 // app built under every combination. router.ts registers no route under a
 // config branch today; its config reads (rate-limit windows, page sizes) are
-// values, not branches, and are covered by the same rebuild.
+// values, not branches, and are covered by the same rebuild. The matrix is
+// written by hand: a registration gated on any other config key or value
+// (registrationMode, the OpenAI settings, a new feature flag, a trustProxy
+// value other than set/unset) is not built here. Add the key to the matrix
+// when createApp() starts branching on it.
 interface ConfigVariant {
   nodeEnv: "development" | "production" | "test";
   multiTenant: boolean;
@@ -410,7 +414,7 @@ async function auditEveryConfig(
 }
 
 describe("the runtime route table under every config branch", () => {
-  it("covers every value createApp() and the services branch on", () => {
+  it("covers nodeEnv, trustProxy and multiTenant", () => {
     expect(new Set(CONFIG_MATRIX.map((v) => v.nodeEnv))).toEqual(
       new Set(["development", "production", "test"]),
     );

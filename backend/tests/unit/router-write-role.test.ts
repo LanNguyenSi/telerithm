@@ -45,13 +45,14 @@ import { ROUTE_WRITE_GUARDS, type Guard } from "./route-guards.js";
 //
 // This file reads source text, so it only sees the spellings it knows. The
 // authoritative S4 answer is route-table.test.ts, which walks the Express
-// stack of the real app and so sees every registration however it is spelled
-// (aliased Router, const path, a second router mounted in app.ts, an inline
-// mutating app.use). What stays here is what that runtime table cannot see:
-// the writeRoute call shapes and their factory arguments, the binding, the
-// handler-after-gate position inside write-route.ts, and the scan of src for
-// code outside createApp() (a route added to the app in server.ts, a second
-// express app in the same process).
+// stack of the real app under the config values its matrix builds and so sees
+// accidental registrations whatever their spelling (aliased Router, const path,
+// a second router mounted in app.ts, an inline mutating app.use). What stays
+// here is what that runtime table cannot see: the writeRoute call shapes and
+// their factory arguments, the binding, the handler-after-gate position inside
+// write-route.ts, and the scan of src for code outside createApp() (server.ts,
+// a second express app), which recognises only the spellings listed further
+// down. Deliberately obfuscated registrations are a code-review item.
 const SRC_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../src");
 
 // Resolver factories a writeRoute call may use (write-route.ts).

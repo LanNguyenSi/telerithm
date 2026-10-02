@@ -100,9 +100,12 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
   Handler noch dessen Default-Parameter, Tagged Templates oder `new`-Ausdrücke.
 - Laufzeit-Routentabelle: `backend/tests/unit/route-table.test.ts` baut die
   echte App mit `createApp()` (gleiche Modul-Mocks wie `api.test.ts`), und zwar
-  für jede Kombination der Config-Werte, auf die `createApp()` und die Services
-  verzweigen (`nodeEnv` development/production/test, `multiTenant` an/aus,
-  `trustProxy` gesetzt/ungesetzt; je ein frischer Modul-Graph per
+  für jede Kombination der Config-Schlüssel ihrer Matrix (`nodeEnv`
+  development/production/test, `multiTenant` an/aus, `trustProxy`
+  gesetzt/ungesetzt; die Matrix ist handgeschrieben, eine Registrierung hinter
+  einem anderen Schlüssel oder Wert, etwa `registrationMode`, den
+  OpenAI-Einstellungen oder einem neuen Feature-Flag, wird erst gebaut, wenn
+  der Schlüssel ergänzt ist; je ein frischer Modul-Graph per
   `vi.resetModules()`), und läuft den Express-Layer-Stack rekursiv ab,
   gemountete Router eingeschlossen. Sie
   verlangt: jede App- und Router-Middleware steht auf einer bekannten Liste
