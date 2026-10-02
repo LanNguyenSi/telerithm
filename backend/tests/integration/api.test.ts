@@ -1815,6 +1815,152 @@ describe("API Routes", () => {
       expect(mockedPrisma.logView.delete).toHaveBeenCalledWith({ where: { id: "view-4" } });
     });
 
+    describe("shared log-view state is limited to OWNER and ADMIN", () => {
+      // About 30 requests: the shared app's general rate limiter (200 per
+      // minute, state held per app instance) is nearly exhausted by the rest
+      // of the file, so this block runs against its own app instance.
+      let viewApp: supertest.Agent;
+      let viewServer: Server;
+
+      beforeAll(async () => {
+        const { createApp } = await import("../../src/app.js");
+        viewServer = await new Promise<Server>((resolve, reject) => {
+          const s = createApp().listen(0);
+          s.once("listening", () => resolve(s));
+          s.once("error", reject);
+        });
+        viewApp = supertest(viewServer);
+      });
+
+      afterAll(async () => {
+        if (!viewServer) return;
+        await new Promise<void>((resolve, reject) => {
+          viewServer.close((err) => (err ? reject(err) : resolve()));
+        });
+      });
+
+      const definition = { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 };
+      const stamp = new Date("2026-03-23T00:00:00.000Z");
+      const viewRow = (over: Record<string, unknown> = {}) => ({
+        id: "view-own",
+        teamId: "t1",
+        ownerUserId: "user-1",
+        name: "Mine",
+        isShared: false,
+        isDefault: false,
+        definition,
+        createdAt: stamp,
+        updatedAt: stamp,
+        ...over,
+      });
+      const asRole = (role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER") => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+          id: "member-1",
+          teamId: "t1",
+          userId: "user-1",
+          role,
+          joinedAt: stamp,
+        });
+      };
+      const denied = ["VIEWER", "MEMBER"] as const;
+      const allowed = ["OWNER", "ADMIN"] as const;
+      const allRoles = [...denied, ...allowed];
+
+      describe.each(denied)("POST /logs/views as %s", (role) => {
+        it.each([
+          ["isShared: true", { isShared: true, isDefault: false }],
+          ["isDefault: true", { isShared: false, isDefault: true }],
+          ["isShared and isDefault", { isShared: true, isDefault: true }],
+        ])("returns 403 with no mutation for %s", async (_label, flags) => {
+          asRole(role);
+          const res = await viewApp
+            .post("/api/v1/logs/views")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ teamId: "t1", name: "Team view", definition, ...flags });
+          expect(res.status).toBe(403);
+          expect(mockedPrisma.logView.create).not.toHaveBeenCalled();
+          expect(mockedPrisma.logView.updateMany).not.toHaveBeenCalled();
+        });
+      });
+
+      describe.each(allowed)("POST /logs/views as %s", (role) => {
+        it("creates a shared default view (201)", async () => {
+          asRole(role);
+          mockedPrisma.logView.create.mockResolvedValueOnce(viewRow({ isShared: true, isDefault: true }));
+          const res = await viewApp
+            .post("/api/v1/logs/views")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ teamId: "t1", name: "Team view", isShared: true, isDefault: true, definition });
+          expect(res.status).toBe(201);
+          expect(mockedPrisma.logView.updateMany).toHaveBeenCalledTimes(1);
+          expect(mockedPrisma.logView.create).toHaveBeenCalledTimes(1);
+        });
+      });
+
+      describe.each(allRoles)("POST /logs/views private view as %s", (role) => {
+        it("creates a private view (201)", async () => {
+          asRole(role);
+          mockedPrisma.logView.create.mockResolvedValueOnce(viewRow());
+          const res = await viewApp
+            .post("/api/v1/logs/views")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ teamId: "t1", name: "Mine", isShared: false, definition });
+          expect(res.status).toBe(201);
+          expect(mockedPrisma.logView.create).toHaveBeenCalledTimes(1);
+          expect(mockedPrisma.logView.updateMany).not.toHaveBeenCalled();
+        });
+      });
+
+      describe.each(denied)("PUT /logs/views/:id as %s", (role) => {
+        it.each([
+          ["isShared: true", { isShared: true }],
+          ["isDefault: true", { isDefault: true }],
+          ["isShared and isDefault", { isShared: true, isDefault: true }],
+        ])("returns 403 with no mutation on an own private view for %s", async (_label, flags) => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(viewRow());
+          const res = await viewApp
+            .put("/api/v1/logs/views/view-own?teamId=t1")
+            .set("Authorization", "Bearer sess_admin")
+            .send(flags);
+          expect(res.status).toBe(403);
+          expect(mockedPrisma.logView.update).not.toHaveBeenCalled();
+          expect(mockedPrisma.logView.updateMany).not.toHaveBeenCalled();
+        });
+      });
+
+      describe.each(allowed)("PUT /logs/views/:id as %s", (role) => {
+        it("shares an own view and sets the default (200)", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(viewRow());
+          mockedPrisma.logView.update.mockResolvedValueOnce(viewRow({ isShared: true, isDefault: true }));
+          const res = await viewApp
+            .put("/api/v1/logs/views/view-own?teamId=t1")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ isShared: true, isDefault: true });
+          expect(res.status).toBe(200);
+          expect(mockedPrisma.logView.updateMany).toHaveBeenCalledTimes(1);
+          expect(mockedPrisma.logView.update).toHaveBeenCalledTimes(1);
+        });
+      });
+
+      describe.each(allRoles)("PUT /logs/views/:id private edit as %s", (role) => {
+        it("renames an own private view without isShared (200)", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(viewRow());
+          mockedPrisma.logView.update.mockResolvedValueOnce(viewRow({ name: "Renamed" }));
+          const res = await viewApp
+            .put("/api/v1/logs/views/view-own?teamId=t1")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ name: "Renamed", isShared: false, isDefault: false });
+          expect(res.status).toBe(200);
+          expect(mockedPrisma.logView.update).toHaveBeenCalledTimes(1);
+          expect(mockedPrisma.logView.updateMany).not.toHaveBeenCalled();
+        });
+      });
+    });
+
     it("maps a missing saved view to 404 (PUT /logs/views/:id)", async () => {
       // Regression: log-view-service threw a plain Error("Saved view not
       // found") that the router never caught, so this fell through to a 500.
