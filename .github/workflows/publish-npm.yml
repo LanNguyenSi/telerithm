@@ -140,9 +140,11 @@ jobs:
         run: echo "version=${GITHUB_REF_NAME#sdk-v}" >> "$GITHUB_OUTPUT"
 
       - name: Extract SDK changelog for this version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          awk '/^## \[${{ steps.version.outputs.version }}\]/{found=1; next} /^## \[/{found=0} found' packages/sdk-js/CHANGELOG.md > release_notes.md
-          echo "SDK release notes extracted for sdk-v${{ steps.version.outputs.version }}"
+          awk -v ver="$VERSION" '$0 ~ ("^## \\[" ver "\\]"){found=1; next} /^## \[/{found=0} found' packages/sdk-js/CHANGELOG.md > release_notes.md
+          echo "SDK release notes extracted for sdk-v${VERSION}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
