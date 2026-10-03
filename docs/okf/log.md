@@ -2,6 +2,20 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-03T12:12:29Z, okf-staleness workflow re-synced from the okf-kit
+  workflow template (fleet convergence ticket fdc01728): the workflow header
+  now names the template as its source instead of calling the file a pattern
+  to keep in sync, the pin moved from okf-kit@0.10.0 to okf-kit@0.16.0,
+  `--require-anchors` joined the invocation, and the job stays warn-only.
+  Measured on the tree before the change with `okf-kit check --json <bundle>`:
+  at okf-kit@0.10.0, 0 errors, 0 warnings, 0 notices (exit 0) plain and 0
+  errors, 28 warnings, 0 notices (exit 0) with `--require-anchors`; at
+  okf-kit@0.16.0, 0 errors, 0 warnings, 0 notices (exit 0) plain and 0 errors,
+  28 warnings, 0 notices (exit 0) with `--require-anchors`. Of the
+  anchored-run warnings, 28 are anchor-required findings (full citations
+  without an anchor); anchoring them is separate work and none of them blocks
+  anything.
+
 - 2026-10-02T08:53:23Z, task 10b54786: `api-authz-and-team-scoping.md` now names the config keys the route-table matrix builds (nodeEnv, multiTenant, trustProxy) and that a registration behind any other key is not built until the key is added; re-verified against `route-table.test.ts` and re-stamped.
 
 - 2026-10-02T08:36:31Z, re-verified and re-stamped api-authz-and-team-scoping.md
