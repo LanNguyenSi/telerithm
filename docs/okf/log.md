@@ -2,6 +2,10 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-04T14:01:54Z, clickhouse-retention-and-memory-limits.md and ingestion-pipeline.md re-stamped after wording edits in DEPLOYMENT.md (demo seed skipped in production) and docs/configuration.md (OpenAI cloud snippet sets OPENAI_MODEL). Neither change touches the ClickHouse schema step or the ingestion sources table these docs cite.
+
+- 2026-10-04T13:58:12Z, re-verified and re-stamped clickhouse-retention-and-memory-limits.md and ingestion-pipeline.md after DEPLOYMENT.md and docs/configuration.md changed (AI provider note, optional manual db push, auth-token wording); the claims each doc makes about those sources were unaffected.
+
 - 2026-10-03T12:12:29Z, okf-staleness workflow re-synced from the okf-kit
   workflow template (fleet convergence ticket fdc01728): the workflow header
   now names the template as its source instead of calling the file a pattern

@@ -41,7 +41,7 @@ Add these environment variables to your `.env.production`:
 OPENAI_API_KEY=sk-local-dummy
 ```
 
-And in `docker-compose.traefik.yml`, add to the backend service environment:
+And in `docker-compose.traefik.yml`, replace the existing hardcoded `OPENAI_BASE_URL` line (the Groq URL) in the backend service environment with the local endpoint, and optionally add `OPENAI_MODEL`:
 
 ```yaml
 environment:

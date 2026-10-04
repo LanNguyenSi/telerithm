@@ -2,8 +2,8 @@
 # Telerithm stdin pipe — ships stdin lines to Telerithm ingest API
 #
 # Usage:
-#   my-app 2>&1 | ./telerithm-pipe.sh
-#   tail -f /var/log/app.log | TELERITHM_URL=http://localhost:4000 TELERITHM_SOURCE_ID=xxx TELERITHM_API_KEY=lf_xxx ./telerithm-pipe.sh
+#   my-app 2>&1 | ./logforge-pipe.sh
+#   tail -f /var/log/app.log | TELERITHM_URL=http://localhost:4000 TELERITHM_SOURCE_ID=xxx TELERITHM_API_KEY=lf_xxx ./logforge-pipe.sh
 #
 # Environment variables:
 #   TELERITHM_URL       - Telerithm backend URL (default: http://localhost:4000)

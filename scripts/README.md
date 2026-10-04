@@ -9,14 +9,16 @@ Utility scripts for deploying and managing Telerithm.
 Create log sources in Telerithm for Docker containers:
 
 ```bash
-# 1. Get your auth token from Telerithm UI
-#    - Login at http://localhost:3000
-#    - Open DevTools → Application → Local Storage
-#    - Copy 'token' value
+# 1. Get an auth token from the login API. The web UI keeps its session in an
+#    httpOnly cookie (telerithm_token), not in Local Storage; the login API is
+#    the scriptable route.
+#    POST /api/v1/auth/login returns {"token": "...", "user": {...}}:
+export TELERITHM_AUTH_TOKEN="$(curl -s -X POST http://localhost:4000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"..."}' | jq -r .token)"
 
 # 2. Set environment variables
-export TELERITHM_AUTH_TOKEN='eyJhbGciOiJIUzI1NiIs...'
-export TELERITHM_TEAM_ID='team_abc123'  # Get from UI or API
+export TELERITHM_TEAM_ID='team_abc123'  # Get from GET /api/v1/teams (Bearer token), or the UI
 
 # 3. Run setup script
 ./scripts/setup-sources.sh
