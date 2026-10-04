@@ -10,7 +10,8 @@ Create log sources in Telerithm for Docker containers:
 
 ```bash
 # 1. Get an auth token from the login API. The web UI keeps its session in an
-#    httpOnly cookie (telerithm_token), so it is not readable from DevTools.
+#    httpOnly cookie (telerithm_token), not in Local Storage; the login API is
+#    the scriptable route.
 #    POST /api/v1/auth/login returns {"token": "...", "user": {...}}:
 export TELERITHM_AUTH_TOKEN="$(curl -s -X POST http://localhost:4000/api/v1/auth/login \
   -H 'Content-Type: application/json' \

@@ -71,7 +71,7 @@ This will:
 
 ### 5. Initialize Database
 
-The backend container runs `prisma db push` and seeds the database on every start (`backend/entrypoint.sh`), so no manual step is required. Check that services are healthy, and re-sync the schema by hand only if needed:
+The backend container runs `prisma db push` on every start (`backend/entrypoint.sh`), so no manual step is required. The demo seed it also invokes is skipped in production unless `SEED_DEMO_DATA=true`. Check that services are healthy, and re-sync the schema by hand only if needed:
 
 ```bash
 # Wait for services to be healthy (30-60 seconds)

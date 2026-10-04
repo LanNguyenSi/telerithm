@@ -36,7 +36,7 @@ log_success() {
 if [ -z "$AUTH_TOKEN" ]; then
   log_error "TELERITHM_AUTH_TOKEN not set. Please login first."
   log_info "1. POST your email and password as JSON to <backend>/api/v1/auth/login"
-  log_info "   (the web UI session cookie is httpOnly and not readable from DevTools)"
+  log_info "   (the web UI keeps its session in an httpOnly cookie, not in Local Storage)"
   log_info "2. Copy the 'token' field from the response"
   log_info "3. export TELERITHM_AUTH_TOKEN='<your-token>'"
   exit 1

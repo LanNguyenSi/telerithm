@@ -56,7 +56,7 @@ The `AIService` uses the official `openai` SDK against any OpenAI-compatible end
 ```bash
 OPENAI_API_KEY=sk-proj-...
 # OPENAI_BASE_URL unset
-# OPENAI_MODEL=gpt-4o-mini   # or whatever model you have access to
+OPENAI_MODEL=gpt-4o-mini   # required: the built-in default is a Groq/Llama model name
 ```
 
 ### Local LLM
