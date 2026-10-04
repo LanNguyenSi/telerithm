@@ -35,10 +35,10 @@ log_success() {
 # Validate environment
 if [ -z "$AUTH_TOKEN" ]; then
   log_error "TELERITHM_AUTH_TOKEN not set. Please login first."
-  log_info "1. Login via UI: http://localhost:3000"
-  log_info "2. Open browser DevTools → Application → Local Storage"
-  log_info "3. Copy 'token' value"
-  log_info "4. export TELERITHM_AUTH_TOKEN='<your-token>'"
+  log_info "1. POST your email and password as JSON to <backend>/api/v1/auth/login"
+  log_info "   (the web UI session cookie is httpOnly and not readable from DevTools)"
+  log_info "2. Copy the 'token' field from the response"
+  log_info "3. export TELERITHM_AUTH_TOKEN='<your-token>'"
   exit 1
 fi
 

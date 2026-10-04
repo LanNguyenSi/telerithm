@@ -37,7 +37,7 @@ nano .env.production
 
 **Optional:**
 
-- `OPENAI_API_KEY`: Only needed if using OpenAI cloud. For local LLM setup, see [LOCAL_LLM.md](LOCAL_LLM.md)
+- `OPENAI_API_KEY`: Enables LLM-backed natural-language search; unset means the heuristic fallback. `docker-compose.traefik.yml` hardcodes `OPENAI_BASE_URL` to Groq (`https://api.groq.com/openai/v1`) and the model defaults to `llama-3.3-70b-versatile`, so the key must be a Groq key. To use another provider, edit the `OPENAI_BASE_URL` line in the backend service and add an `OPENAI_MODEL` entry there. For a local LLM, see [LOCAL_LLM.md](LOCAL_LLM.md)
 - `ADMIN_EMAIL`: Email address that should become the initial admin on first signup
 
 **Registration defaults:**
@@ -71,11 +71,13 @@ This will:
 
 ### 5. Initialize Database
 
+The backend container runs `prisma db push` and seeds the database on every start (`backend/entrypoint.sh`), so no manual step is required. Check that services are healthy, and re-sync the schema by hand only if needed:
+
 ```bash
 # Wait for services to be healthy (30-60 seconds)
 docker compose -f docker-compose.traefik.yml ps
 
-# Sync Prisma schema
+# Optional: re-sync the Prisma schema manually
 docker compose -f docker-compose.traefik.yml exec backend npx prisma db push
 ```
 
