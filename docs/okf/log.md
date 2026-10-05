@@ -2,6 +2,7 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-05T14:08:41Z: nlq-pipeline.md re-stamped after docs/queries.md's Tuning paragraph named the current default model; the sections this pointer doc cites (how translation works, endpoint, fallback, stop words) are unchanged.
 - 2026-10-05T14:05:02Z: Groq model fix. compose-file-topology-and-drift.md gained one sentence on the LLM env (OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL) living only in docker-compose.traefik.yml, and was re-stamped with clickhouse-retention-and-memory-limits.md and ingestion-pipeline.md after DEPLOYMENT.md, docs/configuration.md, CHANGELOG.md and docker-compose.traefik.yml changed. The ClickHouse mounts, logging anchor, [0.1.1] notes and "Ingestion sources" section these docs cite are unchanged.
 - 2026-10-05T13:27:56Z: CHANGELOG.md 0.3.0 section corrected after review (upgrade notes for text_log, log views and the NAT64 env var); the two docs listing CHANGELOG.md cite only the [0.1.1] note, which is unchanged. Re-stamped.
 - 2026-10-05T13:20:01Z, clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md re-stamped after CHANGELOG.md was cut to 0.3.0. Re-verified: the CHANGELOG [0.1.1] notes and the config.d verification command these docs cite are unchanged.

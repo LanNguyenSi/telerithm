@@ -148,4 +148,4 @@ The translator strips common log-domain noise words (e.g. "service", "log", "log
 
 ## Tuning
 
-For a self-hosted install with low query volume, the default `gpt-4o-mini`-class cloud model or a 4B-7B local model produces good plans. Larger models help on multi-clause queries with implicit time anchors. The `OPENAI_MODEL` env var picks the model, see [configuration.md](configuration.md#ai-provider-configuration).
+For a self-hosted install with low query volume, a hosted model such as the default `openai/gpt-oss-120b` on Groq or `gpt-4o-mini` on OpenAI, or a 4B-7B local model, produces good plans. Larger models help on multi-clause queries with implicit time anchors. The `OPENAI_MODEL` env var picks the model, see [configuration.md](configuration.md#ai-provider-configuration).

@@ -39,14 +39,18 @@ Add these environment variables to your `.env.production`:
 
 ```bash
 OPENAI_API_KEY=sk-local-dummy
+OPENAI_MODEL=qwen3.5-4b   # the model name your local server serves
 ```
 
-And in `docker-compose.traefik.yml`, replace the existing hardcoded `OPENAI_BASE_URL` line (the Groq URL) in the backend service environment with the local endpoint, and optionally add `OPENAI_MODEL`:
+Set `OPENAI_MODEL`: without it the backend uses the Groq default `openai/gpt-oss-120b`, which a local server does not serve. The traefik compose already passes `OPENAI_MODEL` through, so do not add a second `OPENAI_MODEL` key to it (a duplicate key breaks the compose file).
+
+Then in `docker-compose.traefik.yml`, replace the existing hardcoded `OPENAI_BASE_URL` line (the Groq URL) in the backend service environment with the local endpoint:
 
 ```yaml
 environment:
   OPENAI_API_KEY: ${OPENAI_API_KEY}
   OPENAI_BASE_URL: http://172.17.0.1:8000/v1  # Docker host IP
+  OPENAI_MODEL: ${OPENAI_MODEL:-openai/gpt-oss-120b}  # already present, leave as is
 ```
 
 > **Note:** `172.17.0.1` is the default Docker bridge gateway. The backend container uses this IP to reach the llama-server running on the host. If your Docker bridge uses a different IP, check with `ip route | grep docker0`.
