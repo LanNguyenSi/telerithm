@@ -35,6 +35,8 @@ A starter file lives at `backend/.env.example`. Copy and edit:
 cp backend/.env.example backend/.env
 ```
 
+`npm run dev` (in `backend/`) loads `backend/.env` through Node's `--env-file-if-exists` flag; variables already set in your shell take precedence over the file, and a missing file is skipped. The server reads the file only in this dev mode: `npm start` (the built server) and the Docker images do not load it, so set the variables in the environment there (compose passes them in). Prisma CLI commands run from `backend/`, such as `npx prisma db push`, load `backend/.env` on their own.
+
 ## Frontend env vars
 
 | Variable                   | Default                          | Description                |
