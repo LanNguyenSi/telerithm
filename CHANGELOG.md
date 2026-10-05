@@ -13,6 +13,12 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 > `master`. App-suite tags are deploy provenance, not consumable
 > artefacts.
 
+## [Unreleased]
+
+### Changed
+
+- Backend `npm run dev` now loads `backend/.env` (Node `--env-file-if-exists`), so the documented `cp backend/.env.example backend/.env` step takes effect in development; shell variables still win. Production start and Docker are unchanged.
+
 ## [0.2.3] - 2026-06-16
 
 Patch release closing two esbuild build-tool advisories from the
