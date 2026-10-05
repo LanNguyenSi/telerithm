@@ -15,9 +15,152 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-05
+
+Minor release: a team-scoping and role-enforcement hardening of the
+REST API (several cross-tenant fixes, VIEWER becomes read-only), a
+stricter webhook SSRF guard, an opt-in `TRUST_PROXY` setting, a
+per-user rate limit on the notification-test route, CLI pipe fixes,
+ClickHouse system-log retention, and a long run of dependency
+advisories closed. Backend and frontend version in lockstep as the
+app suite. The SDK (`@telerithm/sdk`) is unchanged and not part of
+this release.
+
+### Upgrade notes
+
+- **VIEWER is now read-only on team-scoped write routes.** Existing
+  VIEWER memberships lose their former write access (mute alert
+  rules, acknowledge incidents, manage maintenance windows, create
+  sources, reassign issues). Before deploying, check production with
+  `SELECT count(*) FROM "TeamMember" WHERE role = 'VIEWER'` and tell
+  affected users.
+- **`TRUST_PROXY` (new, opt-in).** Unset keeps the old behaviour
+  (trust no proxy), so every client behind a reverse proxy shares one
+  IP-keyed rate-limit bucket. Set it to a hop count (for example `1`
+  behind Traefik), `loopback`, or an IP/CIDR list. The boolean `true`
+  is rejected at startup. `docker-compose.traefik.yml` now sets it to
+  `1`; self-hosters on another proxy must set their own value.
+- **New env vars** `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS` and
+  `NOTIFICATION_TEST_RATE_LIMIT_MAX` (defaults: 5 requests per 5
+  minutes). Both are optional.
+- **ClickHouse system logs.** After the first restart on the new
+  compose files, existing `system.*_log` tables are renamed to `*_N`
+  by ClickHouse and recreated with a 7-day TTL; drop the renamed
+  tables to reclaim disk. Verify the new `system-logs.xml` mount is
+  present in the compose file actually deployed (see the `[0.1.1]`
+  operational note).
+
+### Added
+
+- **Per-user rate limit on `POST /subscriptions/:id/test`** (PR #119).
+  Over-limit requests get 429 with `Retry-After` and a JSON
+  `retryAfter` in seconds. The limiter keys on the resolved user id,
+  after authentication, so a new login does not buy a fresh budget
+  and unauthenticated callers never create a bucket.
+- **Opt-in `TRUST_PROXY`** so the global, auth and ingest limiters
+  key on the real client IP behind a proxy (PR #141). See Upgrade
+  notes.
+- **`GET /teams` items carry the caller's own membership role**
+  (PR #144); the log search screen uses it to disable the share and
+  default controls for MEMBER and VIEWER, with the reason shown.
+- **Curated knowledge bundle under `docs/okf/`** with a warn-only
+  staleness workflow (PR #111), and an `audit.yml` workflow gating on
+  high advisories (full tree) and moderate-or-higher runtime
+  advisories (PR #135).
+- **`docs/api.md`** with the endpoint reference, rate-limit baseline
+  and token recipe (PR #119, PR #136, PR #149).
+
 ### Changed
 
-- Backend `npm run dev` now loads `backend/.env` (Node `--env-file-if-exists`), so the documented `cp backend/.env.example backend/.env` step takes effect in development; shell variables still win. Production start and Docker are unchanged.
+- **Team write gate is structural** (PR #105, PR #145). Team-scoped
+  mutating routes register through a `writeRoute` wrapper that runs
+  authentication, team resolution and the write-role check before the
+  handler; `requireResourceTeam` is the shared by-id resolver. AST
+  meta-tests fail CI when a mutating route is neither wrapped nor
+  justified on the allowlist. Status codes and mutations are
+  unchanged.
+- **Saved log-view and subscription routes map errors correctly**
+  (PR #104): unknown or foreign ids now answer 404/403 instead of
+  500, via typed `NotFoundError` and `ForbiddenError`.
+- **NLQ filter fields are allowlisted at the AI-service boundary**
+  (PR #91). Fields outside the searchable columns and known facets
+  are dropped and counted in `nlqFilterPrunedTotal`; the repository
+  sanitizer is unchanged.
+- **Backend `npm run dev` loads `backend/.env`** (Node
+  `--env-file-if-exists`), so the documented
+  `cp backend/.env.example backend/.env` step takes effect in
+  development; shell variables still win. Production start and Docker
+  are unchanged (PR #150).
+- **`OPENAI_API_KEY` is unset by default in `backend/.env.example`**,
+  so a fresh copy uses the heuristic NLQ path; deployment docs now say
+  the traefik compose targets Groq and how to switch (PR #149).
+- **Docs** corrected against the code across README, architecture
+  (Redis does not back ingestion rate limiting), configuration,
+  maintenance-window semantics and deployment (PR #88, #116, #117,
+  #136, #149).
+
+### Fixed
+
+- **`logforge-pipe` flushed partial batches early** (PR #107). The
+  periodic flush compared whole-second timestamps, so crossing a
+  second boundary could split a fresh batch; it now uses
+  `$EPOCHREALTIME` where available, with a strict comparison on older
+  bash.
+- **`logforge-pipe` busy-loop under a slow trickle or an unterminated
+  final line** (PR #108). The read loop now tells an idle timeout
+  from EOF, so the script exits instead of spinning and re-posting
+  the last line.
+- **Retention for ClickHouse system logs and bounded container logs**
+  (PR #110). `system.text_log` is disabled and the other system log
+  tables get a 7-day TTL via a `config.d` override mounted in both
+  prod composes; all services use `json-file` logging capped at
+  10m x 3. Prevents the unbounded `text_log` growth that filled the
+  host disk.
+- **Cold-run coverage flake in the API test suite** removed (PR #109).
+
+### Security
+
+- **Team-scoping fixes (cross-tenant IDOR class)**, each answering
+  403 or 404 before any mutation:
+  - Team-invite routes require OWNER/ADMIN of the affected team;
+    `revokeInvite` also matches the team in the service layer
+    (PR #97). Previously any authenticated user could list a team's
+    invites (including join tokens), create invites and revoke any
+    invite.
+  - Alert-incident actions and timeline scoped to the incident's
+    team (PR #98).
+  - Alert-rule mute/unmute scoped to the rule's team (PR #100).
+  - Maintenance-window deletion scoped to the window's team
+    (PR #101).
+  - Async query jobs scoped to the team whose logs produced them
+    (PR #102).
+- **VIEWER is read-only on team-scoped write routes** (PR #142), and
+  **shared and default log-view state is limited to OWNER/ADMIN**
+  (PR #143). Private views stay open to every member. See Upgrade
+  notes.
+- **Webhook SSRF guard hardened** (PR #99, #103, #106): IPv6
+  normalization gaps closed, and NAT64, 6to4, IPv4-compatible,
+  Teredo and operator NAT64 embeddings plus `0.0.x.x` collapse are
+  decoded before the private-range check.
+- **Dependency advisories closed** across backend, frontend and
+  lockfiles (PR #87, #89, #112 to #115, #120, #123 to #125, #129 to
+  #131, #134, #139, #140): `next` 15.5.25 (RCE), `sharp`
+  (GHSA-f88m-g3jw-g9cj), `vitest`, `vite`, `form-data`,
+  `@babel/core`, `undici` (GHSA-3wwx-pv8p-q78v), `brace-expansion`,
+  `fast-uri`, `body-parser`, `postcss` (GHSA-r28c-9q8g-f849,
+  GHSA-fxqj-rqcc-2cmp), `nanoid` (GHSA-2v37-7h3g-55p8), `browserslist`
+  (GHSA-c83g-rgw3-j3cx, GHSA-73wf-gq98-2v4g), `qs`
+  (GHSA-x5fp-wj9c-mxmx, GHSA-4mjr-xmp4-gh2g; the override was dropped
+  again once express 4.22.3 declares the fixed range),
+  `postcss-selector-parser` and `deepmerge-ts`
+  (GHSA-ggr8-5vv4-36mx).
+
+### Tests
+
+- Coverage added for the SSRF url-guard, webhook HMAC, notification
+  dispatcher and channels, alert service and worker, team service,
+  ingestion, fingerprinting, frontend auth and the CLI (bats), with
+  the coverage gates raised to match (PR #92 to #96).
 
 ## [0.2.3] - 2026-06-16
 
