@@ -2,6 +2,7 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-05T13:20:01Z, clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md re-stamped after CHANGELOG.md was cut to 0.3.0. Re-verified: the CHANGELOG [0.1.1] notes and the config.d verification command these docs cite are unchanged.
 - 2026-10-05T04:43:18Z, ingestion-pipeline.md re-stamped after a docs/configuration.md note on the Node floor and restart behaviour for backend/.env; the "Ingestion sources" section it cites is unchanged.
 - 2026-10-05T04:40:55Z, clickhouse-retention-and-memory-limits.md, compose-file-topology-and-drift.md and ingestion-pipeline.md re-stamped after CHANGELOG.md gained an [Unreleased] section (backend dev loads backend/.env) and docs/configuration.md gained a paragraph on which paths read backend/.env. The CHANGELOG [0.1.1] notes and the configuration.md "Ingestion sources" section these docs cite are unchanged.
 - 2026-10-04T14:01:54Z, clickhouse-retention-and-memory-limits.md and ingestion-pipeline.md re-stamped after wording edits in DEPLOYMENT.md (demo seed skipped in production) and docs/configuration.md (OpenAI cloud snippet sets OPENAI_MODEL). Neither change touches the ClickHouse schema step or the ingestion sources table these docs cite.
