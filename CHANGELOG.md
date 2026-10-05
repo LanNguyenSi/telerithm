@@ -23,8 +23,8 @@ stricter webhook SSRF guard, an opt-in `TRUST_PROXY` setting, a
 per-user rate limit on the notification-test route, CLI pipe fixes,
 ClickHouse system-log retention, and a long run of dependency
 advisories closed. Backend and frontend version in lockstep as the
-app suite. The SDK (`@telerithm/sdk`) is unchanged and not part of
-this release.
+app suite. The SDK (`@telerithm/sdk`) has no functional change and is not part
+of this release.
 
 ### Upgrade notes
 
@@ -34,19 +34,32 @@ this release.
   sources, reassign issues). Before deploying, check production with
   `SELECT count(*) FROM "TeamMember" WHERE role = 'VIEWER'` and tell
   affected users.
+- **MEMBER and VIEWER can no longer share log views or set a default
+  view** (including on their own private views), and only OWNER/ADMIN
+  can list, create or revoke team invites. Existing shared or default
+  views owned by non-admins are not migrated and stay editable by
+  their owner; count them before deploying.
 - **`TRUST_PROXY` (new, opt-in).** Unset keeps the old behaviour
   (trust no proxy), so every client behind a reverse proxy shares one
   IP-keyed rate-limit bucket. Set it to a hop count (for example `1`
-  behind Traefik), `loopback`, or an IP/CIDR list. The boolean `true`
-  is rejected at startup. `docker-compose.traefik.yml` now sets it to
+  behind Traefik), `loopback`, or an IP/CIDR list. Values that would
+  trust every hop are rejected at startup: the boolean `true`, hop
+  counts above 10, and IPv4 CIDRs broader than /8 or IPv6 CIDRs
+  broader than /32. `docker-compose.traefik.yml` now sets it to
   `1`; self-hosters on another proxy must set their own value.
 - **New env vars** `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS` and
   `NOTIFICATION_TEST_RATE_LIMIT_MAX` (defaults: 5 requests per 5
-  minutes). Both are optional.
+  minutes). Both are optional. `WEBHOOK_NAT64_ADDITIONAL_PREFIXES`
+  (optional, empty by default): comma-separated /96-aligned prefixes
+  ending in `::` whose embedded IPv4 addresses the webhook SSRF guard
+  decodes before the private-range check.
 - **ClickHouse system logs.** After the first restart on the new
-  compose files, existing `system.*_log` tables are renamed to `*_N`
-  by ClickHouse and recreated with a 7-day TTL; drop the renamed
-  tables to reclaim disk. Verify the new `system-logs.xml` mount is
+  compose files, the system log tables that get a TTL are renamed to
+  `*_N` by ClickHouse and recreated with a 7-day TTL; the renamed
+  copies can be dropped. `system.text_log` is disabled but NOT removed
+  or renamed, and it still holds the old rows that filled the disk:
+  drop or truncate it by hand (`TRUNCATE TABLE system.text_log` or
+  `DROP TABLE system.text_log`) to reclaim that space. Verify the new `system-logs.xml` mount is
   present in the compose file actually deployed (see the `[0.1.1]`
   operational note).
 
@@ -84,7 +97,8 @@ this release.
   500, via typed `NotFoundError` and `ForbiddenError`.
 - **NLQ filter fields are allowlisted at the AI-service boundary**
   (PR #91). Fields outside the searchable columns and known facets
-  are dropped and counted in `nlqFilterPrunedTotal`; the repository
+  are dropped and counted in the `telerithm_nlq_filter_pruned_total`
+  metric; the repository
   sanitizer is unchanged.
 - **Backend `npm run dev` loads `backend/.env`** (Node
   `--env-file-if-exists`), so the documented
@@ -116,7 +130,6 @@ this release.
   prod composes; all services use `json-file` logging capped at
   10m x 3. Prevents the unbounded `text_log` growth that filled the
   host disk.
-- **Cold-run coverage flake in the API test suite** removed (PR #109).
 
 ### Security
 
@@ -135,13 +148,15 @@ this release.
   - Async query jobs scoped to the team whose logs produced them
     (PR #102).
 - **VIEWER is read-only on team-scoped write routes** (PR #142), and
-  **shared and default log-view state is limited to OWNER/ADMIN**
-  (PR #143). Private views stay open to every member. See Upgrade
+  **setting shared or default log-view state now requires OWNER/ADMIN**
+  (PR #143); existing shared views are not migrated. Private views stay
+  open to every member. See Upgrade
   notes.
 - **Webhook SSRF guard hardened** (PR #99, #103, #106): IPv6
   normalization gaps closed, and NAT64, 6to4, IPv4-compatible,
-  Teredo and operator NAT64 embeddings plus `0.0.x.x` collapse are
-  decoded before the private-range check.
+  Teredo embeddings plus `0.0.x.x` collapse are decoded before the
+  private-range check; operator NAT64 prefixes are decoded only when
+  `WEBHOOK_NAT64_ADDITIONAL_PREFIXES` is set.
 - **Dependency advisories closed** across backend, frontend and
   lockfiles (PR #87, #89, #112 to #115, #120, #123 to #125, #129 to
   #131, #134, #139, #140): `next` 15.5.25 (RCE), `sharp`
@@ -157,6 +172,7 @@ this release.
 
 ### Tests
 
+- Cold-run coverage flake in the API test suite removed (PR #109).
 - Coverage added for the SSRF url-guard, webhook HMAC, notification
   dispatcher and channels, alert service and worker, team service,
   ingestion, fingerprinting, frontend auth and the CLI (bats), with
