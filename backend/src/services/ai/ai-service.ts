@@ -11,6 +11,16 @@ import {
   nlqLlmFallbackTotal,
 } from "../../metrics/index.js";
 
+// Groq (the Traefik deployment's provider) retired llama-3.3-70b-versatile,
+// which now 404s; openai/gpt-oss-120b is Groq's named replacement.
+const DEFAULT_OPENAI_MODEL = "openai/gpt-oss-120b";
+
+// gpt-oss models reason before answering. Low effort keeps the NLQ call
+// inside OPENAI_TIMEOUT_MS; the JSON plan does not need deep reasoning.
+function isReasoningModel(model: string): boolean {
+  return model.startsWith("openai/gpt-oss-");
+}
+
 const ALLOWED_OPERATORS: LogFilter["operator"][] = ["eq", "neq", "gt", "lt", "contains"];
 // Fields the AI is permitted to reference. Must stay in sync with the system
 // prompt ("known fields") and with SEARCHABLE_COLUMNS / FACET_FIELD_REGISTRY in
@@ -192,14 +202,16 @@ Known facet values (ground truth from current search scope):
 ${facetHintText}${contextSection}
 ${NLQ_STOPWORD_PROMPT_HINT}`;
 
+    const model = config.openaiModel?.trim() || DEFAULT_OPENAI_MODEL;
     const response = await this.openai!.chat.completions.create({
-      model: config.openaiModel ?? "llama-3.3-70b-versatile",
+      model,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: naturalQuery },
       ],
       response_format: { type: "json_object" },
       temperature: 0.1, // Low temperature for consistency
+      ...(isReasoningModel(model) ? { reasoning_effort: "low" as const } : {}),
     });
 
     const content = response.choices[0]?.message?.content;

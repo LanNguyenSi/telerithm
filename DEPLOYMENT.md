@@ -37,7 +37,7 @@ nano .env.production
 
 **Optional:**
 
-- `OPENAI_API_KEY`: Enables LLM-backed natural-language search; unset means the heuristic fallback. `docker-compose.traefik.yml` hardcodes `OPENAI_BASE_URL` to Groq (`https://api.groq.com/openai/v1`) and the model defaults to `llama-3.3-70b-versatile`, so the key must be a Groq key. To use another provider, edit the `OPENAI_BASE_URL` line in the backend service and add an `OPENAI_MODEL` entry there. For a local LLM, see [LOCAL_LLM.md](LOCAL_LLM.md)
+- `OPENAI_API_KEY`: Enables LLM-backed natural-language search; unset means the heuristic fallback. `docker-compose.traefik.yml` hardcodes `OPENAI_BASE_URL` to Groq (`https://api.groq.com/openai/v1`) and `OPENAI_MODEL` defaults to `openai/gpt-oss-120b`, so the key must be a Groq key. `OPENAI_MODEL` in the deploy environment overrides the model. To use another provider, edit the `OPENAI_BASE_URL` line in the backend service and set `OPENAI_MODEL` to a model of that provider. For a local LLM, see [LOCAL_LLM.md](LOCAL_LLM.md)
 - `ADMIN_EMAIL`: Email address that should become the initial admin on first signup
 
 **Registration defaults:**

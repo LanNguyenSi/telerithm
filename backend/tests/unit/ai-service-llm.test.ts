@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockCreate = vi.fn();
 
@@ -45,6 +45,7 @@ vi.mock("../../src/logger.js", () => ({
 }));
 
 import { AIService } from "../../src/services/ai/ai-service.js";
+import { config } from "../../src/config/index.js";
 
 function makeLLMResponse(override: Record<string, unknown> = {}) {
   return {
@@ -443,5 +444,44 @@ describe("retry and error handling", () => {
     expect(result.explanation).toBe("Found payment errors");
     expect(result.filtersApplied).toHaveLength(1);
     expect(result.filtersApplied[0].field).toBe("level");
+  });
+});
+
+describe("AIService model selection", () => {
+  const configuredModel = config.openaiModel;
+
+  beforeEach(() => {
+    mockCreate.mockReset();
+    mockCreate.mockResolvedValueOnce(makeLLMResponse());
+  });
+
+  afterEach(() => {
+    (config as { openaiModel?: string }).openaiModel = configuredModel;
+  });
+
+  it("defaults to openai/gpt-oss-120b with low reasoning effort when OPENAI_MODEL is unset", async () => {
+    (config as { openaiModel?: string }).openaiModel = undefined;
+
+    await new AIService().translateQuery("payment errors", "team-1");
+
+    const callArg = mockCreate.mock.calls[0]?.[0];
+    expect(callArg.model).toBe("openai/gpt-oss-120b");
+    expect(callArg.reasoning_effort).toBe("low");
+  });
+
+  it("falls back to the default model when OPENAI_MODEL is blank", async () => {
+    (config as { openaiModel?: string }).openaiModel = "  ";
+
+    await new AIService().translateQuery("payment errors", "team-1");
+
+    expect(mockCreate.mock.calls[0]?.[0].model).toBe("openai/gpt-oss-120b");
+  });
+
+  it("uses OPENAI_MODEL as given and sends no reasoning_effort for a non-reasoning model", async () => {
+    await new AIService().translateQuery("payment errors", "team-1");
+
+    const callArg = mockCreate.mock.calls[0]?.[0];
+    expect(callArg.model).toBe("test-model");
+    expect(callArg).not.toHaveProperty("reasoning_effort");
   });
 });

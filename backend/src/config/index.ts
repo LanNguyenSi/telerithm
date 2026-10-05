@@ -168,7 +168,7 @@ const configSchema = z.object({
     .transform((v) => (v === "" ? undefined : v)),
   openaiApiKey: z.string().optional(), // Optional: AI query engine falls back to heuristic if not provided
   openaiBaseUrl: z.string().url().optional(), // Optional: OpenAI-compatible endpoint (e.g. Ollama, llama.cpp)
-  openaiModel: z.string().optional(), // Optional: model name (default llama-3.3-70b-versatile)
+  openaiModel: z.string().optional(), // Optional: model name (default openai/gpt-oss-120b)
   openaiTimeoutMs: z.coerce.number().int().positive().default(10000), // LLM call timeout
   maxLookbackMs: z.coerce
     .number()

@@ -19,7 +19,7 @@ All configuration is environment-driven. The backend validates env vars on start
 | `ADMIN_EMAIL`        | unset                         | Bootstrap admin email for first signup                                              |
 | `OPENAI_API_KEY`     | unset                         | Enables LLM-backed NLQ. If unset, heuristic fallback is used                        |
 | `OPENAI_BASE_URL`    | unset                         | OpenAI-compatible endpoint (Ollama, llama.cpp, vLLM). Defaults to OpenAI cloud. `docker-compose.traefik.yml` hardcodes it to Groq |
-| `OPENAI_MODEL`       | `llama-3.3-70b-versatile`     | Model name passed to the chat completions API                                       |
+| `OPENAI_MODEL`       | `openai/gpt-oss-120b`         | Model name passed to the chat completions API                                       |
 | `OPENAI_TIMEOUT_MS`  | `10000`                       | Per-call timeout in ms                                                              |
 | `MAX_LOOKBACK_MS`    | `604800000` (7 days)          | Hard cap on query time range                                                        |
 | `MAX_PAGE_SIZE`      | `500`                         | Max page size for log search (50, 2000)                                             |
@@ -51,14 +51,14 @@ The `AIService` uses the official `openai` SDK against any OpenAI-compatible end
 
 ### Traefik deployment (Groq)
 
-`docker-compose.traefik.yml` hardcodes `OPENAI_BASE_URL=https://api.groq.com/openai/v1` for the backend and does not pass `OPENAI_MODEL`, so the model is the built-in default `llama-3.3-70b-versatile`. `OPENAI_API_KEY` must be a Groq key. To switch provider, edit the `OPENAI_BASE_URL` line in that file and add an `OPENAI_MODEL` entry to the backend environment.
+`docker-compose.traefik.yml` hardcodes `OPENAI_BASE_URL=https://api.groq.com/openai/v1` for the backend and passes `OPENAI_MODEL` from the host environment, defaulting to `openai/gpt-oss-120b`. `OPENAI_API_KEY` must be a Groq key. When Groq retires the model, set `OPENAI_MODEL` in the deploy environment. To switch provider, edit the `OPENAI_BASE_URL` line in that file and set `OPENAI_MODEL` to a model of that provider.
 
 ### OpenAI cloud (default outside the Traefik compose)
 
 ```bash
 OPENAI_API_KEY=sk-proj-...
 # OPENAI_BASE_URL unset
-OPENAI_MODEL=gpt-4o-mini   # required: the built-in default is a Groq/Llama model name
+OPENAI_MODEL=gpt-4o-mini   # required: the built-in default is a Groq model name
 ```
 
 ### Local LLM

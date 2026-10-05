@@ -15,6 +15,15 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Fixed
+
+- LLM-backed natural-language search silently fell back to the heuristic
+  on the Traefik (Groq) deployment: the default model
+  `llama-3.3-70b-versatile` was retired by Groq and returns 404. The
+  default is now `openai/gpt-oss-120b` (Groq's named replacement), sent
+  with `reasoning_effort: "low"`, and `docker-compose.traefik.yml` passes
+  `OPENAI_MODEL` through so the model can change without editing the file.
+
 ## [0.3.0] - 2026-10-05
 
 Minor release: a team-scoping and role-enforcement hardening of the
