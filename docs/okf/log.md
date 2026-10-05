@@ -2,6 +2,7 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-05T13:27:56Z: CHANGELOG.md 0.3.0 section corrected after review (upgrade notes for text_log, log views and the NAT64 env var); the two docs listing CHANGELOG.md cite only the [0.1.1] note, which is unchanged. Re-stamped.
 - 2026-10-05T13:20:01Z, clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md re-stamped after CHANGELOG.md was cut to 0.3.0. Re-verified: the CHANGELOG [0.1.1] notes and the config.d verification command these docs cite are unchanged.
 - 2026-10-05T04:43:18Z, ingestion-pipeline.md re-stamped after a docs/configuration.md note on the Node floor and restart behaviour for backend/.env; the "Ingestion sources" section it cites is unchanged.
 - 2026-10-05T04:40:55Z, clickhouse-retention-and-memory-limits.md, compose-file-topology-and-drift.md and ingestion-pipeline.md re-stamped after CHANGELOG.md gained an [Unreleased] section (backend dev loads backend/.env) and docs/configuration.md gained a paragraph on which paths read backend/.env. The CHANGELOG [0.1.1] notes and the configuration.md "Ingestion sources" section these docs cite are unchanged.
