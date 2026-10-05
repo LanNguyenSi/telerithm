@@ -3,7 +3,7 @@ type: overview
 title: NLQ pipeline — where the natural-language query path is documented
 description: Pointer doc — the natural-language query pipeline (AIService.translateQuery, OpenAI-SDK-compatible with heuristic fallback, no SQL generation) is authoritatively documented in docs/architecture.md's "NLQ pipeline" section and docs/queries.md; this entry only points there, deliberately NOT restated.
 tags: [nlq, ai, query, pointer]
-timestamp: 2026-09-02T04:49:48Z
+timestamp: 2026-10-05T14:08:41Z
 sources:
   - docs/architecture.md
   - docs/queries.md
