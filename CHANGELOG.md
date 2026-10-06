@@ -24,9 +24,6 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
   example a retired model) get a new non-retryable
   `telerithm_nlq_llm_errors_total{type="model_or_request"}` label value.
   Dashboards or alerts that enumerate `type` values need the new value.
-  Note: the OpenAI SDK keeps its own default retries, so a hanging LLM
-  now takes longer (up to three app attempts, each with the SDK's
-  retries) before the heuristic fallback answers.
 - NLQ LLM retries now have one owner (task 74ae7b4a): the OpenAI client
   is built with `maxRetries: 0`, so the app retry loop (3 attempts total,
   1 s / 3 s backoff) is the only layer retrying timeouts, connection
@@ -34,7 +31,10 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
   three SDK attempts. Against a hanging stub with `OPENAI_TIMEOUT_MS=1000`
   the time to the heuristic fallback dropped from about 16.7 s to about
   7.0 s; at the default 10 s timeout the worst case is about 34 s
-  (3 x 10 s plus 4 s of backoff).
+  (3 x 10 s plus 4 s of backoff). Trade-off: the SDK no longer retries
+  408 and 409 (the app loop classifies them `unknown` and does not retry
+  them), and a 429 is retried on the fixed 1 s / 3 s backoff without
+  honouring `Retry-After`.
 - LLM-backed natural-language search silently fell back to the heuristic
   on the Traefik (Groq) deployment: the default model
   `llama-3.3-70b-versatile` was retired by Groq and returns 404. The
