@@ -2,18 +2,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockCreate = vi.fn();
 
-vi.mock("openai", () => {
-  return {
-    default: vi.fn().mockImplementation(function () {
-      return {
-        chat: {
-          completions: {
-            create: mockCreate,
-          },
+vi.mock("openai", async () => {
+  // Keep the SDK's real error classes on the mocked constructor so the
+  // service's instanceof checks run against the real class hierarchy.
+  const actual = await vi.importActual<{ default: Record<string, unknown> }>("openai");
+  const MockOpenAI = vi.fn().mockImplementation(function () {
+    return {
+      chat: {
+        completions: {
+          create: mockCreate,
         },
-      };
-    }),
-  };
+      },
+    };
+  });
+  Object.assign(MockOpenAI, {
+    APIError: actual.default.APIError,
+    APIConnectionError: actual.default.APIConnectionError,
+    APIConnectionTimeoutError: actual.default.APIConnectionTimeoutError,
+  });
+  return { default: MockOpenAI };
 });
 
 vi.mock("../../src/config/index.js", () => ({
@@ -46,6 +53,8 @@ vi.mock("../../src/logger.js", () => ({
 
 import { AIService } from "../../src/services/ai/ai-service.js";
 import { config } from "../../src/config/index.js";
+import { nlqLlmErrorsTotal } from "../../src/metrics/index.js";
+import OpenAI from "openai";
 
 function makeLLMResponse(override: Record<string, unknown> = {}) {
   return {
@@ -483,5 +492,106 @@ describe("AIService model selection", () => {
     const callArg = mockCreate.mock.calls[0]?.[0];
     expect(callArg.model).toBe("test-model");
     expect(callArg).not.toHaveProperty("reasoning_effort");
+  });
+});
+
+// ── Error classification ────────────────────────────────────────────────────
+
+describe("LLM error classification", () => {
+  const FALLBACK = "AI fallback mode active: heuristic interpretation was used.";
+  let service: AIService;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreate.mockReset();
+    vi.useFakeTimers();
+    service = new AIService();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function run() {
+    const promise = service.translateQuery("show errors", "team-1");
+    await vi.runAllTimersAsync();
+    return promise;
+  }
+
+  const apiError = (status: number) =>
+    OpenAI.APIError.generate(status, { message: "boom" }, "boom", new Headers());
+
+  it("classifies APIConnectionTimeoutError as timeout and retries it", async () => {
+    mockCreate.mockImplementation(() => Promise.reject(new OpenAI.APIConnectionTimeoutError()));
+
+    const result = await run();
+
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "timeout" });
+    expect(result.warnings).toContain(FALLBACK);
+  });
+
+  it("classifies APIConnectionError as timeout and retries it", async () => {
+    mockCreate.mockImplementation(() =>
+      Promise.reject(new OpenAI.APIConnectionError({ message: "socket hang up" })),
+    );
+
+    await run();
+
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "timeout" });
+  });
+
+  it.each([400, 404])("classifies HTTP %i as model_or_request and does not retry", async (status) => {
+    mockCreate.mockImplementation(() => Promise.reject(apiError(status)));
+
+    const result = await run();
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "model_or_request" });
+    expect(result.warnings).toContain(FALLBACK);
+  });
+
+  it("classifies 429 as rate_limit and retries it", async () => {
+    mockCreate.mockImplementation(() => Promise.reject(apiError(429)));
+
+    await run();
+
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "rate_limit" });
+  });
+
+  it("classifies 500 as server and retries it", async () => {
+    mockCreate.mockImplementation(() => Promise.reject(apiError(500)));
+
+    await run();
+
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "server" });
+  });
+
+  it.each([401, 403])("classifies %i as auth and does not retry", async (status) => {
+    mockCreate.mockImplementation(() => Promise.reject(apiError(status)));
+
+    await run();
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "auth" });
+  });
+
+  it("keeps other 4xx statuses as unknown and does not retry", async () => {
+    mockCreate.mockImplementation(() => Promise.reject(apiError(418)));
+
+    await run();
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "unknown" });
   });
 });

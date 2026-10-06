@@ -74,7 +74,7 @@ export const nlqLlmDuration = new Histogram({
 
 export const nlqLlmErrorsTotal = new Counter({
   name: "telerithm_nlq_llm_errors_total",
-  help: "LLM errors by type (timeout, auth, rate_limit, parse, unknown)",
+  help: "LLM errors by type (timeout, auth, rate_limit, server, model_or_request, parse, unknown)",
   labelNames: ["type"] as const,
   registers: [registry],
 });
