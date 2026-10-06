@@ -146,11 +146,9 @@ test('a script spawned through a symlink still runs main and reports FINDINGS (e
   }
 });
 
-test('the repository allowlist parses and holds exactly the braces entry', () => {
+test('the repository allowlist parses today and holds only well-formed GHSA ids', () => {
+  // Today, not a fixed date: a renewal or removing the entry must not turn this red.
   const file = path.join(HERE, '..', '.github', 'audit-allowlist.json');
-  const entries = parseAllowlist(fs.readFileSync(file, 'utf8'), file, '2026-10-06');
-  assert.deepEqual(
-    entries.map((entry) => entry.id),
-    [ALLOWED_ID],
-  );
+  const entries = parseAllowlist(fs.readFileSync(file, 'utf8'), file, todayUtc());
+  for (const entry of entries) assert.match(entry.id, /^GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}$/);
 });
