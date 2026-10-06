@@ -20,10 +20,13 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 - NLQ LLM error classification: connection and timeout errors from the
   OpenAI SDK are now classified `timeout` (the branch was unreachable
   because `APIConnectionError` extends `APIError`, so they were counted
-  as `unknown` and never retried), and HTTP 400/404 responses (for
+  as `unknown` and never retried by the app loop), and HTTP 400/404 responses (for
   example a retired model) get a new non-retryable
   `telerithm_nlq_llm_errors_total{type="model_or_request"}` label value.
   Dashboards or alerts that enumerate `type` values need the new value.
+  Note: the OpenAI SDK keeps its own default retries, so a hanging LLM
+  now takes longer (up to three app attempts, each with the SDK's
+  retries) before the heuristic fallback answers.
 - LLM-backed natural-language search silently fell back to the heuristic
   on the Traefik (Groq) deployment: the default model
   `llama-3.3-70b-versatile` was retired by Groq and returns 404. The

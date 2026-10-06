@@ -526,7 +526,7 @@ describe("LLM error classification", () => {
 
     const result = await run();
 
-    expect(mockCreate.mock.calls.length).toBeGreaterThan(1);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
     expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
     expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "timeout" });
     expect(result.warnings).toContain(FALLBACK);
@@ -539,7 +539,8 @@ describe("LLM error classification", () => {
 
     await run();
 
-    expect(mockCreate.mock.calls.length).toBeGreaterThan(1);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
     expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "timeout" });
   });
 
@@ -559,7 +560,8 @@ describe("LLM error classification", () => {
 
     await run();
 
-    expect(mockCreate.mock.calls.length).toBeGreaterThan(1);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
     expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "rate_limit" });
   });
 
@@ -568,7 +570,8 @@ describe("LLM error classification", () => {
 
     await run();
 
-    expect(mockCreate.mock.calls.length).toBeGreaterThan(1);
+    expect(mockCreate).toHaveBeenCalledTimes(3);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
     expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "server" });
   });
 
@@ -578,6 +581,7 @@ describe("LLM error classification", () => {
     await run();
 
     expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
     expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "auth" });
   });
 
@@ -587,6 +591,7 @@ describe("LLM error classification", () => {
     await run();
 
     expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledTimes(1);
     expect(nlqLlmErrorsTotal.inc).toHaveBeenCalledWith({ type: "unknown" });
   });
 });
