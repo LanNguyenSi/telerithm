@@ -90,4 +90,36 @@ describe("LLM retry ownership (real SDK client, stubbed fetch)", () => {
     expect(fetchStub).toHaveBeenCalledTimes(EXPECTED_HTTP_ATTEMPTS);
     expect(result.warnings).toContain(FALLBACK);
   });
+
+  it("makes exactly 3 HTTP attempts on persistent HTTP 503", async () => {
+    fetchStub.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ error: { message: "unavailable" } }), {
+          status: 503,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    const result = await run();
+
+    expect(fetchStub).toHaveBeenCalledTimes(EXPECTED_HTTP_ATTEMPTS);
+    expect(result.warnings).toContain(FALLBACK);
+  });
+
+  // 408 and 409 classify as "unknown", which the app loop does not retry, and
+  // the SDK adds no attempt of its own (maxRetries: 0): one HTTP attempt each.
+  it.each([408, 409])("makes exactly 1 HTTP attempt on HTTP %i", async (status) => {
+    fetchStub.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ error: { message: "no retry" } }), {
+          status,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+
+    const result = await run();
+
+    expect(fetchStub).toHaveBeenCalledTimes(1);
+    expect(result.warnings).toContain(FALLBACK);
+  });
 });

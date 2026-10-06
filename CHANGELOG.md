@@ -15,6 +15,12 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Added
+
+- NLQ retry ownership tests also pin a persistent HTTP 503 (3 attempts, the
+  app loop retries `server` errors) and HTTP 408 / 409 (1 attempt each, they
+  classify as `unknown` and are not retried) (task 9c7a5039).
+
 ### Fixed
 
 - NLQ LLM error classification: connection and timeout errors from the
