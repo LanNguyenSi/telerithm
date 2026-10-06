@@ -27,6 +27,14 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
   Note: the OpenAI SDK keeps its own default retries, so a hanging LLM
   now takes longer (up to three app attempts, each with the SDK's
   retries) before the heuristic fallback answers.
+- NLQ LLM retries now have one owner (task 74ae7b4a): the OpenAI client
+  is built with `maxRetries: 0`, so the app retry loop (3 attempts total,
+  1 s / 3 s backoff) is the only layer retrying timeouts, connection
+  errors, 429 and 5xx. Previously each app attempt could trigger up to
+  three SDK attempts. Against a hanging stub with `OPENAI_TIMEOUT_MS=1000`
+  the time to the heuristic fallback dropped from about 16.7 s to about
+  7.0 s; at the default 10 s timeout the worst case is about 34 s
+  (3 x 10 s plus 4 s of backoff).
 - LLM-backed natural-language search silently fell back to the heuristic
   on the Traefik (Groq) deployment: the default model
   `llama-3.3-70b-versatile` was retired by Groq and returns 404. The

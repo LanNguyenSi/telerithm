@@ -85,6 +85,10 @@ export class AIService {
         apiKey: config.openaiApiKey,
         ...(config.openaiBaseUrl ? { baseURL: config.openaiBaseUrl } : {}),
         timeout: config.openaiTimeoutMs,
+        // The app retry loop in translateQuery is the single retry owner: it
+        // has the backoff, the error-type metrics and the log lines. Leaving
+        // the SDK default (2 retries) would multiply attempts per app attempt.
+        maxRetries: 0,
       });
       this.useLLM = true;
       logger.info("AI Service initialized with OpenAI LLM support");
