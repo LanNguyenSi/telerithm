@@ -135,13 +135,16 @@ export class AIService {
   }
 
   private classifyError(error: unknown): string {
+    // APIConnectionError (and APIConnectionTimeoutError) extend APIError, so
+    // they must be checked before the APIError branch or they are never reached.
+    if (error instanceof OpenAI.APIConnectionError) return "timeout";
     if (error instanceof OpenAI.APIError) {
       if (error.status === 401 || error.status === 403) return "auth";
       if (error.status === 429) return "rate_limit";
+      if (error.status === 400 || error.status === 404) return "model_or_request";
       if (error.status && error.status >= 500) return "server";
       return "unknown";
     }
-    if (error instanceof OpenAI.APIConnectionError) return "timeout";
     if (error instanceof SyntaxError) return "parse";
     if (error instanceof z.ZodError) return "parse";
     return "unknown";
