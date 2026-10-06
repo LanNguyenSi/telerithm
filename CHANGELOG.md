@@ -42,6 +42,18 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
   with `reasoning_effort: "low"`, and `docker-compose.traefik.yml` passes
   `OPENAI_MODEL` through so the model can change without editing the file.
 
+### Changed
+
+- CI: the Audit workflow's full-tree high/critical gate now classifies
+  `npm audit --json` output with a vendored, dependency-free
+  `scripts/audit-gate.mjs` (copied from depsight commit be8c7ea) and an
+  ID-scoped, dated allowlist in `.github/audit-allowlist.json`. It excepts
+  only GHSA-vfj7-8cjw-p6xm (braces 3.0.3, reached in `frontend` as a dev
+  dependency only, no upstream fix), with a `reviewBy` date of 2026-11-06;
+  any other HIGH or CRITICAL advisory, or an expired entry, keeps the gate
+  red. The moderate runtime gate is unchanged. The script's self-test runs
+  in the same job (`node --test scripts/audit-gate.test.mjs`).
+
 ## [0.3.0] - 2026-10-05
 
 Minor release: a team-scoping and role-enforcement hardening of the
