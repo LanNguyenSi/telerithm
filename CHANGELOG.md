@@ -15,6 +15,10 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Security
+
+- **sharp 0.35.5** (GHSA-wq5f-xc86-pv6w, task aff72e2b), in `frontend/`, installed through `next`: the lockfile resolves 0.35.5 with matching `@img/*` binaries and the `sharp` override floor is now `^0.35.5`.
+
 ### Added
 
 - NLQ retry ownership tests also pin a persistent HTTP 503 (3 attempts, the
