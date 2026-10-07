@@ -64,6 +64,8 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
   red. The moderate runtime gate is unchanged. The script's self-test runs
   in the same job (`node --test scripts/audit-gate.test.mjs`).
 
+- The `Audit` gate is re-vendored from depsight #172: `scripts/audit-gate.mjs` now treats a report whose `metadata.vulnerabilities` HIGH plus CRITICAL tally disagrees with, or is missing against, its `vulnerabilities` map as UNCLASSIFIED (exit 3), prints npm's stderr itself through a sanitiser (each line behind an `npm stderr| ` prefix, reduced to a safe character set, length and count bounded) instead of the workflow step copying it raw, and the gate step fails (exit 3) when the classifier exits 0 without the `npm audit gate: CLEAN` line. The non-blocking report step prints npm's output between `::stop-commands::` and a per-run random resume token. The allowlist entries are unchanged. Tracker task dbbc4994.
+
 ## [0.3.0] - 2026-10-05
 
 Minor release: a team-scoping and role-enforcement hardening of the
