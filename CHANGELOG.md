@@ -17,7 +17,7 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ### Security
 
-- **next 15.5.27** (GHSA-mcj8-r9mp-w47p, GHSA-4jqv-mc3x-m676): the lockfile resolves 15.5.27 with its matching `@next/env` and `@next/swc-*` packages and the `next` dependency floor is now `^15.5.27`.
+- **next 15.5.27** (GHSA-mcj8-r9mp-w47p, GHSA-4jqv-mc3x-m676) in `frontend/`: the lockfile resolves 15.5.27 with its matching `@next/env` and `@next/swc-*` packages and the `next` dependency floor is now `^15.5.27`.
 - **sharp 0.35.5** (GHSA-wq5f-xc86-pv6w, task aff72e2b), in `frontend/`, installed through `next`: the lockfile resolves 0.35.5 with matching `@img/*` binaries and the `sharp` override floor is now `^0.35.5`.
 
 ### Added
