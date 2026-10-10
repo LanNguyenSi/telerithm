@@ -162,17 +162,19 @@ export class LogViewService {
   // delete it, including a MEMBER/VIEWER who owns it (created before the
   // create/update gate, or after an admin was demoted). Judged on the loaded
   // view, never on the request body, so unsharing and renaming are covered too.
+  // For the same reason OWNER/ADMIN may act on such a view even when it is a
+  // private default view owned by someone else (see canMutate).
   private isTeamWideState(view: { isShared: boolean; isDefault: boolean }): boolean {
     return view.isShared || view.isDefault;
   }
 
   private canMutate(
-    view: { isShared: boolean; ownerUserId: string | null },
+    view: { isShared: boolean; isDefault: boolean; ownerUserId: string | null },
     userId: string,
     canManageShared: boolean,
   ): boolean {
     if (view.ownerUserId === userId) return true;
-    if (view.isShared && canManageShared) return true;
+    if (this.isTeamWideState(view) && canManageShared) return true;
     return false;
   }
 }

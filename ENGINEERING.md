@@ -179,10 +179,13 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
   deckt Umbenennen, `isShared: false`, `isDefault: false` und Löschen einer
   bereits geteilten oder als Default markierten View ab (vor dem Gate
   angelegt, oder nach einer Herabstufung vom Admin; agent-tasks `9edca718`).
-  OWNER/ADMIN und private, nicht als Default markierte Views bleiben
-  unverändert; fremde Views verweigert der Service weiter mit 403, Views eines
-  anderen Teams mit 404. Bestehende Daten werden nicht migriert; solche Views
-  ändert oder löscht nur noch ein OWNER oder ADMIN.
+  Ein OWNER oder ADMIN ändert und löscht jede geteilte oder als Default
+  markierte View seines Teams, auch eine private Default-View eines anderen
+  Nutzers (z. B. eines MEMBER oder eines herabgestuften Admins). Private,
+  nicht als Default markierte Views bleiben beim Besitzer; fremde private
+  Views dieser Art verweigert der Service weiter mit 403 (auch OWNER/ADMIN),
+  Views eines anderen Teams mit 404. Bestehende Daten werden nicht migriert;
+  solche Views ändert oder löscht nur noch ein OWNER oder ADMIN.
 - Nach dem Merge prüft der Operator in Produktion, ob VIEWER-Mitgliedschaften
   existieren (`SELECT count(*) FROM "TeamMember" WHERE role = 'VIEWER'`), weil
   deren bisheriger Schreibzugriff mit dieser Regel endet.
