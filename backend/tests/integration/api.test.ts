@@ -2115,6 +2115,183 @@ describe("API Routes", () => {
       });
     });
 
+    describe("owners of shared or default views", () => {
+      // Own app instance for the same rate-limiter reason as the blocks above.
+      let ownerApp: supertest.Agent;
+      let ownerServer: Server;
+
+      beforeAll(async () => {
+        const { createApp } = await import("../../src/app.js");
+        ownerServer = await new Promise<Server>((resolve, reject) => {
+          const s = createApp().listen(0);
+          s.once("listening", () => resolve(s));
+          s.once("error", reject);
+        });
+        ownerApp = supertest(ownerServer);
+      });
+
+      afterAll(async () => {
+        if (!ownerServer) return;
+        await new Promise<void>((resolve, reject) => {
+          ownerServer.close((err) => (err ? reject(err) : resolve()));
+        });
+      });
+
+      const definition = { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 };
+      const stamp = new Date("2026-03-23T00:00:00.000Z");
+      // A view the caller (user-1) owns unless a test says otherwise.
+      const ownedView = (over: Record<string, unknown> = {}) => ({
+        id: "view-owned",
+        teamId: "t1",
+        ownerUserId: "user-1",
+        name: "Owned",
+        isShared: false,
+        isDefault: false,
+        definition,
+        createdAt: stamp,
+        updatedAt: stamp,
+        ...over,
+      });
+      const asRole = (role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER") => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+          id: "member-1",
+          teamId: "t1",
+          userId: "user-1",
+          role,
+          joinedAt: stamp,
+        });
+      };
+      const teamWideStates = [
+        ["shared", { isShared: true, isDefault: false }],
+        ["default", { isShared: false, isDefault: true }],
+        ["shared and default", { isShared: true, isDefault: true }],
+      ] as const;
+      const putBodies = [
+        ["a rename", { name: "Renamed" }],
+        ["isShared: false", { isShared: false }],
+        ["isDefault: false", { isDefault: false }],
+        ["isShared: false and isDefault: false", { isShared: false, isDefault: false }],
+        [
+          "a rename with isShared: false and isDefault: false",
+          { name: "Renamed", isShared: false, isDefault: false },
+        ],
+      ] as const;
+
+      describe.each(["MEMBER", "VIEWER"] as const)("%s owning a team-wide view", (role) => {
+        describe.each(teamWideStates)("view is %s", (_state, flags) => {
+          it.each(putBodies)("PUT with %s is 403 with no mutation", async (_label, body) => {
+            asRole(role);
+            mockedPrisma.logView.findUnique.mockResolvedValueOnce(ownedView({ ...flags }));
+            // A returned row makes a missing gate show as a 200 with the mock called.
+            mockedPrisma.logView.update.mockResolvedValue(ownedView({ ...flags, ...body }));
+            const res = await ownerApp
+              .put("/api/v1/logs/views/view-owned?teamId=t1")
+              .set("Authorization", "Bearer sess_admin")
+              .send(body);
+            expect(res.status).toBe(403);
+            expect(mockedPrisma.logView.update).not.toHaveBeenCalled();
+            expect(mockedPrisma.logView.updateMany).not.toHaveBeenCalled();
+            expect(mockedPrisma.logView.delete).not.toHaveBeenCalled();
+          });
+
+          it("DELETE is 403 with no mutation", async () => {
+            asRole(role);
+            mockedPrisma.logView.findUnique.mockResolvedValueOnce(ownedView({ ...flags }));
+            mockedPrisma.logView.delete.mockResolvedValue(ownedView({ ...flags }));
+            const res = await ownerApp
+              .delete("/api/v1/logs/views/view-owned?teamId=t1")
+              .set("Authorization", "Bearer sess_admin");
+            expect(res.status).toBe(403);
+            expect(mockedPrisma.logView.delete).not.toHaveBeenCalled();
+            expect(mockedPrisma.logView.update).not.toHaveBeenCalled();
+          });
+        });
+      });
+
+      describe.each(["MEMBER", "VIEWER", "OWNER", "ADMIN"] as const)("%s owning a private view", (role) => {
+        it("PUT rename is 200", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(ownedView());
+          mockedPrisma.logView.update.mockResolvedValueOnce(ownedView({ name: "Renamed" }));
+          const res = await ownerApp
+            .put("/api/v1/logs/views/view-owned?teamId=t1")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ name: "Renamed", isShared: false, isDefault: false });
+          expect(res.status).toBe(200);
+          expect(mockedPrisma.logView.update).toHaveBeenCalledTimes(1);
+        });
+
+        it("DELETE is 204", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(ownedView());
+          mockedPrisma.logView.delete.mockResolvedValueOnce(ownedView());
+          const res = await ownerApp
+            .delete("/api/v1/logs/views/view-owned?teamId=t1")
+            .set("Authorization", "Bearer sess_admin");
+          expect(res.status).toBe(204);
+          expect(mockedPrisma.logView.delete).toHaveBeenCalledWith({ where: { id: "view-owned" } });
+        });
+      });
+
+      describe.each(["OWNER", "ADMIN"] as const)("%s owning a team-wide view", (role) => {
+        describe.each(teamWideStates)("view is %s", (_state, flags) => {
+          it.each(putBodies)("PUT with %s is 200", async (_label, body) => {
+            asRole(role);
+            mockedPrisma.logView.findUnique.mockResolvedValueOnce(ownedView({ ...flags }));
+            mockedPrisma.logView.update.mockResolvedValueOnce(ownedView({ ...flags, ...body }));
+            const res = await ownerApp
+              .put("/api/v1/logs/views/view-owned?teamId=t1")
+              .set("Authorization", "Bearer sess_admin")
+              .send(body);
+            expect(res.status).toBe(200);
+            expect(mockedPrisma.logView.update).toHaveBeenCalledTimes(1);
+          });
+
+          it("DELETE is 204", async () => {
+            asRole(role);
+            mockedPrisma.logView.findUnique.mockResolvedValueOnce(ownedView({ ...flags }));
+            mockedPrisma.logView.delete.mockResolvedValueOnce(ownedView({ ...flags }));
+            const res = await ownerApp
+              .delete("/api/v1/logs/views/view-owned?teamId=t1")
+              .set("Authorization", "Bearer sess_admin");
+            expect(res.status).toBe(204);
+            expect(mockedPrisma.logView.delete).toHaveBeenCalledTimes(1);
+          });
+        });
+      });
+
+      // A non-owner never reaches the view's contents through PUT/DELETE unless
+      // the view is shared and the caller is OWNER/ADMIN; this rule is unchanged.
+      describe.each(["MEMBER", "VIEWER", "OWNER", "ADMIN"] as const)(
+        "%s on another user's private view",
+        (role) => {
+          it("PUT is 403 with no mutation", async () => {
+            asRole(role);
+            mockedPrisma.logView.findUnique.mockResolvedValueOnce(ownedView({ ownerUserId: "user-9" }));
+            mockedPrisma.logView.update.mockResolvedValue(ownedView({ ownerUserId: "user-9" }));
+            const res = await ownerApp
+              .put("/api/v1/logs/views/view-owned?teamId=t1")
+              .set("Authorization", "Bearer sess_admin")
+              .send({ name: "Renamed" });
+            expect(res.status).toBe(403);
+            expect(mockedPrisma.logView.update).not.toHaveBeenCalled();
+          });
+
+          it("DELETE is 403 with no mutation", async () => {
+            asRole(role);
+            mockedPrisma.logView.findUnique.mockResolvedValueOnce(ownedView({ ownerUserId: "user-9" }));
+            mockedPrisma.logView.delete.mockResolvedValue(ownedView({ ownerUserId: "user-9" }));
+            const res = await ownerApp
+              .delete("/api/v1/logs/views/view-owned?teamId=t1")
+              .set("Authorization", "Bearer sess_admin");
+            expect(res.status).toBe(403);
+            expect(mockedPrisma.logView.delete).not.toHaveBeenCalled();
+          });
+        },
+      );
+    });
+
     it("maps a missing saved view to 404 (PUT /logs/views/:id)", async () => {
       // Regression: log-view-service threw a plain Error("Saved view not
       // found") that the router never caught, so this fell through to a 500.

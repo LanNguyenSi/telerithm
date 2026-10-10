@@ -87,6 +87,9 @@ export class LogViewService {
     if (!existing || existing.teamId !== input.teamId) {
       throw new NotFoundError("Saved view not found");
     }
+    if (this.isTeamWideState(existing) && !input.canManageShared) {
+      throw new ForbiddenError("Forbidden");
+    }
     if (!this.canMutate(existing, input.userId, input.canManageShared)) {
       throw new ForbiddenError("Forbidden");
     }
@@ -142,6 +145,9 @@ export class LogViewService {
     if (!existing || existing.teamId !== input.teamId) {
       throw new NotFoundError("Saved view not found");
     }
+    if (this.isTeamWideState(existing) && !input.canManageShared) {
+      throw new ForbiddenError("Forbidden");
+    }
     if (!this.canMutate(existing, input.userId, input.canManageShared)) {
       throw new ForbiddenError("Forbidden");
     }
@@ -150,6 +156,14 @@ export class LogViewService {
 
   private canRead(view: { isShared: boolean; ownerUserId: string | null }, userId: string): boolean {
     return view.isShared || view.ownerUserId === userId;
+  }
+
+  // A shared or default view is team-wide state. Only OWNER/ADMIN may change or
+  // delete it, including a MEMBER/VIEWER who owns it (created before the
+  // create/update gate, or after an admin was demoted). Judged on the loaded
+  // view, never on the request body, so unsharing and renaming are covered too.
+  private isTeamWideState(view: { isShared: boolean; isDefault: boolean }): boolean {
+    return view.isShared || view.isDefault;
   }
 
   private canMutate(
