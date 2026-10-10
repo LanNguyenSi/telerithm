@@ -122,6 +122,11 @@ export function SearchScreen() {
     () => savedViews.find((view) => view.id === currentViewId) ?? null,
     [currentViewId, savedViews],
   );
+  // Mirrors the backend rule: a shared or default view is team-wide state that
+  // only OWNER/ADMIN may overwrite, rename or delete. Used to hard-block the
+  // handlers even if a locked control is somehow reached.
+  const canManageSelectedView =
+    canManageShared || !selectedView || !(selectedView.isShared || selectedView.isDefault);
   const hasUnsavedChanges = useMemo(() => {
     if (!selectedView) return false;
     return JSON.stringify(selectedView.definition) !== JSON.stringify(currentDefinition);
@@ -437,7 +442,7 @@ export function SearchScreen() {
               );
           }}
           onOverwrite={async () => {
-            if (!selectedView) return;
+            if (!selectedView || !canManageSelectedView) return;
             const ok = await dialog.confirm(
               `"${selectedView.name}" überschreiben?`,
               "Die aktuelle Definition dieser Ansicht wird ersetzt.",
@@ -470,7 +475,7 @@ export function SearchScreen() {
               );
           }}
           onRename={async () => {
-            if (!selectedView) return;
+            if (!selectedView || !canManageSelectedView) return;
             const name = await dialog.prompt("Neuer Name", selectedView.name);
             if (!name) return;
             void updateSavedLogView(selectedView.id, team.id, token, { name })
@@ -500,7 +505,7 @@ export function SearchScreen() {
               );
           }}
           onDelete={async () => {
-            if (!selectedView) return;
+            if (!selectedView || !canManageSelectedView) return;
             const ok = await dialog.confirm(
               `"${selectedView.name}" löschen?`,
               "Diese Ansicht wird unwiderruflich gelöscht.",

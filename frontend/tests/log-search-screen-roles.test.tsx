@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { LogAuthProvider, SHARED_VIEWS_REASON } from "@/components/logs/log-auth-context";
+import { LogAuthProvider, SHARED_VIEWS_REASON, canManageSharedViews } from "@/components/logs/log-auth-context";
 import type { SavedLogView, TeamRole, TeamWithRole } from "@/types";
 
 const mocks = vi.hoisted(() => ({
@@ -146,5 +146,33 @@ describe.each(["MEMBER", "VIEWER", undefined] as const)("SearchScreen sharing co
     fireEvent.click(screen.getByRole("button", { name: /speichern|bestätigen|ok/i }));
     await waitFor(() => expect(mocks.createSavedLogView).toHaveBeenCalledTimes(1));
     expect(mocks.createSavedLogView.mock.calls[0][1]).toMatchObject({ isShared: false, isDefault: false });
+  });
+});
+
+const sharedView = {
+  id: "v1",
+  name: "Shared errors",
+  isShared: true,
+  isDefault: false,
+  definition: { filters: [] },
+} as unknown as SavedLogView;
+
+describe.each(["OWNER", "ADMIN", "MEMBER", "VIEWER"] as const)("SearchScreen manage controls for %s", (role) => {
+  it("gates Overwrite/Rename/Delete with the reason on a shared selected view", async () => {
+    mocks.getSavedLogViews.mockResolvedValue({ views: [sharedView] });
+    renderScreen(role);
+    const buttons = await Promise.all(
+      (["Overwrite", "Rename", "Delete"] as const).map((name) => screen.findByRole("button", { name })),
+    );
+    const locked = !canManageSharedViews(role);
+    for (const button of buttons) {
+      if (locked) {
+        expect(button).toBeDisabled();
+        expect(button).toHaveAttribute("title", SHARED_VIEWS_REASON);
+      } else {
+        expect(button).toBeEnabled();
+      }
+    }
+    expect(mocks.updateSavedLogView).not.toHaveBeenCalled();
   });
 });

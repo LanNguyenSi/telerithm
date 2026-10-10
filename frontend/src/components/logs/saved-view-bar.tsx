@@ -4,7 +4,7 @@ import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import type { SavedLogView } from "@/types";
 
-const SET_DEFAULT_HINT_ID = "saved-view-set-default-reason";
+const SHARED_VIEWS_HINT_ID = "saved-view-shared-reason";
 
 export function SavedViewBar({
   views,
@@ -36,7 +36,16 @@ export function SavedViewBar({
   sharedDisabledReason?: string;
 }) {
   const selected = views.find((view) => view.id === selectedId) ?? null;
-  const setDefaultHint = !canManageShared ? sharedDisabledReason : undefined;
+
+  // The server refuses Overwrite (PUT definition), Rename (PUT name) and Delete
+  // (DELETE) for a shared or default view unless the caller is a team OWNER or
+  // ADMIN. Mirror that here so the controls are not offered as if they worked.
+  const isTeamWide = Boolean(selected && (selected.isShared || selected.isDefault));
+  const manageLocked = !canManageShared && isTeamWide;
+
+  // A single hint element carries the reason for every locked control.
+  const hintText = !canManageShared ? sharedDisabledReason : undefined;
+  const hasHint = Boolean(hintText);
 
   return (
     <Card className="flex flex-wrap items-center gap-2">
@@ -66,7 +75,9 @@ export function SavedViewBar({
         <button
           type="button"
           onClick={onOverwrite}
-          disabled={!selected}
+          disabled={!selected || manageLocked}
+          title={manageLocked ? sharedDisabledReason : undefined}
+          aria-describedby={manageLocked && hasHint ? SHARED_VIEWS_HINT_ID : undefined}
           className="rounded-md border border-line px-2 py-1 text-xs text-ink hover:bg-slate-900/5 disabled:opacity-50 dark:hover:bg-white/5"
         >
           Overwrite
@@ -82,7 +93,9 @@ export function SavedViewBar({
         <button
           type="button"
           onClick={onRename}
-          disabled={!selected}
+          disabled={!selected || manageLocked}
+          title={manageLocked ? sharedDisabledReason : undefined}
+          aria-describedby={manageLocked && hasHint ? SHARED_VIEWS_HINT_ID : undefined}
           className="rounded-md border border-line px-2 py-1 text-xs text-ink hover:bg-slate-900/5 disabled:opacity-50 dark:hover:bg-white/5"
         >
           Rename
@@ -92,7 +105,7 @@ export function SavedViewBar({
           onClick={onSetDefault}
           disabled={!selected || !canManageShared}
           title={!canManageShared ? sharedDisabledReason : undefined}
-          aria-describedby={setDefaultHint ? SET_DEFAULT_HINT_ID : undefined}
+          aria-describedby={hasHint ? SHARED_VIEWS_HINT_ID : undefined}
           className="rounded-md border border-line px-2 py-1 text-xs text-ink hover:bg-slate-900/5 disabled:opacity-50 dark:hover:bg-white/5"
         >
           Set Default
@@ -100,15 +113,17 @@ export function SavedViewBar({
         <button
           type="button"
           onClick={onDelete}
-          disabled={!selected}
+          disabled={!selected || manageLocked}
+          title={manageLocked ? sharedDisabledReason : undefined}
+          aria-describedby={manageLocked && hasHint ? SHARED_VIEWS_HINT_ID : undefined}
           className="rounded-md border border-rose-300 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50 disabled:opacity-50 dark:border-rose-900/40 dark:hover:bg-rose-900/20"
         >
           Delete
         </button>
       </div>
-      {setDefaultHint ? (
-        <p id={SET_DEFAULT_HINT_ID} className="basis-full text-right text-xs text-muted">
-          {setDefaultHint}
+      {hasHint ? (
+        <p id={SHARED_VIEWS_HINT_ID} className="basis-full text-right text-xs text-muted">
+          {hintText}
         </p>
       ) : null}
     </Card>
