@@ -2,6 +2,8 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-10T17:46:27Z, re-verified and re-stamped api-authz-and-team-scoping.md (task 9edca718): `LogViewService.update` and `remove` now refuse (403, no mutation) a MEMBER or VIEWER on a loaded view that is shared or default, owner included, so the gap the saved-view paragraph named is closed and the paragraph states the rule instead. The log-view-service.ts citations in that paragraph were re-pointed and anchored; the router.ts citations and the rest of the doc are unchanged. The ENGINEERING.md source was edited in the same change.
+
 - 2026-10-06T08:17:36Z: clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md re-stamped after CHANGELOG.md gained a CI entry under [Unreleased] (audit gate allowlist) and earlier NLQ entries there. Re-verified: the CHANGELOG [0.1.1] notes these docs cite (PR #59 3 GiB cap and limits.xml, PR #60 traefik mirror, the limits.xml verification command) are unchanged.
 - 2026-10-05T14:08:41Z: nlq-pipeline.md re-stamped after docs/queries.md's Tuning paragraph named the current default model; the sections this pointer doc cites (how translation works, endpoint, fallback, stop words) are unchanged.
 - 2026-10-05T14:05:02Z: Groq model fix. compose-file-topology-and-drift.md gained one sentence on the LLM env (OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL) living only in docker-compose.traefik.yml, and was re-stamped with clickhouse-retention-and-memory-limits.md and ingestion-pipeline.md after DEPLOYMENT.md, docs/configuration.md, CHANGELOG.md and docker-compose.traefik.yml changed. The ClickHouse mounts, logging anchor, [0.1.1] notes and "Ingestion sources" section these docs cite are unchanged.
