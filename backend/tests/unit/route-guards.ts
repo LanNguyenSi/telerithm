@@ -104,7 +104,9 @@ export const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
       "Saved-view model, outside the team write rule: LogViewService lets the owner of a view update it and " +
       "OWNER/ADMIN (canManageShared) update shared views, so a VIEWER may edit its own private view. " +
       "Team-wide state is gated inside the handler: isShared: true or isDefault: true needs canManageShared " +
-      "(OWNER/ADMIN) and otherwise answers 403 before the service runs, so no default flag is cleared.",
+      "(OWNER/ADMIN) and otherwise answers 403 before the service runs, so no default flag is cleared. " +
+      "The service also refuses MEMBER/VIEWER (403, no mutation) on a loaded view that is already shared or " +
+      "default, owner or not.",
     verify: { type: "call", callee: "requireTeamRole" },
   },
   "POST /logs/views/:id/duplicate": {
@@ -116,7 +118,9 @@ export const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
   },
   "DELETE /logs/views/:id": {
     kind: "allowlist",
-    reason: "Same saved-view owner/canManageShared model as PUT /logs/views/:id.",
+    reason:
+      "Same saved-view owner/canManageShared model as PUT /logs/views/:id, including the service-side refusal " +
+      "of MEMBER/VIEWER on a shared or default view.",
     verify: { type: "call", callee: "requireTeamRole" },
   },
   "POST /subscriptions": {

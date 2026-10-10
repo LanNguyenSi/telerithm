@@ -234,7 +234,8 @@ export const openApiSpec = {
         },
         responses: {
           200: {
-            description: "Saved view updated",
+            description:
+              "Saved view updated. When OWNER/ADMIN clears the default flag of another user's private view, the view omits name and definition",
             content: { "application/json": { schema: { $ref: "#/components/schemas/SavedViewResponse" } } },
           },
         },

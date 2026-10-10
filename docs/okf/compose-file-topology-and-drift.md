@@ -3,7 +3,7 @@ type: invariant
 title: Compose file topology — three files, one actually deployed, and the mirroring invariant between the two prod variants
 description: docker-compose.yml is local dev only (no logging bounds, no ClickHouse config.d mounts); docker-compose.prod.yml is a generic/reference prod compose that is NOT deployed; docker-compose.traefik.yml is the actually-deployed VPS-01 variant, pinned by .relay.yml's compose_file. The three ClickHouse config mounts plus the json-file x-logging anchor must stay identical between prod.yml and traefik.yml; PR #59/#60/#110 are the precedent for that drift risk, the last of which finally applied a fix to both proactively instead of needing a follow-up mirror.
 tags: [docker-compose, deploy, drift, topology, ops]
-timestamp: 2026-10-07T08:16:19Z
+timestamp: 2026-10-10T18:10:03Z
 sources:
   - docker-compose.yml
   - docker-compose.prod.yml

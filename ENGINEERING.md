@@ -172,11 +172,27 @@ und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
   (Shared-View oder eigene) und übernimmt `isShared` nur, wenn
   `canManageShared` gilt (agent-tasks `765bb823`). `isDefault: true` ist für
   Nicht-Admins auch auf einer privaten View gesperrt, weil der Service das
-  Default-Flag teamweit zurücksetzt. Offene Lücke: ein Nicht-Admin, der eine
-  bereits geteilte oder als Default markierte View besitzt (vor dieser
-  Änderung angelegt, oder nach einer Herabstufung vom Admin), kann sie weiter
-  ändern, auf privat zurückstellen und löschen; bestehende Daten werden nicht
-  migriert.
+  Default-Flag teamweit zurücksetzt. Zusätzlich prüft der Service in `update`
+  und `remove` die geladene View (nicht den Request-Body): ist sie geteilt
+  (`isShared`) oder Default (`isDefault`) und fehlt `canManageShared`, antwortet
+  `PUT` und `DELETE` mit 403 und ohne Mutation, auch für den Besitzer. Das
+  deckt Umbenennen, `isShared: false`, `isDefault: false` und Löschen einer
+  bereits geteilten oder als Default markierten View ab (vor dem Gate
+  angelegt, oder nach einer Herabstufung vom Admin; agent-tasks `9edca718`).
+  Ein OWNER oder ADMIN ändert und löscht jede geteilte View seines Teams,
+  auch die eines anderen Nutzers. Eine private Default-View eines anderen
+  Nutzers (z. B. eines MEMBER oder eines herabgestuften Admins) räumt er nur
+  auf: `PUT`, dessen einzige Wirkung `isDefault: false` ist (Body ohne
+  `name`, `isShared` und `definition`), und `DELETE`. Alles andere von einem
+  Nicht-Besitzer auf dieser View antwortet mit 403 und ohne Mutation:
+  `isShared: true`, Umbenennen, Änderung der Definition, `isDefault: true`
+  und ein leerer Body. Die 200-Antwort des erlaubten `PUT` enthält weder
+  `name` noch `definition`, weil der Admin die View über Liste und
+  Duplizieren nicht lesen kann. Private, nicht als Default markierte Views
+  bleiben beim Besitzer; fremde private Views dieser Art verweigert der
+  Service weiter mit 403 (auch OWNER/ADMIN),
+  Views eines anderen Teams mit 404. Bestehende Daten werden nicht migriert;
+  solche Views ändert oder löscht nur noch ein OWNER oder ADMIN.
 - Nach dem Merge prüft der Operator in Produktion, ob VIEWER-Mitgliedschaften
   existieren (`SELECT count(*) FROM "TeamMember" WHERE role = 'VIEWER'`), weil
   deren bisheriger Schreibzugriff mit dieser Regel endet.

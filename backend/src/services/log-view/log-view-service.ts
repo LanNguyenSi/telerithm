@@ -27,6 +27,23 @@ function mapView(view: {
   };
 }
 
+// What a PUT answers when OWNER/ADMIN clears the default flag of another
+// user's private view: the row's identity and flags, never its name or
+// definition, which the caller could not read through list or duplicate.
+export type SavedLogViewStub = Omit<SavedLogView, "name" | "definition">;
+
+function mapViewStub(view: Parameters<typeof mapView>[0]): SavedLogViewStub {
+  return {
+    id: view.id,
+    teamId: view.teamId,
+    ownerUserId: view.ownerUserId,
+    isShared: view.isShared,
+    isDefault: view.isDefault,
+    createdAt: view.createdAt.toISOString(),
+    updatedAt: view.updatedAt.toISOString(),
+  };
+}
+
 function toPrismaJson(value: SavedLogViewDefinition): Prisma.InputJsonValue {
   return value as unknown as Prisma.InputJsonValue;
 }
@@ -82,13 +99,27 @@ export class LogViewService {
       isDefault?: boolean;
       definition?: SavedLogViewDefinition;
     },
-  ): Promise<SavedLogView> {
+  ): Promise<SavedLogView | SavedLogViewStub> {
     const existing = await prisma.logView.findUnique({ where: { id } });
     if (!existing || existing.teamId !== input.teamId) {
       throw new NotFoundError("Saved view not found");
     }
+    if (this.isTeamWideState(existing) && !input.canManageShared) {
+      throw new ForbiddenError("Forbidden");
+    }
     if (!this.canMutate(existing, input.userId, input.canManageShared)) {
       throw new ForbiddenError("Forbidden");
+    }
+
+    if (this.isForeignPrivateDefault(existing, input.userId)) {
+      // Clean-up only: clear the default flag, nothing else. Judged on the
+      // loaded view; the update data is fixed here so no other field of the
+      // request can reach the row.
+      if (!this.clearsDefaultOnly(input)) {
+        throw new ForbiddenError("Forbidden");
+      }
+      const cleared = await prisma.logView.update({ where: { id }, data: { isDefault: false } });
+      return mapViewStub(cleared);
     }
 
     if (input.isDefault === true) {
@@ -142,6 +173,9 @@ export class LogViewService {
     if (!existing || existing.teamId !== input.teamId) {
       throw new NotFoundError("Saved view not found");
     }
+    if (this.isTeamWideState(existing) && !input.canManageShared) {
+      throw new ForbiddenError("Forbidden");
+    }
     if (!this.canMutate(existing, input.userId, input.canManageShared)) {
       throw new ForbiddenError("Forbidden");
     }
@@ -152,13 +186,49 @@ export class LogViewService {
     return view.isShared || view.ownerUserId === userId;
   }
 
+  // A shared or default view is team-wide state. Only OWNER/ADMIN may change or
+  // delete it, including a MEMBER/VIEWER who owns it (created before the
+  // create/update gate, or after an admin was demoted). Judged on the loaded
+  // view, never on the request body, so unsharing and renaming are covered too.
+  // For the same reason OWNER/ADMIN may act on such a view even when it is a
+  // private default view owned by someone else (see canMutate), though on that
+  // one only to clean it up (see isForeignPrivateDefault).
+  private isTeamWideState(view: { isShared: boolean; isDefault: boolean }): boolean {
+    return view.isShared || view.isDefault;
+  }
+
+  // Another user's private default view. OWNER/ADMIN reach it only to clean it
+  // up (clear the default flag, or delete it), never to read, rename, share,
+  // overwrite or re-default it: they cannot read it through list or duplicate.
+  private isForeignPrivateDefault(
+    view: { isShared: boolean; isDefault: boolean; ownerUserId: string | null },
+    userId: string,
+  ): boolean {
+    return !view.isShared && view.isDefault && view.ownerUserId !== userId;
+  }
+
+  // True only for a request body whose sole effect is isDefault: false.
+  private clearsDefaultOnly(input: {
+    name?: string;
+    isShared?: boolean;
+    isDefault?: boolean;
+    definition?: SavedLogViewDefinition;
+  }): boolean {
+    return (
+      input.isDefault === false &&
+      input.name === undefined &&
+      input.isShared === undefined &&
+      input.definition === undefined
+    );
+  }
+
   private canMutate(
-    view: { isShared: boolean; ownerUserId: string | null },
+    view: { isShared: boolean; isDefault: boolean; ownerUserId: string | null },
     userId: string,
     canManageShared: boolean,
   ): boolean {
     if (view.ownerUserId === userId) return true;
-    if (view.isShared && canManageShared) return true;
+    if (this.isTeamWideState(view) && canManageShared) return true;
     return false;
   }
 }
