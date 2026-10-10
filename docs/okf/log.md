@@ -2,6 +2,10 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-10T18:10:03Z, re-verified and re-stamped api-authz-and-team-scoping.md (task 9edca718): on another user's private default view `LogViewService.update` now lets OWNER/ADMIN only clear the default flag (a `PUT` whose sole effect is `isDefault: false`, written with fixed data and answered without `name` and `definition`) or delete it; `isShared: true`, a rename, a definition change, `isDefault: true` and an empty body are 403 with no write. The `log-view-service.ts` citations in the saved-view paragraph were re-anchored (the two `updateMany` sites, `isTeamWideState`, the `update` and `remove` gates, `canRead`, the duplicate `isShared` line, `return false;`) and three new anchors added (`isForeignPrivateDefault`, `clearsDefaultOnly`, `mapViewStub`); the router.ts citations are unchanged. ENGINEERING.md was edited in the same change.
+
+- 2026-10-10T18:10:03Z, clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md re-stamped after the CHANGELOG.md Security entry under [Unreleased] (log-view gate) was reworded again. Re-verified: the CHANGELOG [0.1.1] notes these docs cite are unchanged.
+
 - 2026-10-10T17:55:27Z, re-verified and re-stamped api-authz-and-team-scoping.md (task 9edca718): `LogViewService.canMutate` now lets OWNER/ADMIN act on any shared or default view of their team (the `isTeamWideState` predicate), a private default view owned by a MEMBER, a VIEWER or a demoted admin included; the non-admin owner of such a view stays refused and a private non-default view stays with its owner. The `return false;` citation in the saved-view paragraph moved from line 176 to 178 and the `isTeamWideState` citation from 166 to 168; the other citations were re-checked against the source and hold. ENGINEERING.md was edited in the same change.
 
 - 2026-10-10T17:55:27Z, clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md re-stamped after the CHANGELOG.md Security entry under [Unreleased] (log-view gate) was reworded. Re-verified: the CHANGELOG [0.1.1] notes these docs cite are unchanged.

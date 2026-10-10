@@ -3,7 +3,7 @@ type: runbook
 title: ClickHouse retention, memory limits, and the config.d mount contract
 description: system-logs.xml disables text_log outright and gives every other ClickHouse system log table a 7-day TTL, with the caveat that a TTL change only applies to newly-created tables (existing ones get renamed *_N on restart); limits.xml's max_server_memory_usage_to_ram_ratio must never be 0 (means 0% of RAM, not disabled — the historical PR #60 footgun); init.sql only runs via docker-entrypoint-initdb.d on an empty ClickHouse datadir; the anomalies table it creates has zero code references and is provisioned-but-unwired for the still-Planned anomaly feature; and the operational lesson that a broken host bind-mount can silently turn a mounted config FILE into an empty directory, so a mount must be verified, not assumed.
 tags: [clickhouse, retention, memory, runbook, ops, config-mount]
-timestamp: 2026-10-10T17:55:27Z
+timestamp: 2026-10-10T18:10:03Z
 sources:
   - backend/clickhouse/system-logs.xml
   - backend/clickhouse/limits.xml
