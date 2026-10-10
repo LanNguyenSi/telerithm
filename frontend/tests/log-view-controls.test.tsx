@@ -168,3 +168,88 @@ describe.each(["MEMBER", "VIEWER"] as const)("log view controls for %s", (role) 
     expect(onConfirm).toHaveBeenCalledWith({ name: "My view", shared: false, isDefault: false });
   });
 });
+
+const VIEW_KINDS = {
+  private: { isShared: false, isDefault: false },
+  shared: { isShared: true, isDefault: false },
+  default: { isShared: false, isDefault: true },
+  "shared+default": { isShared: true, isDefault: true },
+} as const;
+
+type ViewKind = keyof typeof VIEW_KINDS;
+
+const MANAGE_BUTTONS = ["Overwrite", "Rename", "Delete"] as const;
+
+function renderBarWithView(role: TeamRole, kind: ViewKind) {
+  const flags = VIEW_KINDS[kind];
+  const target = { id: "v1", name: "Errors", ...flags } as unknown as SavedLogView;
+  const handlers = {
+    onSave: vi.fn(),
+    onOverwrite: vi.fn(),
+    onDuplicate: vi.fn(),
+    onRename: vi.fn(),
+    onDelete: vi.fn(),
+    onSetDefault: vi.fn(),
+  };
+  render(
+    <SavedViewBar
+      views={[target]}
+      selectedId="v1"
+      unsaved={false}
+      loading={false}
+      onSelect={() => {}}
+      onSave={handlers.onSave}
+      onOverwrite={handlers.onOverwrite}
+      onDuplicate={handlers.onDuplicate}
+      onRename={handlers.onRename}
+      onDelete={handlers.onDelete}
+      onSetDefault={handlers.onSetDefault}
+      canManageShared={canManageSharedViews(role)}
+      sharedDisabledReason={SHARED_VIEWS_REASON}
+    />,
+  );
+  const handlerFor = (name: (typeof MANAGE_BUTTONS)[number]) =>
+    name === "Overwrite" ? handlers.onOverwrite : name === "Rename" ? handlers.onRename : handlers.onDelete;
+  return {
+    handlers,
+    handlerFor,
+    locked: !canManageSharedViews(role) && (flags.isShared || flags.isDefault),
+  };
+}
+
+describe.each(["OWNER", "ADMIN", "MEMBER", "VIEWER"] as const)("SavedViewBar manage controls for %s", (role) => {
+  it.each(Object.keys(VIEW_KINDS) as ViewKind[])(
+    "gates Overwrite/Rename/Delete for a %s selected view",
+    (kind) => {
+      const { handlerFor, locked } = renderBarWithView(role, kind);
+      for (const name of MANAGE_BUTTONS) {
+        const button = screen.getByRole("button", { name });
+        const handler = handlerFor(name);
+        if (locked) {
+          expect(button).toBeDisabled();
+          expect(button).toHaveAttribute("title", SHARED_VIEWS_REASON);
+          expect(button.getAttribute("aria-describedby")).toBe(screen.getByText(SHARED_VIEWS_REASON).id);
+          fireEvent.click(button);
+          expect(handler).not.toHaveBeenCalled();
+        } else {
+          expect(button).toBeEnabled();
+          expect(button).not.toHaveAttribute("title");
+          fireEvent.click(button);
+          expect(handler).toHaveBeenCalledTimes(1);
+        }
+      }
+    },
+  );
+
+  it("keeps Save New and Duplicate usable even on a locked view", () => {
+    const { handlers } = renderBarWithView(role, "shared+default");
+    const save = screen.getByRole("button", { name: "Save New" });
+    const duplicate = screen.getByRole("button", { name: "Duplicate" });
+    expect(save).toBeEnabled();
+    expect(duplicate).toBeEnabled();
+    fireEvent.click(save);
+    fireEvent.click(duplicate);
+    expect(handlers.onSave).toHaveBeenCalledTimes(1);
+    expect(handlers.onDuplicate).toHaveBeenCalledTimes(1);
+  });
+});
