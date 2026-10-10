@@ -2263,43 +2263,39 @@ describe("API Routes", () => {
         });
       });
 
-      // OWNER/ADMIN manage any default view in their team, including a private
-      // default view owned by another user (a MEMBER/VIEWER, or a demoted admin).
+      // OWNER/ADMIN may only clean up another user's private default view: clear
+      // its default flag, or delete it. They cannot read it through list or
+      // duplicate, so renaming, sharing, overwriting or re-defaulting it is 403.
       describe.each(["OWNER", "ADMIN"] as const)("%s on another user's private default view", (role) => {
         const foreignDefault = (over: Record<string, unknown> = {}) =>
           ownedView({ ownerUserId: "user-9", isShared: false, isDefault: true, ...over });
 
-        it.each([
-          ["clearing the default (isDefault: false)", { isDefault: false }],
-          ["a rename", { name: "Renamed" }],
-          ["a definition-only overwrite", { definition }],
-        ] as const)("PUT with %s is 200", async (_label, body) => {
+        it("PUT { isDefault: false } is 200, touches only the default flag and hides name and definition", async () => {
           asRole(role);
           mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignDefault());
-          mockedPrisma.logView.update.mockResolvedValueOnce(foreignDefault({ ...body }));
+          mockedPrisma.logView.update.mockResolvedValueOnce(foreignDefault({ isDefault: false }));
           const res = await ownerApp
             .put("/api/v1/logs/views/view-owned?teamId=t1")
             .set("Authorization", "Bearer sess_admin")
-            .send(body);
+            .send({ isDefault: false });
           expect(res.status).toBe(200);
           expect(mockedPrisma.logView.update).toHaveBeenCalledTimes(1);
-        });
-
-        it("PUT { isDefault: true } is 200 and clears only the caller's own and shared defaults", async () => {
-          asRole(role);
-          mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignDefault());
-          mockedPrisma.logView.updateMany.mockResolvedValueOnce({ count: 0 });
-          mockedPrisma.logView.update.mockResolvedValueOnce(foreignDefault());
-          const res = await ownerApp
-            .put("/api/v1/logs/views/view-owned?teamId=t1")
-            .set("Authorization", "Bearer sess_admin")
-            .send({ isDefault: true });
-          expect(res.status).toBe(200);
-          expect(mockedPrisma.logView.updateMany).toHaveBeenCalledWith({
-            where: { teamId: "t1", OR: [{ ownerUserId: "user-1" }, { isShared: true }] },
+          expect(mockedPrisma.logView.update).toHaveBeenCalledWith({
+            where: { id: "view-owned" },
             data: { isDefault: false },
           });
-          expect(mockedPrisma.logView.update).toHaveBeenCalledTimes(1);
+          expect(mockedPrisma.logView.updateMany).not.toHaveBeenCalled();
+          expect(res.body.view).toEqual({
+            id: "view-owned",
+            teamId: "t1",
+            ownerUserId: "user-9",
+            isShared: false,
+            isDefault: false,
+            createdAt: stamp.toISOString(),
+            updatedAt: stamp.toISOString(),
+          });
+          expect(res.body.view).not.toHaveProperty("name");
+          expect(res.body.view).not.toHaveProperty("definition");
         });
 
         it("DELETE is 204", async () => {
@@ -2312,12 +2308,68 @@ describe("API Routes", () => {
           expect(res.status).toBe(204);
           expect(mockedPrisma.logView.delete).toHaveBeenCalledWith({ where: { id: "view-owned" } });
         });
+
+        it.each([
+          ["isShared: true", { isShared: true }],
+          ["isShared: true with isDefault: false", { isDefault: false, isShared: true }],
+          ["isShared: false with isDefault: false", { isDefault: false, isShared: false }],
+          ["a rename", { name: "Renamed" }],
+          ["a rename with isDefault: false", { isDefault: false, name: "Renamed" }],
+          ["a definition-only overwrite", { definition }],
+          ["a definition with isDefault: false", { isDefault: false, definition }],
+          ["isDefault: true", { isDefault: true }],
+          ["an empty body", {}],
+        ] as const)("PUT with %s is 403 with no mutation", async (_label, body) => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignDefault());
+          // A returned row makes a missing gate show as a 200 with the mock called.
+          mockedPrisma.logView.update.mockResolvedValue(foreignDefault({ ...body }));
+          const res = await ownerApp
+            .put("/api/v1/logs/views/view-owned?teamId=t1")
+            .set("Authorization", "Bearer sess_admin")
+            .send(body);
+          expect(res.status).toBe(403);
+          expect(mockedPrisma.logView.update).not.toHaveBeenCalled();
+          expect(mockedPrisma.logView.updateMany).not.toHaveBeenCalled();
+          expect(mockedPrisma.logView.delete).not.toHaveBeenCalled();
+        });
+      });
+
+      // A shared, non-default view of another user stays fully manageable by
+      // OWNER/ADMIN; the default-view clean-up limit above does not reach it.
+      describe.each(["OWNER", "ADMIN"] as const)("%s on another user's shared non-default view", (role) => {
+        const foreignSharedPlain = (over: Record<string, unknown> = {}) =>
+          ownedView({ ownerUserId: "user-9", isShared: true, isDefault: false, ...over });
+
+        it("PUT rename is 200", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignSharedPlain());
+          mockedPrisma.logView.update.mockResolvedValueOnce(foreignSharedPlain({ name: "Renamed" }));
+          const res = await ownerApp
+            .put("/api/v1/logs/views/view-owned?teamId=t1")
+            .set("Authorization", "Bearer sess_admin")
+            .send({ name: "Renamed" });
+          expect(res.status).toBe(200);
+          expect(mockedPrisma.logView.update).toHaveBeenCalledTimes(1);
+          expect(res.body.view.name).toBe("Renamed");
+        });
+
+        it("DELETE is 204", async () => {
+          asRole(role);
+          mockedPrisma.logView.findUnique.mockResolvedValueOnce(foreignSharedPlain());
+          mockedPrisma.logView.delete.mockResolvedValueOnce(foreignSharedPlain());
+          const res = await ownerApp
+            .delete("/api/v1/logs/views/view-owned?teamId=t1")
+            .set("Authorization", "Bearer sess_admin");
+          expect(res.status).toBe(204);
+          expect(mockedPrisma.logView.delete).toHaveBeenCalledWith({ where: { id: "view-owned" } });
+        });
       });
 
       // A non-owner never reaches the view's contents through PUT/DELETE unless
-      // the view is shared or default and the caller is OWNER/ADMIN; a private,
-      // non-default view of someone else stays refused for every role. A MEMBER or
-      // VIEWER owning a default view is refused by the cases above.
+      // the view is shared (OWNER/ADMIN) or a private default view the caller only
+      // cleans up (OWNER/ADMIN, see above); a private, non-default view of
+      // someone else stays refused for every role.
       describe.each(["MEMBER", "VIEWER", "OWNER", "ADMIN"] as const)(
         "%s on another user's private view",
         (role) => {
