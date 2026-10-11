@@ -236,7 +236,9 @@ export const openApiSpec = {
           200: {
             description:
               "Saved view updated. When OWNER/ADMIN clears the default flag of another user's private view, the view omits name and definition",
-            content: { "application/json": { schema: { $ref: "#/components/schemas/SavedViewResponse" } } },
+            content: {
+              "application/json": { schema: { $ref: "#/components/schemas/SavedViewUpdateResponse" } },
+            },
           },
         },
       },
@@ -657,9 +659,34 @@ export const openApiSpec = {
           updatedAt: { type: "string", format: "date-time" },
         },
       },
+      SavedViewStub: {
+        type: "object",
+        description:
+          "Identity and flags of a saved view the caller cannot read (returned when OWNER/ADMIN clears the default flag of another user's private view)",
+        properties: {
+          id: { type: "string" },
+          teamId: { type: "string" },
+          ownerUserId: { type: "string", nullable: true },
+          isShared: { type: "boolean" },
+          isDefault: { type: "boolean" },
+          createdAt: { type: "string", format: "date-time" },
+          updatedAt: { type: "string", format: "date-time" },
+        },
+      },
       SavedViewResponse: {
         type: "object",
         properties: { view: { $ref: "#/components/schemas/SavedView" } },
+      },
+      SavedViewUpdateResponse: {
+        type: "object",
+        properties: {
+          view: {
+            oneOf: [
+              { $ref: "#/components/schemas/SavedView" },
+              { $ref: "#/components/schemas/SavedViewStub" },
+            ],
+          },
+        },
       },
       SavedViewsResponse: {
         type: "object",

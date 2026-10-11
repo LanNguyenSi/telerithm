@@ -83,6 +83,14 @@ export interface SavedLogView {
   updatedAt: string;
 }
 
+// What PUT /logs/views/:id answers when OWNER/ADMIN clears the default flag
+// of another user's private view: identity and flags only.
+export type SavedLogViewStub = Omit<SavedLogView, "name" | "definition">;
+
+export function isSavedLogViewStub(view: SavedLogView | SavedLogViewStub): view is SavedLogViewStub {
+  return !("definition" in view);
+}
+
 export interface DashboardOverview {
   teamId: string;
   totalLogs: number;
