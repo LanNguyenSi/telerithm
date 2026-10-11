@@ -11,7 +11,7 @@ CI (`.github/workflows/ci.yml`) runs one job per package:
 - **packages/sdk-js**: type check and vitest with coverage thresholds.
 - **CLI**: `bats packages/cli/logforge-pipe.bats`.
 
-The coverage thresholds are set per job in `.github/workflows/ci.yml`. A pull request is ready when all four jobs pass.
+The coverage thresholds are set per job in `.github/workflows/ci.yml`. A pull request is ready when all four jobs pass and the separate Audit workflow (`.github/workflows/audit.yml`, an `npm audit` gate over the lockfiles) passes.
 
 The two backend sections below are summaries. The full English write-up, including the test internals and the threat model, is [docs/okf/api-authz-and-team-scoping.md](docs/okf/api-authz-and-team-scoping.md).
 

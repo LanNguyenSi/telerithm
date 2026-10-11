@@ -101,7 +101,7 @@ Sources are created per team via the API; each gets a UUID and an API key. The A
 
 ## Tenancy modes
 
-- `MULTI_TENANT=false` (default): a single `default` team is created when the first account becomes active, and every active account joins it (pending accounts join on approval). Suitable for self-hosted single-team installs.
+- `MULTI_TENANT=false` (default): a single `default` team is created when the first account joins it. An account joins when it signs up active or is approved through `POST /admin/users/:id/approve`; activating an account with `PUT /admin/users/:id` does not add it to the team. Suitable for self-hosted single-team installs.
 - `MULTI_TENANT=true`: each user can create teams, invite members, manage RBAC. Suitable for shared hosting.
 
 `REGISTRATION_MODE` orthogonally controls signup: `open` activates every new account, `approval` queues new accounts for admin approval, and `invite-only` blocks every signup except the `ADMIN_EMAIL` address. Invites (multi-tenant mode only) add an existing, logged-in account to a team; they do not create accounts, and no admin route creates accounts either.

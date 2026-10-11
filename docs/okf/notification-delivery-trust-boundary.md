@@ -31,7 +31,7 @@ There are three such requests, and they are the only `fetch` calls in `backend/s
 - `SLACK`: there is no Slack channel module; `sendSlackMessage` lives in the dispatcher (`backend/src/services/notification/notification-dispatcher.ts:139#"async function sendSlackMessage("`), checks `webhook_url` (`backend/src/services/notification/notification-dispatcher.ts:169#"await assertSafeUrl(webhookUrl);"`) and fetches it (`backend/src/services/notification/notification-dispatcher.ts:175#"redirect:"`).
 - `MSTEAMS`: `sendMsTeamsMessage` checks `webhook_url` (`backend/src/services/notification/channels/msteams.ts:61#"await assertSafeUrl(webhookUrl);"`) and fetches it (`backend/src/services/notification/channels/msteams.ts:67#"redirect:"`).
 
-`EMAIL` makes no outbound request: `sendEmail` writes one log line with the recipient and subject (`backend/src/services/notification/channels/email.ts:15-20#"Email notification (SMTP not configured, logging only)"`). Its recipient, `config.email` or the user's own address (`backend/src/services/notification/notification-dispatcher.ts:89#"to: config.email ?? subscription.user.email"`), is not validated anywhere.
+`EMAIL` makes no outbound request: `sendEmail` writes one log line with the recipient and subject (`backend/src/services/notification/channels/email.ts:15-20#"Email notification (SMTP not configured, logging only)"`). Its recipient is `config.email`, or else the subscriber's own address (`backend/src/services/notification/notification-dispatcher.ts:89#"to: config.email ?? subscription.user.email"`). `config.email` is not validated anywhere, since the subscription `config` is a free-form record; the fallback is the account's registered address, which signup validates as an email (`backend/src/validation/schemas.ts:6#"email: z.string().email(),"`).
 
 ## Where it's enforced
 
@@ -46,13 +46,16 @@ flowchart TD
   end
   A1 -->|passes| DB[("AlertSubscription.config<br/>Postgres")]
   V -->|no| DB
-  subgraph delivery["Delivery, per attempt"]
-    T["AlertEvaluationWorker<br/>POST /subscriptions/:id/test"] --> F["NotificationDispatcher.dispatch<br/>findForIncident"]
-    F --> S["sendWebhook, sendSlackMessage,<br/>sendMsTeamsMessage"]
-    S --> A2["assertSafeUrl"]
-    A2 -->|passes| X["fetch, redirect: manual,<br/>10 s timeout"]
-    A2 -->|throws| RT["failed attempt: retry,<br/>after 3 attempts logged"]
-    X -->|"not ok, a 3xx included"| RT
+  subgraph delivery["Delivery"]
+    AW["AlertEvaluationWorker"] --> F["NotificationDispatcher.dispatch<br/>findForIncident"]
+    TR["POST /subscriptions/:id/test"] --> F
+    F --> S
+    subgraph attempt["Per attempt, up to 3"]
+      S["sendWebhook, sendSlackMessage,<br/>sendMsTeamsMessage"] --> A2["assertSafeUrl"]
+      A2 -->|passes| X["fetch, redirect: manual,<br/>10 s timeout"]
+      A2 -->|throws| RT["failed attempt: retry,<br/>after 3 attempts logged"]
+      X -->|"not ok, a 3xx included"| RT
+    end
   end
   DB --> F
 ```

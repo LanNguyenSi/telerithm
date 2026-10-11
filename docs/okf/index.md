@@ -14,6 +14,16 @@ their areas; these docs deliberately do not duplicate them.
   `docs/architecture.md` "Ingestion pipeline" section plus
   `docs/configuration.md`'s "Ingestion sources" section.
 
+## Modules
+
+- [Alert evaluation and incident lifecycle](alert-evaluation-and-incident-lifecycle.md),
+  the cross-file couplings around `AlertEvaluationWorker` that
+  `docs/architecture.md`'s "Alerting" section does not state: one unlocked
+  loop per backend process, skipped evaluations that are not made up, no
+  rule-authoring route and the demo seed's SQL-text rule, the fixed `MEDIUM`
+  severity against subscription severity filters, team scoping through the
+  rule relation, and what the alert metrics count.
+
 ## Invariants
 
 - [API authz and team scoping](api-authz-and-team-scoping.md), the three
@@ -39,16 +49,6 @@ their areas; these docs deliberately do not duplicate them.
   check is the binding one (the router's input check does not run on every
   write), who can set a target, what leaves the system, and the
   test route.
-
-## Modules
-
-- [Alert evaluation and incident lifecycle](alert-evaluation-and-incident-lifecycle.md),
-  the cross-file couplings around `AlertEvaluationWorker` that
-  `docs/architecture.md`'s "Alerting" section does not state: one unlocked
-  loop per backend process, skipped evaluations that are not made up, no
-  rule-authoring route and the demo seed's SQL-text rule, the fixed `MEDIUM`
-  severity against subscription severity filters, team scoping through the
-  rule relation, and what the alert metrics count.
 
 ## Runbooks
 

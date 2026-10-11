@@ -154,7 +154,7 @@ git pull origin master
 docker compose -f docker-compose.traefik.yml --env-file .env.production build
 docker compose -f docker-compose.traefik.yml --env-file .env.production up -d
 
-# Run migrations if schema changed
+# Apply schema changes (prisma db push)
 docker compose -f docker-compose.traefik.yml exec backend npx prisma db push
 ```
 

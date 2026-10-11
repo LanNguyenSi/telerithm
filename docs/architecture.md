@@ -42,18 +42,19 @@ deploy/                   Optional fluentd / vector ingestion sidecars
 
 Two independent paths write and read the stores: the ingest path, triggered by each request, and the alert path, driven by a timer. In both diagrams, dashed edges are fire-and-forget calls or channels that send nothing.
 
-The ingest path writes each batch to ClickHouse and then triggers its side effects:
+The ingest path looks up the source in Postgres (the API key in `authenticateApiKey`, then the source id in `IngestionService.ingest`) and waits for it, writes each batch to ClickHouse and then triggers its side effects:
 
 ```mermaid
 flowchart TD
-  SRC["HTTP clients, SDK, shippers"] -->|"POST /api/v1/ingest/:sourceId (X-API-Key)"| ING[IngestionService.ingest]
+  SRC["HTTP clients, SDK, shippers"] -->|"POST /api/v1/ingest/:sourceId[/raw] (X-API-Key)"| ING[IngestionService.ingest]
+  ING -->|"resolve source (awaited)"| PG[(Postgres)]
   ING -->|raw strings only| PARSE[LogParser.parseRaw]
   ING -->|LogRepository.insert| CH[("ClickHouse logs")]
   ING -->|invalidate dashboard cache| REDIS[(Redis)]
   ING -->|"emit log:new"| STREAM[StreamingService]
   STREAM -->|"GET /api/v1/stream/logs"| SSE[SSE client]
   ING -.->|"error or fatal: trackError"| ISSUE[IssueService]
-  ISSUE -->|upsert Issue| PG[(Postgres)]
+  ISSUE -->|upsert Issue| PG
 ```
 
 The alert path runs on its own timer and reads what the ingest path stored:
@@ -134,7 +135,7 @@ Key design choices:
 
 ## Alerting
 
-`AlertEvaluationWorker` runs inside the backend process: once at startup, then every 60 seconds (one evaluation loop per backend process). It loads the enabled rules, counts matching log rows in ClickHouse for each, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Rules are read from Postgres; the API can list, mute and unmute them (the UI only lists them), and nothing can create or edit them. Maintenance windows suppress rule evaluation entirely (no incidents, no notifications). `POST /api/v1/subscriptions/:id/test` is the exception: it dispatches a synthetic test notification straight through `NotificationDispatcher` without checking maintenance windows at all, so an operator can verify a channel is wired up even while a window is active. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
+`AlertEvaluationWorker` runs inside the backend process: once at startup, then every 60 seconds (one evaluation loop per backend process). It loads the enabled rules, counts matching log rows in ClickHouse for each, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Rules are read from Postgres; the API can list, mute and unmute them (the UI only lists them); no route or UI creates a rule or edits anything else on it, and only the demo seed inserts one. Maintenance windows suppress rule evaluation entirely (no incidents, no notifications). `POST /api/v1/subscriptions/:id/test` is the exception: it dispatches a synthetic test notification straight through `NotificationDispatcher` without checking maintenance windows at all, so an operator can verify a channel is wired up even while a window is active. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
 
 How a rule is evaluated:
 
