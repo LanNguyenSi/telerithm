@@ -15,18 +15,40 @@ Thanks for your interest in contributing. This guide covers the basics.
 ```bash
 # Start the full stack
 make init
+```
 
-# Or run backend and frontend separately
-cd backend && npm install && npm run dev
+To run backend and frontend outside Docker, start only the datastores in Docker. This also creates the ClickHouse tables from `backend/clickhouse/init.sql`; the backend does not create them itself.
+
+```bash
+docker compose up -d postgres clickhouse redis
+cp backend/.env.example backend/.env
+cd backend && npm install && npm run db:push && npm run dev
+```
+
+`npm run dev` reads `backend/.env`. The backend exits at startup without `DATABASE_URL` and `CLICKHOUSE_URL`. `REGISTRATION_MODE` defaults to `approval`, so set `REGISTRATION_MODE=open` or `ADMIN_EMAIL` to your own address in `backend/.env` before you sign up locally. In another shell:
+
+```bash
+cp frontend/.env.local.example frontend/.env.local
 cd frontend && npm install && npm run dev
 ```
 
+See [docs/configuration.md](docs/configuration.md) for all variables.
+
 ## Before Submitting
 
-- Run the type checker: `cd backend && npx tsc --noEmit`
-- Run tests: `cd backend && npm test`
-- Run the frontend build: `cd frontend && npx next build`
+Run the checks CI runs (`.github/workflows/ci.yml`) in each package you changed:
+
+- backend: `cd backend && npx tsc --noEmit && npm run lint && npm run format:check && npm run test:coverage`
+- frontend: `cd frontend && npx tsc --noEmit && npm test && npm run build`
+- packages/sdk-js: `cd packages/sdk-js && npx tsc --noEmit && npm test`
+- CLI: `bats packages/cli/logforge-pipe.bats`
+
+CI also enforces coverage floors for the backend, frontend and SDK tests; `.github/workflows/ci.yml` has the numbers.
+
+- New state-changing API routes are registered through `writeRoute` or need a justified allowlist entry in `backend/tests/unit/route-guards.ts`; see [docs/okf/api-authz-and-team-scoping.md](docs/okf/api-authz-and-team-scoping.md).
 - Keep commits focused. One logical change per commit.
+
+Cross-file invariants and operational facts are collected in the knowledge bundle at [docs/okf/index.md](docs/okf/index.md).
 
 ## Pull Requests
 
@@ -38,7 +60,7 @@ cd frontend && npm install && npm run dev
 ## Code Style
 
 - TypeScript strict mode
-- Prettier for formatting (run `npx prettier --write .` if needed)
+- Prettier for formatting: run `npm run format` in `backend/`, or Prettier from inside `frontend/` (it has its own `.prettierrc`), never from the repo root
 - No unused imports or variables
 
 ## Reporting Bugs

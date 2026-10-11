@@ -1,30 +1,50 @@
 # API
 
-The full route reference is the OpenAPI 3 spec (`backend/src/api/openapi.ts`), served at `GET /openapi.json` and rendered at `GET /docs`. This page covers what the spec does not: an overview of the route groups, and rate limiting.
+The OpenAPI 3 spec (`backend/src/api/openapi.ts`, served at `GET /openapi.json` and rendered at `GET /docs`) covers the health, auth, team, source, ingest, log search, saved-view, NLQ, alert-list, dashboard and streaming routes. Subscriptions, issues, maintenance windows, incident actions and the incident timeline, rule mute and unmute, invites, admin routes, `GET /auth/settings`, `POST /ingest/:sourceId/raw` and `GET /logs/:id` are not in the spec yet; this page lists them. It also covers rate limiting.
 
 ## Endpoints
 
-All endpoints are under `/api/v1`. Bearer-token auth applies except `/ingest/*` (API key) and `/auth/*`. The table below is a sampling; the full surface is around 58 endpoints across the categories below. See `GET /openapi.json` for the complete spec.
+All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `/auth/*` (no auth) and `/ingest/*` (API key); `/stream/logs` also accepts the token as `?token=`.
 
 | Method | Path                              | Description                       |
 | ------ | --------------------------------- | --------------------------------- |
 | `POST` | `/auth/register`, `/auth/login`   | Account creation, sign in         |
-| `GET`  | `/teams`                          | Teams (CRUD, invites, members)    |
-| `GET`  | `/sources`                        | Ingestion sources (CRUD)          |
-| `POST` | `/ingest/:sourceId`               | Ingest logs (API key)             |
-| `POST` | `/logs/search`                    | Search logs                       |
+| `GET`  | `/auth/settings`                  | Registration mode (no auth)       |
+| `GET`, `POST` | `/teams`                   | Teams (list, create)              |
+| `POST`, `GET` | `/teams/:id/invites`       | Create and list team invites      |
+| `POST` | `/invites/:token/accept`          | Accept an invite (logged-in user) |
+| `DELETE` | `/invites/:id`                  | Revoke an invite                  |
+| `GET`, `POST` | `/sources`                 | Ingestion sources (list, create)  |
+| `POST` | `/ingest/:sourceId`, `/ingest/:sourceId/raw` | Ingest logs (API key)             |
+| `POST` | `/logs/search`                    | Search logs (also `GET /logs`)    |
+| `GET`  | `/logs/:id`                       | One log entry                     |
+| `POST` | `/logs/context`                   | Surrounding log lines             |
 | `POST` | `/logs/facets`, `/logs/histogram`, `/logs/patterns` | Faceted search, timelines, pattern clustering |
-| `GET`  | `/logs/views`                     | Saved views (CRUD, duplicate)     |
+| `GET`  | `/query/jobs/:id`                 | Result of an async facet, histogram or pattern job |
+| `GET`, `POST`, `PUT`, `DELETE` | `/logs/views`, `/logs/views/:id` | Saved views (list, create, update, delete) |
+| `POST` | `/logs/views/:id/duplicate`       | Duplicate a saved view            |
 | `POST` | `/query/natural`                  | Translate NL to query plan        |
 | `GET`  | `/stream/logs`                    | SSE live tail                     |
-| `GET`  | `/alerts/rules`, `/alerts/incidents` | Alert rules + incidents        |
-| `POST` | `/alerts/incidents/:id/acknowledge` | Incident workflow (ack, resolve, reopen) |
+| `GET`  | `/alerts/rules`                   | Alert rules (list)                |
+| `POST` | `/alerts/rules/:id/mute`, `/alerts/rules/:id/unmute` | Mute and unmute a rule |
+| `GET`  | `/alerts/incidents`               | Alert incidents (list)            |
+| `POST` | `/alerts/incidents/:id/acknowledge`, `/resolve`, `/reopen` | Incident workflow |
+| `GET`  | `/alerts/incidents/:id/timeline`  | Incident event timeline           |
 | `GET`  | `/dashboards/overview`            | Overview dashboard                |
-| `GET`  | `/issues`, `/issues/:id`          | Grouped errors with assignment    |
-| `GET`  | `/subscriptions`                  | Notification channels (CRUD)      |
-| `GET`  | `/maintenance-windows`            | Maintenance windows               |
-| `GET`  | `/admin/users`, `/admin/teams`    | Admin (Owner role)                |
+| `GET`  | `/issues`, `/issues/:id`          | Grouped errors                    |
+| `PUT`  | `/issues/:id`                     | Update an issue (status, assignment) |
+| `GET`, `POST` | `/subscriptions`           | Notification subscriptions (list, create) |
+| `PUT`, `DELETE` | `/subscriptions/:id`     | Update, delete a subscription     |
+| `POST` | `/subscriptions/:id/test`         | Send a test notification          |
+| `GET`, `POST` | `/maintenance-windows`     | Maintenance windows (list, create) |
+| `DELETE` | `/maintenance-windows/:id`      | Delete a maintenance window       |
+| `GET`  | `/admin/users`, `/admin/teams`, `/admin/teams/:id/members`, `/admin/stats` | Admin listings |
+| `PUT`, `POST`, `DELETE` | `/admin/users/:id`, `/admin/users/:id/approve`, `/admin/users/:id/add-to-team`, `/admin/users/:id/remove-from-team/:teamId`, `/admin/teams/:id/members/:userId` | Admin user and membership changes |
 | `GET`  | `/health`                         | Health check                      |
+
+The `/admin/*` routes need the instance admin (global `ADMIN` user role, given to the `ADMIN_EMAIL` account at signup; team roles do not apply).
+
+There are two role systems: the instance role (`USER` or `ADMIN`) gates `/admin/*`, and the team role (`OWNER`, `ADMIN`, `MEMBER`, `VIEWER`) gates team-scoped routes.
 
 ## Rate limiting
 
@@ -45,7 +65,7 @@ The global limiter (`app.use(rateLimit(...))` in `backend/src/app.ts`, mounted b
 A request over the limit gets `429 Too Many Requests` with:
 
 - A `Retry-After` header (integer seconds until the window resets).
-- A JSON body: `{ "error": "<message>", "retryAfter": <integer seconds> }`.
+- A JSON body `{ "error": "<message>" }`. Only `POST /api/v1/subscriptions/:id/test` adds `"retryAfter": <integer seconds>`; on every other route, read the `Retry-After` header.
 
 ### Why `/subscriptions/:id/test` gets its own limiter
 

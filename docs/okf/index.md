@@ -12,7 +12,17 @@ their areas; these docs deliberately do not duplicate them.
   `docs/architecture.md` "NLQ pipeline" section plus `docs/queries.md`.
 - [Ingestion pipeline](ingestion-pipeline.md), pointer to the authoritative
   `docs/architecture.md` "Ingestion pipeline" section plus
-  `docs/configuration.md`'s source-type table.
+  `docs/configuration.md`'s "Ingestion sources" section.
+
+## Modules
+
+- [Alert evaluation and incident lifecycle](alert-evaluation-and-incident-lifecycle.md),
+  the cross-file couplings around `AlertEvaluationWorker` that
+  `docs/architecture.md`'s "Alerting" section does not state: one unlocked
+  loop per backend process, skipped evaluations that are not made up, no
+  rule-authoring route and the demo seed's SQL-text rule, the fixed `MEDIUM`
+  severity against subscription severity filters, team scoping through the
+  rule relation, and what the alert metrics count.
 
 ## Invariants
 
@@ -25,18 +35,26 @@ their areas; these docs deliberately do not duplicate them.
   scan for code outside `createApp()`.
 - [ClickHouse tenant row-scoping](clickhouse-tenant-row-scoping.md), the
   second, independent tenancy layer below `router.ts`: `team_id` as the
-  first `WHERE` condition in every query method, and the dynamic
+  first `WHERE` condition in every `logs` read, the `LogRepository` methods
+  and the alert worker's count query alike, and the dynamic
   `fields['<key>']` allow-list sanitiser that keeps it from being broken
   out of.
 - [Compose file topology and drift](compose-file-topology-and-drift.md),
   which of the three `docker-compose*.yml` files is actually deployed, what
   must stay mirrored between the two production variants, and the PR
   #59/#60/#110 drift precedent.
+- [Notification delivery trust boundary](notification-delivery-trust-boundary.md),
+  `assertSafeUrl` right before each of the three outbound `fetch` calls
+  (webhook, Slack, Teams) with `redirect: "manual"`, why that delivery-time
+  check is the binding one (the router's input check does not run on every
+  write), who can set a target, what leaves the system, and the
+  test route.
 
 ## Runbooks
 
 - [ClickHouse retention and memory limits](clickhouse-retention-and-memory-limits.md),
   the `text_log` disable + 7-day TTLs, the `max_server_memory_usage_to_ram_ratio=0`
-  footgun, `init.sql`'s run-once-on-empty-datadir semantics, the unwired
+  footgun, `init.sql`'s run-once-on-empty-datadir semantics, the fixed 30-day
+  `logs` TTL next to the unenforced per-source `retentionDays`, the unwired
   `anomalies` table, and how to verify a `config.d` mount actually took
   effect.

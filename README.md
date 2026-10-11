@@ -13,13 +13,13 @@ Telerithm turns plain-language questions into structured queries over your logs.
 - Natural-language search with an editable AI-generated filter plan
 - Real-time SSE log streaming, Today view, log detail with surrounding context
 - Saved views, faceted search, histograms, automatic pattern clustering
-- Multi-source ingestion: HTTP, Syslog (UDP/TCP), Filebeat, Docker, CloudWatch
-- Alert rules and incidents, maintenance windows, notification channels (Email, Webhook, Slack, Microsoft Teams)
+- Log ingestion over HTTP: structured JSON entries or raw JSON, syslog (RFC 5424/3164) and plain-text lines, with reference shippers for Docker container logs
+- Alert incidents (acknowledge, resolve, reopen, timeline), alert rule mute and unmute, maintenance windows, and notification channels for Webhook, Slack and Microsoft Teams
 - Error grouping with fingerprinting and an assignment workflow
 - Team management with RBAC (Owner, Admin, Member, Viewer), invites, and an admin API; single-tenant by default, optional multi-tenant via config flag
 - Prometheus metrics endpoint (`/metrics`) covering HTTP, ingest, alert, SSE, and NLQ stats
 
-**Planned:** escalation policies (schema exists, evaluation not yet wired), AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, retention policies, `telerithm` CLI.
+**Planned:** creating and editing alert rules through the API or UI, email delivery (the Email channel is accepted but only writes a log line), escalation policies (schema exists, evaluation not yet wired), AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, per-source retention (logs currently expire after a fixed 30 days), `telerithm` CLI.
 
 ## Quick start
 
@@ -43,17 +43,51 @@ That builds the stack and starts everything on Docker:
 | Backend  | http://localhost:4000        |
 | API docs | http://localhost:4000/docs   |
 
-Send a log, then ask a question:
+The local stack is for your own machine only: it also publishes Postgres, ClickHouse and Redis on host ports with default or no credentials.
 
-```bash
-curl -X POST http://localhost:4000/api/v1/ingest/<sourceId> \
-  -H "X-API-Key: <apiKey>" -H "Content-Type: application/json" \
-  -d '{"logs":[{"level":"error","service":"payment","message":"Payment authorization failed for order 4721","fields":{"status_code":502,"amount":189.50}}]}'
-```
+The stack starts empty (no demo data), and sources are created through the API. The steps below use `jq`.
+
+1. Create an account and keep its session token. The local stack allows open signup, and the address `admin@telerithm.local` becomes the instance admin (signing up at http://localhost:3000/register and then calling `POST /api/v1/auth/login` also works):
+
+   ```bash
+   TOKEN=$(curl -s -X POST http://localhost:4000/api/v1/auth/register \
+     -H "Content-Type: application/json" \
+     -d '{"email":"admin@telerithm.local","password":"<at least 6 characters>","name":"Admin"}' | jq -r .token)
+   ```
+
+2. Look up your team:
+
+   ```bash
+   TEAM_ID=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:4000/api/v1/teams | jq -r '.teams[0].id')
+   ```
+
+3. Create a source. Use `.source.id` and `.source.apiKey` from the response in the next step:
+
+   ```bash
+   curl -s -X POST http://localhost:4000/api/v1/sources \
+     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d "{\"teamId\":\"$TEAM_ID\",\"name\":\"demo\",\"type\":\"HTTP\"}"
+   ```
+
+4. Send a log:
+
+   ```bash
+   curl -X POST http://localhost:4000/api/v1/ingest/<sourceId> \
+     -H "X-API-Key: <apiKey>" -H "Content-Type: application/json" \
+     -d '{"logs":[{"level":"error","service":"payment","message":"Payment authorization failed for order 4721","fields":{"status_code":502,"amount":189.50}}]}'
+   ```
+
+5. Ask a question:
+
+   ```bash
+   curl -s -X POST http://localhost:4000/api/v1/query/natural \
+     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+     -d "{\"teamId\":\"$TEAM_ID\",\"query\":\"payment errors in the last hour\"}"
+   ```
 
 ## Usage
 
-`POST /api/v1/query/natural` with `{"teamId":"...", "query":"payment errors in the last hour"}` returns the AI's structured plan:
+`POST /api/v1/query/natural` with `Authorization: Bearer <token>` and `{"teamId":"...", "query":"payment errors in the last hour"}` returns the AI's structured plan:
 
 ```json
 {
@@ -71,7 +105,7 @@ curl -X POST http://localhost:4000/api/v1/ingest/<sourceId> \
 }
 ```
 
-The frontend renders this as editable filter chips plus a timeline view, so you can refine the AI's interpretation before running the search. If `OPENAI_API_KEY` is unset, Telerithm falls back to a deterministic heuristic translator (no LLM call, no cloud dependency). All endpoints live under `/api/v1`; see [docs/api.md](docs/api.md) for the full reference, or `GET /openapi.json` for the machine-readable spec.
+The frontend renders this as editable filter chips plus a timeline view, so you can refine the AI's interpretation before running the search. If `OPENAI_API_KEY` is unset, Telerithm falls back to a deterministic heuristic translator (no LLM call, no cloud dependency). All endpoints live under `/api/v1`; see [docs/api.md](docs/api.md) for the route groups and the routes the OpenAPI spec does not cover yet, and `GET /openapi.json` for the machine-readable spec of the rest.
 
 ## Documentation
 
@@ -81,17 +115,19 @@ The frontend renders this as editable filter chips plus a timeline view, so you 
 | Understand the ingestion + AI pipeline                        | [docs/architecture.md](docs/architecture.md)  |
 | Configure env vars, ingestion sources, LLM provider           | [docs/configuration.md](docs/configuration.md) |
 | Write better natural-language queries, see prompt patterns    | [docs/queries.md](docs/queries.md)            |
-| See the full REST API reference and rate limits per route group | [docs/api.md](docs/api.md)                  |
+| See the REST API route groups and rate limits per route group | [docs/api.md](docs/api.md)                  |
 | Run on a VPS with Traefik + SSL                                | [DEPLOYMENT.md](DEPLOYMENT.md)                |
 | Run a local LLM (llama.cpp, Ollama) instead of cloud            | [LOCAL_LLM.md](LOCAL_LLM.md)                  |
 | Use the JavaScript/TypeScript client SDK                      | [packages/sdk-js/README.md](packages/sdk-js/README.md) |
+| Find cross-file invariants (authz, tenant scoping, compose drift, ClickHouse limits) | [docs/okf/index.md](docs/okf/index.md) |
 
 ## Development and contributing
 
 ```bash
-cd backend && npm test              # vitest integration tests
+cd backend && npm test              # vitest unit and integration tests
 cd backend && npx tsc --noEmit      # type check
-cd frontend && npx tsc --noEmit     # type check
+cd backend && npm run lint && npm run format:check
+cd frontend && npx tsc --noEmit && npm test
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow. Release notes live in [CHANGELOG.md](CHANGELOG.md) (app) and [packages/sdk-js/CHANGELOG.md](packages/sdk-js/CHANGELOG.md) (SDK, versioned independently).

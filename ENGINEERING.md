@@ -1,198 +1,37 @@
 # Engineering Standards
 
-Unsere verbindlichen Qualitätsregeln leben in `lava-ice-logs`:
+These are the rules a change to this repository has to meet. CI enforces them; [CONTRIBUTING.md](CONTRIBUTING.md) lists the commands to run them locally.
 
-👉 https://github.com/LanNguyenSi/lava-ice-logs/blob/master/ENGINEERING.md
+## Quality gates
 
-Das gilt für alle Arbeiten an diesem Repo — Coverage, Tests, Bug-Prozess, Definition of Done.
+CI (`.github/workflows/ci.yml`) runs one job per package:
+
+- **backend**: type check (`npx tsc --noEmit`), ESLint (`npx eslint src/`), Prettier check (`npx prettier --check src/`), and the unit and integration tests with coverage thresholds.
+- **frontend**: type check, vitest with coverage thresholds, and `npm run build`.
+- **packages/sdk-js**: type check and vitest with coverage thresholds.
+- **CLI**: `bats packages/cli/logforge-pipe.bats`.
+
+The coverage thresholds are set per job in `.github/workflows/ci.yml`. A pull request is ready when all four jobs pass and the separate Audit workflow (`.github/workflows/audit.yml`, an `npm audit` gate over the lockfiles) passes.
+
+The two backend sections below are summaries. The full English write-up, including the test internals and the threat model, is [docs/okf/api-authz-and-team-scoping.md](docs/okf/api-authz-and-team-scoping.md).
 
 ## Backend: team-scoping for by-id write routes
 
-Am 2026-07-12 wurden in `backend/src/api/rest/router.ts` vier Cross-Tenant-IDORs
-derselben Klasse gefunden und gefixt: eine state-changing Route mit einem
-`:id`-Pfadparameter, die nur auf Authentifizierung statt auf Team-Zugehörigkeit
-der geladenen Ressource prüfte. Convention seither, jetzt strukturell
-erzwungen:
+Every state-changing route (POST, PUT, PATCH, DELETE) with an `:id`-style path parameter must check that the target resource belongs to a team the caller is a member of before it mutates anything; being logged in is not enough. Four cross-tenant IDORs of exactly this shape were found and fixed in `backend/src/api/rest/router.ts`, and the convention is now enforced structurally:
 
-- Jede state-changing (POST/PUT/PATCH/DELETE) Route mit einem `:id`-artigen
-  Pfadparameter muss die Team-Zugehörigkeit der Zielressource prüfen, bevor
-  sie mutiert wird — nicht nur, dass der Aufrufer eingeloggt ist.
-- Team-gescopte mutierende Routen werden über `writeRoute(method, path,
-  resolveTeam, handler)` registriert (`backend/src/api/rest/write-route.ts`,
-  einmal in `router.ts` an `apiRouter` gebunden). Der Wrapper führt in fester
-  Reihenfolge Authentifizierung, Team-Auflösung und Write-Gate vor dem Handler
-  aus; siehe den Abschnitt zur Write-Rolle unten. Die Team-Auflösung für
-  by-id-Routen baut `teamFromResource(loadTeamId, notFoundMessage)`: Ressource
-  per id laden, `teamId` ziehen, 404 wenn sie fehlt. Eine neue Ressource
-  anzuschließen ist eine Loader-Zeile (siehe `loadRuleTeamId`,
-  `loadMaintenanceWindowTeamId`, `loadIncidentTeamId`, `loadIssueTeamId` in
-  `router.ts`). Für lesende by-id-Routen bleibt `requireResourceTeam(loader,
-  message)` die reine Mitgliedschaftsprüfung (Incident-Timeline).
-- Bewusste Ausnahmen (Ressource per-User statt per-Team gescoped,
-  Admin-Routen, API-Key-Auth, Capability-Token-Routen, ...) sind erlaubt,
-  müssen aber explizit begründet allowlistet werden, nicht stillschweigend
-  übersprungen werden.
-- Die eigentliche Durchsetzung ist `backend/tests/unit/router-team-scoping.test.ts`:
-  ein Meta-Test, der `router.ts` statisch per TypeScript-AST parst, jede
-  state-changing `:id`-Route findet (`apiRouter.<method>` und `writeRoute`) und
-  verlangt, dass sie entweder über `writeRoute` mit einem
-  `teamFromResource(<Loader>, ...)`-Resolver registriert ist oder einen
-  begründeten Allowlist-Eintrag hat. Eine neue Route ohne Eintrag macht CI rot - die Klassifizierung selbst
-  ist die Prüfung, nicht ein bestimmtes Implementierungsdetail. Mutation-
-  verifiziert: ein temporärer Revert eines Team-Checks lässt den Test
-  fehlschlagen.
-- Der Guard deckt nur Routen ab, die die Ressourcen-id als Pfadparameter
-  (`:id`) tragen. State-changing Routen, die eine Ressourcen-id stattdessen
-  aus Body oder Query ziehen, fallen nicht unter diesen automatisierten
-  Schutz und müssen weiterhin von Hand team-gescoped und im Review geprüft
-  werden.
+- Team-scoped mutating routes are registered with `writeRoute(method, path, resolveTeam, handler)` (`backend/src/api/rest/write-route.ts`, bound once in `router.ts` to `apiRouter`). The wrapper runs authentication, team resolution and the write gate in a fixed order before the handler; see the next section. For by-id routes, `teamFromResource(loadTeamId, notFoundMessage)` builds the resolver: load the resource by id, take its `teamId`, answer 404 when it does not exist. Connecting a new resource is one loader line (see `loadRuleTeamId`, `loadMaintenanceWindowTeamId`, `loadIncidentTeamId`, `loadIssueTeamId` in `router.ts`). Read-only by-id routes use `requireResourceTeam(loader, message)`, a membership-only check (incident timeline).
+- Deliberate exceptions (resources scoped per user instead of per team, admin routes, API-key auth, capability-token routes) are allowed, but each needs an explicit, justified allowlist entry instead of being skipped silently.
+- Enforcement: `backend/tests/unit/router-team-scoping.test.ts` parses `router.ts` through the TypeScript AST, finds every state-changing `:id` route (`apiRouter.<method>` and `writeRoute`), and requires it to be registered through `writeRoute` with a `teamFromResource(<loader>, ...)` resolver or to carry a justified allowlist entry. A new route without an entry fails CI.
+- The guard covers only routes that carry the resource id as a path parameter. State-changing routes that take a resource id from the body or the query string are not covered and must be team-scoped by hand and checked in review.
 
-## Backend: VIEWER ist read-only auf team-gescopten Write-Routen
+## Backend: VIEWER is read-only on team-scoped write routes
 
-Team-Mitgliedschaft allein reicht für mutierende Routen nicht: die Rolle
-`VIEWER` (`TeamRole` in `backend/prisma/schema.prisma`) ist read-only, `OWNER`,
-`ADMIN` und `MEMBER` dürfen schreiben. Ein
-`VIEWER` bekommt auf einer team-gescopten Write-Route `403 { error: "Forbidden" }`,
-bevor irgendetwas mutiert wird; Lesepfade (inklusive `GET /alerts/incidents/:id/timeline`
-und der lesenden POSTs `/logs/*` und `/query/natural`) bleiben für ihn offen.
+Team membership alone is not enough for a mutating route. The team role `VIEWER` (`TeamRole` in `backend/prisma/schema.prisma`) is read-only; `OWNER`, `ADMIN` and `MEMBER` may write. A `VIEWER` gets `403 { error: "Forbidden" }` on a team-scoped write route before anything is mutated. Read paths, including `GET /alerts/incidents/:id/timeline` and the reading POSTs `/logs/*` and `/query/natural`, stay open to it.
 
-- Die Regel steht an genau einer Stelle: `canWrite(role)` in `router.ts`
-  (Allow-List: `OWNER`, `ADMIN`, `MEMBER` sind `true`, alles andere `false`, eine
-  später ergänzte Rolle ist also erst nach bewusstem Eintrag schreibberechtigt).
-  Keine der team-gescopten Write-Routen vergleicht Rollen selbst für die
-  Write-Entscheidung (die Log-View-Routen haben ein eigenes Modell, siehe unten).
-- Erreicht wird `canWrite` ausschließlich über den Wrapper `writeRoute`. Er
-  führt vor dem Handler aus: `requireAuth` (401), die Team-Auflösung
-  (`teamFromBody(schema)` nimmt die `teamId` aus dem validierten Body, `POST
-  /sources` und `POST /maintenance-windows`; `teamFromResource(loader, message,
-  schema?)` nimmt das Team der per `:id` geladenen Ressource, 404 wenn sie
-  fehlt, 400 bei ungültigem Body), danach `requireTeamWriteRole(userId, teamId,
-  res)` (Mitgliedschaft über `requireTeamRole`, danach `canWrite`, sonst 403).
-  Erst dann läuft der Handler, der `{ req, res, userId, teamId, role, input }`
-  erhält. Der Handler hat keinen Weg, vor dem Gate zu laufen: die Signatur hat
-  kein Middleware-Argument, der Gate-Aufruf steht im Wrapper mit festen
-  Argumenten, und der Handler wird an genau einer Stelle nach dem Gate
-  aufgerufen. Die neun Write-Routen (Rule mute/unmute, `POST /sources`,
-  `POST /maintenance-windows`, Maintenance-Window löschen, Incident
-  acknowledge/resolve/reopen, `PUT /issues/:id`) laufen darüber.
-- Durchsetzung: `backend/tests/unit/router-write-role.test.ts` parst `router.ts`
-  per TypeScript-AST (gemeinsamer Walker in `backend/tests/unit/router-ast.ts`)
-  und verlangt für JEDE state-changing Route (mit oder ohne `:param`) einen
-  Eintrag in `ROUTE_WRITE_GUARDS`: entweder `{ kind: "write" }` (die Route ist
-  über `writeRoute` registriert) oder einen begründeten Allowlist-Eintrag
-  (lesender POST, per-User, Invites, Log-Views, Admin, Ingest, Auth, `POST
-  /teams`), registriert mit `apiRouter.<method>`. Eine neue mutierende Route
-  ohne Wrapper und ohne Allowlist-Eintrag macht CI rot, ebenso eine
-  Router-Registrierung, die der Test nicht klassifizieren kann (Alias von
-  `apiRouter`, `apiRouter["delete"](...)`). Jeder `writeRoute`-Aufruf muss genau
-  `(method, path, resolver, handler)` haben (ein weiteres Argument wäre ein
-  Middleware vor dem Gate), als Top-Level-Anweisung, mit einem Resolver aus
-  `teamFromBody`/`teamFromResource` (inline oder in einer Top-Level-`const`;
-  eine `let`- oder `var`-Bindung ließe sich neu zuweisen), dessen Argumente einfache Bezeichner sind
-  (Body-Schema aus `validation/schemas` importiert, Loader eine Top-Level-
-  Konstante) plus ein String-Literal als Not-found-Meldung; lokale
-  Deklarationen oder Aliase von `teamFromBody`, `teamFromResource`,
-  `writeRoute` und `createWriteRoute` in `router.ts` sind verboten. Die Bindung
-  `createWriteRoute({ router: apiRouter, requireAuth, requireTeamWriteRole })`
-  ist festgenagelt.
-  `backend/tests/unit/write-route.test.ts` belegt das Verhalten: Reihenfolge
-  Auth, Resolver, Gate, Handler; ein abgelehnter Aufrufer erreicht weder den
-  Handler noch dessen Default-Parameter, Tagged Templates oder `new`-Ausdrücke.
-- Laufzeit-Routentabelle: `backend/tests/unit/route-table.test.ts` baut die
-  echte App mit `createApp()` (gleiche Modul-Mocks wie `api.test.ts`), und zwar
-  für jede Kombination der Config-Schlüssel ihrer Matrix (`nodeEnv`
-  development/production/test, `multiTenant` an/aus, `trustProxy`
-  gesetzt/ungesetzt; die Matrix ist handgeschrieben, eine Registrierung hinter
-  einem anderen Schlüssel oder Wert, etwa `registrationMode`, den
-  OpenAI-Einstellungen oder einem neuen Feature-Flag, wird erst gebaut, wenn
-  der Schlüssel ergänzt ist; je ein frischer Modul-Graph per
-  `vi.resetModules()`), und läuft den Express-Layer-Stack rekursiv ab,
-  gemountete Router eingeschlossen. Sie
-  verlangt: jede App- und Router-Middleware steht auf einer bekannten Liste
-  (Name, Mount-Pfad, Arität; anonyme Layer zusätzlich mit einem Fragment ihres
-  Quelltexts); weder App noch API-Router tragen einen `param`-Callback (der
-  liefe vor dem Gate jeder `:id`-Route);
-  außerhalb des einen API-Routers unter `/api/v1` gibt es keine mutierende
-  Route; jede mutierende Route des API-Routers steht in `ROUTE_WRITE_GUARDS`
-  (`backend/tests/unit/route-guards.ts`), eine "write"-Route wird von genau
-  einem Handler bedient, nämlich dem, den `writeRoute` registriert und
-  `write-route.ts` markiert (`isWriteRouteHandler`), eine Allowlist-Route nicht.
-  Damit fallen die versehentlichen Formen von S4 zur Laufzeit auf: ein
-  umbenanntes `Router`, ein Pfad als Konstante, ein zweiter Router in `app.ts`,
-  ein mutierendes `app.use(...)` oder eine Registrierung, die nur unter einem
-  der Config-Werte oben existiert, erscheinen als unbekannte Layer bzw.
-  unklassifizierte Routen. Der statische AST-Test bleibt für das, was die
-  Laufzeittabelle nicht sieht: die Form der `writeRoute`-Aufrufe und ihrer
-  Resolver-Argumente, die Bindung an die echten `requireAuth` und
-  `requireTeamWriteRole`, die Stelle, an der der Wrapper den Handler nach dem
-  Gate aufruft, und der statische Scan über `backend/src` (`Router()` und
-  `createWriteRoute` je einmal, `express()` nur in `app.ts` und
-  `config/index.ts`, keine Registrierung außerhalb von `router.ts`): er liest
-  auch Code außerhalb von `createApp()`, etwa `server.ts`, erkennt dort aber
-  nur die aufgezählten Schreibweisen (Pfad als String- oder Template-Literal,
-  Mount per Bezeichner, der Name `apiRouter`); ein Pfad in einer Konstante oder
-  einem Array wird dort nicht erkannt.
-- Bedrohungsmodell: Wrapper und Meta-Tests richten sich gegen versehentliche
-  Lücken, also eine Route, die jemand ohne Wrapper oder mit Arbeit vor dem Gate
-  anlegt oder verschiebt. Bewusst verschleierte Registrierungen sind ein
-  Review-Punkt, kein Versprechen der Tests: Aliase oder Indexzugriffe auf den
-  Router außerhalb der erkannten Formen, Registrierungen erst zur Request-Zeit
-  (`req.app`) oder nur unter Config-Werten außerhalb der Matrix, ein ersetzter
-  bekannter Layer, der Name und Quelltext-Fragment beibehält, neues Verhalten
-  in einer bekannten Middleware (etwa ein `verify`-Callback von
-  `express.json`) und ein zur Laufzeit gepatchtes importiertes Schema.
-- Die früheren Sonderformen sind damit beantwortet: Seiteneffekte in den
-  Gate-Argumenten (S0) lassen sich nicht schreiben, ein Middleware-Argument vor
-  dem Handler (S1) lehnt die Formprüfung ab, Default-Parameter und Tagged
-  Templates (S2, S3) laufen im Handler nach dem Gate, eine zweite Router-
-  Instanz oder eine Registrierung aus einem anderen Modul (S4) findet die
-  Laufzeittabelle, soweit sie nicht bewusst verschleiert ist (siehe
-  Bedrohungsmodell). Zwei Eingaben laufen vor dem Gate, weil das Gate das Team
-  braucht, das sie liefern, und der Wrapper sie nicht kapseln kann: der Loader
-  von `teamFromResource` und das Body-Schema (samt `transform`, `refine` und
-  `preprocess`) von `teamFromBody`/`teamFromResource`. Beide müssen frei von
-  Seiteneffekten sein. Der Test erzwingt nur, dass sie benannt sind (Schema aus
-  `validation/schemas`, Loader als Top-Level-Konstante) und nicht inline neben
-  der Route stehen; was die benannte Funktion tut, ist ein Review-Punkt, den der
-  Test nicht inspiziert. Der Test prüft
-  außerdem, dass `requireTeamWriteRole` `canWrite` aufruft und dass
-  `requireResourceTeam` nur die Mitgliedschaft prüft. Das Verhalten (VIEWER 403
-  und keine Mutation, MEMBER 2xx, Timeline für VIEWER 200) pinnen die
-  Route-Tests in `backend/tests/integration/api.test.ts`.
-- Nicht Teil dieser Regel: Invite-Verwaltung (`canManageInvites`, nur OWNER/ADMIN),
-  Subscriptions (per-User) und die Admin-Routen (`requireAdmin`). Die
-  Log-View-Routen (`/logs/views`) liegen ebenfalls außerhalb und sind für
-  `VIEWER` nicht read-only: private Views (per-User-Zustand) darf jedes
-  Mitglied anlegen und ändern. Team-weiter Zustand ist dagegen nur für
-  OWNER/ADMIN (`canManageShared`): `POST` und `PUT` antworten mit 403, bevor
-  der Service läuft, wenn `isShared: true` oder `isDefault: true` gesetzt
-  wird (`isDefault: true` löscht das Default-Flag aller Shared-Views des
-  Teams). `canManageShared` greift außerdem beim Ändern oder Löschen fremder
-  Shared-Views. `POST /logs/views/:id/duplicate` prüft `canRead`
-  (Shared-View oder eigene) und übernimmt `isShared` nur, wenn
-  `canManageShared` gilt (agent-tasks `765bb823`). `isDefault: true` ist für
-  Nicht-Admins auch auf einer privaten View gesperrt, weil der Service das
-  Default-Flag teamweit zurücksetzt. Zusätzlich prüft der Service in `update`
-  und `remove` die geladene View (nicht den Request-Body): ist sie geteilt
-  (`isShared`) oder Default (`isDefault`) und fehlt `canManageShared`, antwortet
-  `PUT` und `DELETE` mit 403 und ohne Mutation, auch für den Besitzer. Das
-  deckt Umbenennen, `isShared: false`, `isDefault: false` und Löschen einer
-  bereits geteilten oder als Default markierten View ab (vor dem Gate
-  angelegt, oder nach einer Herabstufung vom Admin; agent-tasks `9edca718`).
-  Ein OWNER oder ADMIN ändert und löscht jede geteilte View seines Teams,
-  auch die eines anderen Nutzers. Eine private Default-View eines anderen
-  Nutzers (z. B. eines MEMBER oder eines herabgestuften Admins) räumt er nur
-  auf: `PUT`, dessen einzige Wirkung `isDefault: false` ist (Body ohne
-  `name`, `isShared` und `definition`), und `DELETE`. Alles andere von einem
-  Nicht-Besitzer auf dieser View antwortet mit 403 und ohne Mutation:
-  `isShared: true`, Umbenennen, Änderung der Definition, `isDefault: true`
-  und ein leerer Body. Die 200-Antwort des erlaubten `PUT` enthält weder
-  `name` noch `definition`, weil der Admin die View über Liste und
-  Duplizieren nicht lesen kann. Private, nicht als Default markierte Views
-  bleiben beim Besitzer; fremde private Views dieser Art verweigert der
-  Service weiter mit 403 (auch OWNER/ADMIN),
-  Views eines anderen Teams mit 404. Bestehende Daten werden nicht migriert;
-  solche Views ändert oder löscht nur noch ein OWNER oder ADMIN.
-- Nach dem Merge prüft der Operator in Produktion, ob VIEWER-Mitgliedschaften
-  existieren (`SELECT count(*) FROM "TeamMember" WHERE role = 'VIEWER'`), weil
-  deren bisheriger Schreibzugriff mit dieser Regel endet.
+- The rule lives in one place: `canWrite(role)` in `router.ts`, an allow list (`OWNER`, `ADMIN` and `MEMBER` are `true`, everything else `false`, so a role added later can write only after it is added on purpose).
+- `canWrite` is reached only through `writeRoute`. Before the handler, the wrapper runs `requireAuth` (401), the team resolution (`teamFromBody(schema)` takes `teamId` from the validated body, used by `POST /sources` and `POST /maintenance-windows`; `teamFromResource(loader, message, schema?)` takes the team of the resource loaded by `:id`, 404 when it does not exist, 400 for an invalid body), then `requireTeamWriteRole(userId, teamId, res)` (membership through `requireTeamRole`, then `canWrite`, otherwise 403). Only then does the handler run, receiving `{ req, res, userId, teamId, role, input }`. The nine team-scoped write routes (rule mute and unmute, `POST /sources`, `POST /maintenance-windows`, maintenance-window delete, incident acknowledge, resolve and reopen, `PUT /issues/:id`) are registered this way.
+- Two inputs run before the gate because the gate needs the team they produce: the loader passed to `teamFromResource` and the body schema passed to `teamFromBody`/`teamFromResource`. Both must be free of side effects. The tests only force them to be named (schema imported from `validation/schemas`, loader a top-level constant); what the named function does is a review item.
+- Enforcement has two layers. `backend/tests/unit/route-table.test.ts` builds the real app with `createApp()` for each combination of its config matrix and walks the Express layer stack: every layer must be on a known list, no mutating route may exist outside the API router mounted at `/api/v1`, and every mutating route of that router must be classified in `ROUTE_WRITE_GUARDS` (`backend/tests/unit/route-guards.ts`) as `{ kind: "write" }` (served only by the `writeRoute` handler) or as a justified allowlist entry. `backend/tests/unit/router-write-role.test.ts` parses `router.ts` through the TypeScript AST and pins what the runtime table cannot see: the shape of each `writeRoute` call and its resolver arguments, and the binding of the wrapper to the real `requireAuth` and `requireTeamWriteRole`. `backend/tests/unit/write-route.test.ts` proves the order auth, resolver, gate, handler. The behaviour (VIEWER 403 with no mutation, MEMBER success, VIEWER timeline 200) is pinned by the route tests in `backend/tests/integration/api.test.ts`.
+- Threat model: the wrapper and the tests target accidental gaps, a route added without the wrapper or with work placed before the gate. Deliberately obfuscated registrations are a review concern, not something the tests promise to catch.
+- Outside this rule: invite management (`canManageInvites`, OWNER and ADMIN only), subscriptions (per user), the admin routes (`requireAdmin`), and the saved-view routes (`/logs/views`). Saved views are not read-only for a `VIEWER`: any member may create and edit private views. Team-wide state (`isShared: true`, `isDefault: true`, and changes to a view that is already shared or default) needs `canManageShared` (OWNER or ADMIN). [docs/okf/api-authz-and-team-scoping.md](docs/okf/api-authz-and-team-scoping.md) describes the saved-view rules in full.
+- Upgrading: `VIEWER` members of existing installations lose any write access they had before this rule. To check whether an instance has any, run `SELECT count(*) FROM "TeamMember" WHERE role = 'VIEWER'` against Postgres.
