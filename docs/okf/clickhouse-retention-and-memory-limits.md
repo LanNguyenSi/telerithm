@@ -1,15 +1,18 @@
 ---
 type: runbook
 title: ClickHouse retention, memory limits, and the config.d mount contract
-description: system-logs.xml disables text_log outright and gives every other ClickHouse system log table a 7-day TTL, with the caveat that a TTL change only applies to newly-created tables (existing ones get renamed *_N on restart); limits.xml's max_server_memory_usage_to_ram_ratio must never be 0 (means 0% of RAM, not disabled — the historical PR #60 footgun); init.sql only runs via docker-entrypoint-initdb.d on an empty ClickHouse datadir; the anomalies table it creates has zero code references and is provisioned-but-unwired for the still-Planned anomaly feature; and the operational lesson that a broken host bind-mount can silently turn a mounted config FILE into an empty directory, so a mount must be verified, not assumed.
+description: system-logs.xml disables text_log outright and gives every other ClickHouse system log table a 7-day TTL, with the caveat that a TTL change only applies to newly-created tables (existing ones get renamed *_N on restart); limits.xml's max_server_memory_usage_to_ram_ratio must never be 0 (means 0% of RAM, not disabled, the historical PR #60 footgun); init.sql only runs via docker-entrypoint-initdb.d on an empty ClickHouse datadir; the logs table it creates has a fixed 30-day TTL, and the per-source retentionDays value is stored but never enforced; the anomalies table it creates has zero code references and is provisioned-but-unwired for the still-Planned anomaly feature; and the operational lesson that a broken host bind-mount can silently turn a mounted config FILE into an empty directory, so a mount must be verified, not assumed.
 tags: [clickhouse, retention, memory, runbook, ops, config-mount]
-timestamp: 2026-10-10T18:10:03Z
+timestamp: 2026-10-11T12:57:41Z
 sources:
   - backend/clickhouse/system-logs.xml
   - backend/clickhouse/limits.xml
   - backend/clickhouse/init.sql
   - CHANGELOG.md
   - DEPLOYMENT.md
+  - docs/architecture.md
+  - backend/prisma/schema.prisma
+  - backend/src/services/team/team-service.ts
 ---
 
 `backend/clickhouse/` ships three files that only take effect if they are actually mounted into the running container: `init.sql` (schema bootstrap), `limits.xml` and `system-logs.xml` (both `config.d/` overrides). All three are asserted identical between the two prod composes in [compose-file-topology-and-drift.md](compose-file-topology-and-drift.md); this doc covers what each one actually does and the gotchas around it.
@@ -26,7 +29,15 @@ ClickHouse's internal `system.text_log` duplicates the server's stderr into a Me
 
 ## init.sql — only runs on an empty datadir
 
-`init.sql` is mounted read-only at `/docker-entrypoint-initdb.d/init.sql` in every compose file (dev and both prod variants). This path is ClickHouse's own convention: scripts under `docker-entrypoint-initdb.d/` run **only on first container start against an empty ClickHouse data directory** — not on every restart, and not idempotently against existing data. Neither `DEPLOYMENT.md` (which just says step 4 will "Initialize ClickHouse schema automatically") nor any other doc in this repo states this run-once-on-empty-datadir semantics explicitly; it is standard behaviour of the upstream image's entrypoint, not something telerithm's own code enforces, so a schema change to `init.sql` will not reach an already-initialized volume — that needs a manual `ALTER`/migration against the running container, the same way Postgres schema changes go through `prisma db push` rather than re-running `init.sql`'s equivalent.
+`init.sql` is mounted read-only at `/docker-entrypoint-initdb.d/init.sql` in every compose file (dev and both prod variants). This path is ClickHouse's own convention: scripts under `docker-entrypoint-initdb.d/` run **only on first container start against an empty ClickHouse data directory** — not on every restart, and not idempotently against existing data. `DEPLOYMENT.md` only says step 4 will "Initialize ClickHouse schema automatically"; [../architecture.md](../architecture.md)'s "Storage" section states the run-once behaviour together with the logs TTL (next section). It is standard behaviour of the upstream image's entrypoint, not something telerithm's own code enforces, so a schema change to `init.sql` will not reach an already-initialized volume: that needs a manual `ALTER`/migration against the running container, the same way Postgres schema changes go through `prisma db push` rather than re-running `init.sql`'s equivalent.
+
+## The logs table TTL: one fixed window, per-source retention not enforced
+
+`init.sql` creates the `logs` table partitioned by day with a table TTL (`backend/clickhouse/init.sql:12-15#"TTL toDateTime(timestamp) + INTERVAL 30 DAY;"`): every log row expires 30 days after its `timestamp`, for every team and every source. That TTL is the only retention the log data has; no code in `backend/src` deletes log rows. ClickHouse applies a TTL when it merges parts, so an expired row can stay readable for a while after the 30 days pass.
+
+Each `LogSource` in Postgres also carries a `retentionDays` column (`backend/prisma/schema.prisma:75#"retentionDays Int"`, default 7). `TeamService.createSource` always writes 7 (`backend/src/services/team/team-service.ts:159#"retentionDays: 7, apiKey"`), no route updates a source, and the value is only returned with the source (`backend/src/services/team/team-service.ts:150#"retentionDays: s.retentionDays,"`). Nothing reads it to expire rows, so a source that reports 7 days keeps its logs for the 30 days of the table TTL.
+
+To change the window on a running instance, editing `init.sql` is not enough, because it does not run again against an initialized volume (previous section). The table TTL changes with `ALTER TABLE logs MODIFY TTL toDateTime(timestamp) + INTERVAL <n> DAY`, the command `docs/architecture.md`'s "Storage" section gives; keep `init.sql` on the same value so a fresh volume matches. For a one-off cleanup of a shorter window, `DEPLOYMENT.md`'s "Maintenance" section runs `ALTER TABLE logs DELETE WHERE timestamp < now() - INTERVAL <n> DAY` instead.
 
 ## The anomalies table — provisioned, not wired
 

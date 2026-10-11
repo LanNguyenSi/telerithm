@@ -12,7 +12,7 @@ their areas; these docs deliberately do not duplicate them.
   `docs/architecture.md` "NLQ pipeline" section plus `docs/queries.md`.
 - [Ingestion pipeline](ingestion-pipeline.md), pointer to the authoritative
   `docs/architecture.md` "Ingestion pipeline" section plus
-  `docs/configuration.md`'s source-type table.
+  `docs/configuration.md`'s "Ingestion sources" section.
 
 ## Invariants
 
@@ -25,7 +25,8 @@ their areas; these docs deliberately do not duplicate them.
   scan for code outside `createApp()`.
 - [ClickHouse tenant row-scoping](clickhouse-tenant-row-scoping.md), the
   second, independent tenancy layer below `router.ts`: `team_id` as the
-  first `WHERE` condition in every query method, and the dynamic
+  first `WHERE` condition in every `logs` read, the `LogRepository` methods
+  and the alert worker's count query alike, and the dynamic
   `fields['<key>']` allow-list sanitiser that keeps it from being broken
   out of.
 - [Compose file topology and drift](compose-file-topology-and-drift.md),
@@ -37,6 +38,7 @@ their areas; these docs deliberately do not duplicate them.
 
 - [ClickHouse retention and memory limits](clickhouse-retention-and-memory-limits.md),
   the `text_log` disable + 7-day TTLs, the `max_server_memory_usage_to_ram_ratio=0`
-  footgun, `init.sql`'s run-once-on-empty-datadir semantics, the unwired
+  footgun, `init.sql`'s run-once-on-empty-datadir semantics, the fixed 30-day
+  `logs` TTL next to the unenforced per-source `retentionDays`, the unwired
   `anomalies` table, and how to verify a `config.d` mount actually took
   effect.
