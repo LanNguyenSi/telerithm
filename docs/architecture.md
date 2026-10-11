@@ -76,7 +76,7 @@ Alerting does not run on ingest: `AlertEvaluationWorker` polls every 60 seconds.
 
 ## Ingestion pipeline
 
-`POST /api/v1/ingest/:sourceId` is the single ingest entrypoint. Its body is a JSON object whose `logs` field holds an array. Each entry is either:
+`POST /api/v1/ingest/:sourceId` is the main ingest entrypoint; `POST /api/v1/ingest/:sourceId/raw` splits its body into lines and passes them to the same `IngestionService.ingest` as raw strings. The main route's body is a JSON object whose `logs` field holds an array. Each entry is either:
 
 - A structured `LogEntry` object (`timestamp`, `level`, `service`, `host`, `message`, `fields`).
 - A raw string, parsed by `LogParser` based on `payload.format` or auto-detection.
