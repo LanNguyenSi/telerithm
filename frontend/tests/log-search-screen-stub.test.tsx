@@ -132,6 +132,10 @@ describe("SearchScreen update returning a saved view stub", () => {
     await clickSetDefault();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(mocks.updateSearch).not.toHaveBeenCalled();
+    // Without the stub guard, applySavedView(stub) throws and the catch shows
+    // the error text; a stub must leave no error behind.
+    expect(screen.queryByText(/failed|Cannot read|undefined/i)).toBeNull();
+    expect(document.querySelector("p.text-rose-700")).toBeNull();
   });
 
   it("applies a full view returned by the update (control)", async () => {
