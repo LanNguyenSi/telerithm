@@ -6,7 +6,7 @@ This page focuses on the natural-language path: how queries are translated, what
 
 ## How translation works
 
-The NLQ pipeline (see [architecture.md](architecture.md#nlq-pipeline)) takes a free-text query plus the team's current facet hints and produces a `NLQTranslation`:
+The NLQ pipeline (see [architecture.md](architecture.md#nlq-pipeline)) takes a free-text query and produces a `NLQTranslation`. When a log search runs with `queryType: "natural"`, the known service, host and level values of the current scope are passed along as facet hints; `POST /api/v1/query/natural` translates without them, so the facet-hint matching described below applies only to that search path:
 
 ```ts
 type NLQTranslation = {
@@ -123,7 +123,7 @@ Treat the system prompt as a contract; the user query is everything you'd write 
 
 ## Heuristic fallback
 
-When `OPENAI_API_KEY` is unset, or after retry exhaustion on a transient LLM error, `AIService.translateQueryHeuristicPublic` runs instead. It uses regex-based level and service detection plus stop-word-filtered text terms, and the response always includes:
+When `OPENAI_API_KEY` is unset, or when the LLM call fails (immediately for auth, request and response-validation errors; after up to three attempts for timeouts, 429 and 5xx), `AIService.translateQueryHeuristicPublic` runs instead. It uses regex-based level and service detection plus stop-word-filtered text terms, and the response always includes:
 
 ```json
 { "warnings": ["AI fallback mode active: heuristic interpretation was used."] }
@@ -133,14 +133,14 @@ The UI uses this flag to badge the result so users know they're not seeing the L
 
 ## Async query jobs
 
-Searches that exceed `MAX_SYNC_RUNTIME_MS` (default 1500 ms, see [configuration.md](configuration.md)) are handed off to a background job instead of blocking the request. In that case the search endpoint returns `202 Accepted` with a job id and `status: "pending"`, and you poll for the result:
+Facet, histogram and pattern requests (`POST /api/v1/logs/facets`, `/logs/histogram`, `/logs/patterns`) that exceed `MAX_SYNC_RUNTIME_MS` (default 1500 ms, see [configuration.md](configuration.md)), or that set `"async": true`, return `202` with `{ "requestId": "...", "partial": true, "cached": false, "status": "pending" }`. Log search itself always answers synchronously. Poll for the result:
 
 ```bash
-curl http://localhost:4000/api/v1/query/jobs/<jobId> \
+curl http://localhost:4000/api/v1/query/jobs/<requestId> \
   -H "Authorization: Bearer <token>"
 ```
 
-The job response carries the job status and, once complete, the same result shape as a synchronous search.
+The response is `{ requestId, status, data, error }`. `status` is `pending`, `completed` or `failed`; once completed, the result is in `data`. Jobs live in the backend process memory and are lost on restart.
 
 ## Domain stop words
 

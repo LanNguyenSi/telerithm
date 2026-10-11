@@ -17,14 +17,22 @@ backend/
       ai/ai-service.ts    NLQ to filter plan (LLM + heuristic)
       query/              Query plan execution, pattern normalization
       alert/              Alert rules, incident lifecycle, alert-evaluation-worker.ts
-      issue/              Error grouping and fingerprinting
+      issue/              Error grouping
+      ingestion/          Error fingerprinting (fingerprint.ts)
       streaming/          SSE live tail
       team/               Tenancy, sources, invites, RBAC
-      notification/       Channels: email, webhook, slack, msteams
+      notification/       Channels: webhook, slack, msteams, email (log only)
+      subscription/       Notification subscriptions
+      dashboard/          Overview dashboard
       log-view/           Saved views
+    cache/                Redis dashboard cache
+    config/               Environment variable parsing (Zod)
+    metrics/              Prometheus registry
+    validation/           Zod request schemas
     repositories/         ClickHouse + Prisma data access
-  prisma/                 Postgres schema and migrations
-  tests/                  Vitest integration tests
+  clickhouse/             logs table DDL (init.sql) and ClickHouse server config
+  prisma/                 Postgres schema (applied with prisma db push, no migrations) and demo seed
+  tests/                  Vitest unit and integration tests
 packages/sdk-js/          @telerithm/sdk client SDK
 packages/cli/             stdin-to-ingest shipping script (logforge-pipe.sh)
 deploy/                   Optional fluentd / vector ingestion sidecars
@@ -32,32 +40,47 @@ deploy/                   Optional fluentd / vector ingestion sidecars
 
 ## Data flow
 
+Two independent paths write and read the stores: the ingest path, triggered by each request, and the alert path, driven by a timer. In both diagrams, dashed edges are fire-and-forget calls or channels that send nothing.
+
+The ingest path writes each batch to ClickHouse and then triggers its side effects:
+
+```mermaid
+flowchart TD
+  SRC["HTTP clients, SDK, shippers"] -->|"POST /api/v1/ingest/:sourceId (X-API-Key)"| ING[IngestionService.ingest]
+  ING -->|raw strings only| PARSE[LogParser.parseRaw]
+  ING -->|LogRepository.insert| CH[("ClickHouse logs")]
+  ING -->|invalidate dashboard cache| REDIS[(Redis)]
+  ING -->|"emit log:new"| STREAM[StreamingService]
+  STREAM -->|"GET /api/v1/stream/logs"| SSE[SSE client]
+  ING -.->|"error or fatal: trackError"| ISSUE[IssueService]
+  ISSUE -->|upsert Issue| PG[(Postgres)]
 ```
-   sources                 backend                   stores
-   -------                 -------                   ------
-HTTP / Syslog / ──► IngestionService ──► LogParser ──► ClickHouse  (logs)
-Filebeat / Docker        │                              Postgres   (teams,
-CloudWatch               │                                          sources,
-                         ▼                                          alerts,
-                    IssueService                                    incidents,
-                    (fingerprint, group)                            saved views)
-                         │                              Redis      (dashboard
-                         ▼                                          cache, health)
-                    AlertEvalWorker ──► NotificationDispatcher
-                                          ├─ email
-                                          ├─ webhook
-                                          ├─ slack
-                                          └─ msteams
+
+The alert path runs on its own timer and reads what the ingest path stored:
+
+```mermaid
+flowchart TD
+  TIMER["AlertEvaluationWorker, every 60 s"] -->|"rules, windows, open incidents"| PG[(Postgres)]
+  TIMER -->|count matching logs| CH[("ClickHouse logs")]
+  TIMER -->|create OPEN incident| PG
+  TIMER -.->|dispatch| DISP[NotificationDispatcher]
+  DISP -->|subscriptions| PG
+  DISP --> WH[Webhook]
+  DISP --> SL[Slack]
+  DISP --> MT[Microsoft Teams]
+  DISP -.->|log only| EM[Email]
 ```
+
+Alerting does not run on ingest: `AlertEvaluationWorker` polls every 60 seconds. Postgres also holds teams, users, sources, saved views and the other tenancy state; Redis also backs the health check.
 
 ## Ingestion pipeline
 
-`POST /api/v1/ingest/:sourceId` is the single ingest entrypoint. It accepts:
+`POST /api/v1/ingest/:sourceId` is the single ingest entrypoint. Its body is a JSON object whose `logs` field holds an array. Each entry is either:
 
-- A JSON array of structured `LogEntry` objects (`level`, `service`, `host`, `message`, `fields`).
-- A JSON array of raw strings, parsed by `LogParser` based on `payload.format` or auto-detection.
+- A structured `LogEntry` object (`timestamp`, `level`, `service`, `host`, `message`, `fields`).
+- A raw string, parsed by `LogParser` based on `payload.format` or auto-detection.
 
-The `IngestionService` (`backend/src/ingestion/ingestion-service.ts`) resolves the source by ID, looks up its team, normalises each entry (default timestamp, default level, default host), and writes the batch to ClickHouse via `LogRepository`. Issue grouping runs inline on errors via `IssueService`, which fingerprints messages and assigns them to existing groups or creates new ones.
+The `IngestionService` (`backend/src/ingestion/ingestion-service.ts`) resolves the source by ID, looks up its team, normalises each entry (default timestamp, default level, default host), and writes the batch to ClickHouse via `LogRepository`. After the insert, it calls `IssueService` for each error or fatal entry without waiting for the result; `IssueService` fingerprints the message and assigns it to an existing group or creates a new one.
 
 Source types are defined in `backend/src/types/domain.ts`:
 
@@ -71,7 +94,7 @@ export type SourceType =
   | "CLOUDWATCH";
 ```
 
-For non-HTTP sources, `deploy/fluentd` and `deploy/vector` ship reference forwarder configs (plus `deploy/docker-compose.logging.yml` to run the sidecar) that forward to the HTTP endpoint.
+The source type is a label stored on the source; it does not change how logs arrive. `deploy/fluentd` and `deploy/vector` ship reference forwarder configs (plus `deploy/docker-compose.logging.yml` to run the sidecar) that collect Docker container logs and post them to the HTTP endpoint. Syslog, Filebeat and CloudWatch need a forwarder you configure yourself that posts batches in the `logs` envelope; see [configuration.md](configuration.md#ingestion-sources).
 
 ## NLQ pipeline
 
@@ -99,19 +122,45 @@ Key design choices:
 
 - **OpenAI SDK, not OpenAI cloud.** `OPENAI_BASE_URL` lets you point at any OpenAI-compatible server (Ollama, llama.cpp, vLLM). See [LOCAL_LLM.md](../LOCAL_LLM.md).
 - **No SQL generation.** The LLM produces a structured filter plan, not SQL. The query layer compiles it. This keeps the LLM blast radius small (no injection, no schema leakage) and lets the frontend show editable filter chips.
-- **Facet hints, not free text.** Known service / host / level values from the team's current scope are passed to the LLM as ground truth. Unknown values go into `textTerms` instead of becoming bogus filters.
-- **Retry + fallback.** Transient errors (timeout, 429, 5xx) retry with exponential backoff. After exhaustion, the heuristic translator runs so the UI still gets a usable plan.
+- **Facet hints, not free text.** When a log search runs with `queryType: "natural"`, known service, host and level values from the current scope are passed to the LLM as ground truth, and unknown values go into `textTerms` instead of becoming bogus filters. `POST /query/natural` translates without these hints.
+- **Retry + fallback.** Transient errors (timeout, 429, 5xx) retry with exponential backoff. After exhaustion, or immediately for any other LLM error, the heuristic translator runs so the UI still gets a usable plan.
 - **Schema-validated.** The LLM response is validated with Zod (`nlqResponseSchema`). Validation failures count as parse errors and trigger fallback.
 
 ## Storage
 
-- **ClickHouse** holds log rows. Append-only, columnar, partitioned by day. Search and histogram queries hit ClickHouse directly.
+- **ClickHouse** holds log rows. Append-only, columnar, partitioned by day. Search and histogram queries hit ClickHouse directly. Log rows expire after 30 days through the table TTL in `backend/clickhouse/init.sql`. That file only runs on an empty ClickHouse data directory; change the TTL on a running instance with `ALTER TABLE logs MODIFY TTL toDateTime(timestamp) + INTERVAL <n> DAY`. The per-source `retentionDays` value is stored but not enforced.
 - **Postgres** holds tenancy state: teams, users, sources, alert rules, incidents, saved views, invites, escalation policies (schema only, see Alerting). Managed by Prisma.
 - **Redis** caches dashboard-overview summaries (`CacheService`, invalidated on ingest) and backs the `/api/v1/health` check. It does not hold SSE subscriber state: `StreamingService` is an in-process `EventEmitter`, so subscriber state does not survive past a single backend process.
 
 ## Alerting
 
-`AlertEvaluationWorker` polls active rules on a fixed cadence, runs each rule's threshold query against ClickHouse, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Maintenance windows suppress rule evaluation entirely (no incidents, no notifications). `POST /api/v1/subscriptions/:id/test` is the exception: it dispatches a synthetic test notification straight through `NotificationDispatcher` without checking maintenance windows at all, so an operator can verify a channel is wired up even while a window is active. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
+`AlertEvaluationWorker` runs inside the backend process: once at startup, then every 60 seconds (one evaluation loop per backend process). It loads the enabled rules, counts matching log rows in ClickHouse for each, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Rules are read from Postgres; the API and UI can list, mute and unmute them but not create or edit them. Maintenance windows suppress rule evaluation entirely (no incidents, no notifications). `POST /api/v1/subscriptions/:id/test` is the exception: it dispatches a synthetic test notification straight through `NotificationDispatcher` without checking maintenance windows at all, so an operator can verify a channel is wired up even while a window is active. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
+
+How a rule is evaluated:
+
+- The rule `query` is not a query language: it is a case-insensitive substring match on the log message (`message ILIKE '%<query>%'`) within the rule window (`windowMinutes`). The rule's `queryType` is ignored.
+- Evaluated conditions are `GREATER_THAN`, `LESS_THAN`, `EQUALS`, and `CHANGES_BY` (the absolute difference to the previous window of the same length). `ANOMALY_DETECTED` exists in the schema but is not evaluated, so it never fires.
+- Muted rules (`muteUntil` in the future) and teams inside an active maintenance window are skipped.
+- Deduplication checks only for an `OPEN` incident of the rule. A rule that is still breached after its incident was acknowledged or resolved opens a new incident on the next run.
+- New incidents always get severity `MEDIUM`.
+
+Incidents move between three states. The acknowledge, resolve and reopen actions (`POST /api/v1/alerts/incidents/:id/acknowledge`, `/resolve`, `/reopen`) set the target state without checking the current one, and each writes an `IncidentEvent` to the timeline. The state diagram shows the transitions.
+
+```mermaid
+stateDiagram-v2
+  [*] --> OPEN: rule breached and no OPEN incident for the rule
+  OPEN --> ACKNOWLEDGED: acknowledge
+  OPEN --> RESOLVED: resolve
+  ACKNOWLEDGED --> RESOLVED: resolve
+  ACKNOWLEDGED --> OPEN: reopen
+  RESOLVED --> OPEN: reopen
+  RESOLVED --> ACKNOWLEDGED: acknowledge
+  note right of ACKNOWLEDGED
+    Actions do not check the current state.
+    The worker deduplicates only against OPEN incidents,
+    so a rule still breached opens a new incident.
+  end note
+```
 
 ## Rate limiting
 
@@ -121,4 +170,4 @@ Every limiter is an in-memory, per-process counter (`express-rate-limit`'s defau
 
 ## Streaming
 
-`/api/v1/stream/logs` is an SSE endpoint. The `IngestionService` emits events on accepted batches; `StreamingService` filters per-subscriber by team and saved-view criteria, then writes server-sent events to the connected client.
+`/api/v1/stream/logs` is an SSE endpoint. The `IngestionService` emits events on accepted batches; `StreamingService` filters per subscriber by team, the `sourceId`, `service`, `host` and `level` query parameters (exact match), plus `query`, a case-insensitive substring match on message, service and host, then writes server-sent events to the connected client.

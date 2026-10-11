@@ -243,19 +243,25 @@ Or create multiple systemd services (one per container/source).
 
 ### Seed Demo Logs
 
-Generate realistic demo log data for testing and screenshots:
+Generate realistic demo log data for testing and screenshots. The script writes straight to ClickHouse and imports `@clickhouse/client`, which the root `package.json` does not declare, so install it and `tsx` at the repo root first, without saving them:
+
+```bash
+npm install --no-save @clickhouse/client tsx
+```
+
+`TEAM_ID` and `SOURCE_ID` must be real ids (UUIDs) from `GET /api/v1/teams` and `GET /api/v1/sources`; rows written under any other id never show up in the UI.
 
 ```bash
 # Using defaults (7 days, 1000 logs/day)
-TEAM_ID="demo-team" SOURCE_ID="demo-source" tsx scripts/seed-demo-logs.ts
+TEAM_ID=<team uuid> SOURCE_ID=<source uuid> npx tsx scripts/seed-demo-logs.ts
 
 # Custom configuration
-TEAM_ID="team_abc123" \
-SOURCE_ID="src_demo" \
+TEAM_ID=<team uuid> \
+SOURCE_ID=<source uuid> \
 DAYS=14 \
 LOGS_PER_DAY=2000 \
 CLICKHOUSE_URL="http://localhost:8123" \
-tsx scripts/seed-demo-logs.ts
+npx tsx scripts/seed-demo-logs.ts
 ```
 
 **What it generates:**
@@ -270,8 +276,8 @@ tsx scripts/seed-demo-logs.ts
 
 | Variable         | Default                 | Description                |
 | ---------------- | ----------------------- | -------------------------- |
-| `TEAM_ID`        | `demo-team`             | Team ID for logs           |
-| `SOURCE_ID`      | `demo-source`           | Source ID for logs         |
+| `TEAM_ID`        | `demo-team`             | Team ID for logs. Set a real team UUID; the default matches no team |
+| `SOURCE_ID`      | `demo-source`           | Source ID for logs. Set a real source UUID; the default matches no source |
 | `DAYS`           | `7`                     | Number of days to generate |
 | `LOGS_PER_DAY`   | `1000`                  | Logs per day               |
 | `CLICKHOUSE_URL` | `http://localhost:8123` | ClickHouse connection      |
