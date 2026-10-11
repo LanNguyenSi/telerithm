@@ -119,7 +119,7 @@ Users subscribe to alert incidents through `/api/v1/subscriptions`. A subscripti
 
 The webhook body carries `incidentId`, `ruleId`, `severity`, `status`, `message` and `createdAt`. When the subscription has a `secret`, each request carries `X-Telerithm-Signature: sha256=<hex>`, the hex HMAC-SHA256 of the raw request body keyed with the secret; compute the same value over the body you received and compare.
 
-The webhook, Slack and Teams URLs pass an SSRF guard (`backend/src/services/notification/url-guard.ts`) when a subscription is created or updated and again before each send. It rejects schemes other than `http` and `https`, and hosts that resolve to private, loopback, link-local, unique-local, unspecified or cloud-metadata addresses. Redirects are not followed. `WEBHOOK_HOST_ALLOWLIST` and `WEBHOOK_NAT64_ADDITIONAL_PREFIXES` (see [Backend env vars](#backend-env-vars)) tighten or extend the guard.
+The webhook, Slack and Teams URLs pass an SSRF guard (`backend/src/services/notification/url-guard.ts`) before each send (subscription create also checks them). It rejects schemes other than `http` and `https`, and hosts that resolve to private, loopback, link-local, unique-local, unspecified or cloud-metadata addresses. Redirects are not followed. `WEBHOOK_HOST_ALLOWLIST` and `WEBHOOK_NAT64_ADDITIONAL_PREFIXES` (see [Backend env vars](#backend-env-vars)) tighten or extend the guard.
 
 Delivery makes up to three attempts per subscription, waiting 1 second and then 2 seconds between them. `POST /api/v1/subscriptions/:id/test` sends a test notification through the same path.
 

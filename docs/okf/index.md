@@ -33,6 +33,22 @@ their areas; these docs deliberately do not duplicate them.
   which of the three `docker-compose*.yml` files is actually deployed, what
   must stay mirrored between the two production variants, and the PR
   #59/#60/#110 drift precedent.
+- [Notification delivery trust boundary](notification-delivery-trust-boundary.md),
+  `assertSafeUrl` right before each of the three outbound `fetch` calls
+  (webhook, Slack, Teams) with `redirect: "manual"`, why that delivery-time
+  check is the binding one (the router's input check does not run on every
+  write), who can set a target, what leaves the system, and the
+  test route.
+
+## Modules
+
+- [Alert evaluation and incident lifecycle](alert-evaluation-and-incident-lifecycle.md),
+  the cross-file couplings around `AlertEvaluationWorker` that
+  `docs/architecture.md`'s "Alerting" section does not state: one unlocked
+  loop per backend process, skipped evaluations that are not made up, no
+  rule-authoring route and the demo seed's SQL-text rule, the fixed `MEDIUM`
+  severity against subscription severity filters, team scoping through the
+  rule relation, and what the alert metrics count.
 
 ## Runbooks
 
