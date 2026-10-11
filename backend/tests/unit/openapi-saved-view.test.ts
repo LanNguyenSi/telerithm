@@ -15,11 +15,13 @@ describe("OpenAPI saved view update response", () => {
     expect(schema.$ref).toBe("#/components/schemas/SavedViewUpdateResponse");
   });
 
-  it("update response view is oneOf full view or stub", () => {
+  it("update response view is anyOf full view or stub, never oneOf", () => {
     const view = spec.components.schemas.SavedViewUpdateResponse.properties?.view as {
-      oneOf: Array<{ $ref: string }>;
+      anyOf?: Array<{ $ref: string }>;
+      oneOf?: unknown;
     };
-    expect(view.oneOf.map((s) => s.$ref)).toEqual([
+    expect(view.oneOf).toBeUndefined();
+    expect(view.anyOf?.map((s) => s.$ref)).toEqual([
       "#/components/schemas/SavedView",
       "#/components/schemas/SavedViewStub",
     ]);

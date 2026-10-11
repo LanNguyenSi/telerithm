@@ -681,7 +681,9 @@ export const openApiSpec = {
         type: "object",
         properties: {
           view: {
-            oneOf: [
+            // anyOf, not oneOf: neither schema forbids extra properties, so a
+            // full view also matches SavedViewStub and oneOf would reject it.
+            anyOf: [
               { $ref: "#/components/schemas/SavedView" },
               { $ref: "#/components/schemas/SavedViewStub" },
             ],
