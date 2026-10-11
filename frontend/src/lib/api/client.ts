@@ -10,6 +10,7 @@ import type {
   NaturalQueryPlan,
   SavedLogView,
   SavedLogViewDefinition,
+  SavedLogViewStub,
   Issue,
   LogEntry,
   SessionUser,
@@ -338,7 +339,7 @@ export async function updateSavedLogView(
     definition: SavedLogViewDefinition;
   }>,
 ) {
-  return authedRequest<{ view: SavedLogView }>(
+  return authedRequest<{ view: SavedLogView | SavedLogViewStub }>(
     `/logs/views/${id}?teamId=${encodeURIComponent(teamId)}`,
     token,
     {

@@ -43,6 +43,7 @@ import type {
   NaturalQueryPlan,
   SavedLogView,
 } from "@/types";
+import { isSavedLogViewStub } from "@/types";
 
 export function SearchScreen() {
   const { team, token } = useLogAuth();
@@ -452,7 +453,7 @@ export function SearchScreen() {
               .then(async ({ view }) => {
                 const { views } = await getSavedLogViews(team.id, token);
                 setSavedViews(views);
-                applySavedView(view);
+                if (!isSavedLogViewStub(view)) applySavedView(view);
               })
               .catch((updateError) =>
                 setSavedViewsError(updateError instanceof Error ? updateError.message : "Update failed"),
@@ -482,7 +483,7 @@ export function SearchScreen() {
               .then(async ({ view }) => {
                 const { views } = await getSavedLogViews(team.id, token);
                 setSavedViews(views);
-                applySavedView(view);
+                if (!isSavedLogViewStub(view)) applySavedView(view);
               })
               .catch((renameError) =>
                 setSavedViewsError(renameError instanceof Error ? renameError.message : "Rename failed"),
@@ -496,7 +497,7 @@ export function SearchScreen() {
               .then(async ({ view }) => {
                 const { views } = await getSavedLogViews(team.id, token);
                 setSavedViews(views);
-                applySavedView(view);
+                if (!isSavedLogViewStub(view)) applySavedView(view);
               })
               .catch((defaultError) =>
                 setSavedViewsError(
