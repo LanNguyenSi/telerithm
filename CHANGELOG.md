@@ -30,6 +30,7 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ### Fixed
 
+- OpenAPI: `SavedViewUpdateResponse.view` (the `PUT /api/v1/logs/views/:id` 200 body) is now `anyOf` full view or stub instead of `oneOf`. Neither schema forbids extra properties, so a full view matched both branches and strict validators rejected every response (task 24167dd9). A log search screen test pins that a stub returned by an update refetches the list and is not applied as a view.
 - NLQ LLM error classification: connection and timeout errors from the
   OpenAI SDK are now classified `timeout` (the branch was unreachable
   because `APIConnectionError` extends `APIError`, so they were counted
