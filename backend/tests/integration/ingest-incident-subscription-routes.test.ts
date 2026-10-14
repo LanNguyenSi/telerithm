@@ -233,7 +233,6 @@ describe("incident actions reject transitions the current status does not allow"
     ["acknowledge", "ACKNOWLEDGED"],
     ["resolve", "RESOLVED"],
     ["reopen", "OPEN"],
-    ["reopen", "ACKNOWLEDGED"],
   ])("%s on a %s incident answers 409 with the reason and writes nothing", async (action, status) => {
     arrange(status);
 
@@ -250,6 +249,7 @@ describe("incident actions reject transitions the current status does not allow"
     ["resolve", "OPEN"],
     ["resolve", "ACKNOWLEDGED"],
     ["reopen", "RESOLVED"],
+    ["reopen", "ACKNOWLEDGED"],
   ])("%s on a %s incident succeeds", async (action, status) => {
     arrange(status);
 

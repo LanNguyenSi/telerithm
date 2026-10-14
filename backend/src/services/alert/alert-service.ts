@@ -8,13 +8,13 @@ const log = createChildLogger("alert-service");
 type IncidentStatus = "OPEN" | "ACKNOWLEDGED" | "RESOLVED";
 
 // Which statuses each incident action may start from. Acknowledge and resolve
-// act on live incidents; reopen only brings a resolved one back. Anything else
-// (resolving a resolved incident, acknowledging a resolved one, reopening one
-// that was never closed) is rejected with a ConflictError.
+// act on live incidents; reopen takes a resolved or acknowledged one back to
+// OPEN. Anything else (resolving a resolved incident, acknowledging a resolved
+// one, reopening one that is already OPEN) is rejected with a ConflictError.
 export const INCIDENT_TRANSITIONS = {
   acknowledge: ["OPEN"],
   resolve: ["OPEN", "ACKNOWLEDGED"],
-  reopen: ["RESOLVED"],
+  reopen: ["RESOLVED", "ACKNOWLEDGED"],
 } as const satisfies Record<string, readonly IncidentStatus[]>;
 
 export class AlertService {

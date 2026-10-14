@@ -522,7 +522,7 @@ const EXPECTED_TARGET: Record<Action, Status> = {
 const EXPECTED_ALLOWED: Record<Action, Status[]> = {
   acknowledge: ["OPEN"],
   resolve: ["OPEN", "ACKNOWLEDGED"],
-  reopen: ["RESOLVED"],
+  reopen: ["RESOLVED", "ACKNOWLEDGED"],
 };
 const EXPECTED_EVENT: Record<Action, string> = {
   acknowledge: "ACKNOWLEDGED",

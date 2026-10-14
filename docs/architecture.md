@@ -145,7 +145,7 @@ How a rule is evaluated:
 - Deduplication checks only for an `OPEN` incident of the rule. A rule that is still breached after its incident was acknowledged or resolved opens a new incident on the next run.
 - New incidents always get severity `MEDIUM`.
 
-Incidents move between three states. The acknowledge, resolve and reopen actions (`POST /api/v1/alerts/incidents/:id/acknowledge`, `/resolve`, `/reopen`) check the current state first: acknowledge applies to `OPEN`, resolve to `OPEN` or `ACKNOWLEDGED`, reopen to `RESOLVED`. Any other combination answers 409 and writes nothing; an accepted action writes an `IncidentEvent` to the timeline. The state diagram shows the transitions.
+Incidents move between three states. The acknowledge, resolve and reopen actions (`POST /api/v1/alerts/incidents/:id/acknowledge`, `/resolve`, `/reopen`) check the current state first: acknowledge applies to `OPEN`, resolve to `OPEN` or `ACKNOWLEDGED`, reopen to `RESOLVED` or `ACKNOWLEDGED`. Any other combination answers 409 and writes nothing; an accepted action writes an `IncidentEvent` to the timeline. The state diagram shows the transitions.
 
 ```mermaid
 stateDiagram-v2
@@ -153,6 +153,7 @@ stateDiagram-v2
   OPEN --> ACKNOWLEDGED: acknowledge
   OPEN --> RESOLVED: resolve
   ACKNOWLEDGED --> RESOLVED: resolve
+  ACKNOWLEDGED --> OPEN: reopen
   RESOLVED --> OPEN: reopen
   note right of ACKNOWLEDGED
     Every other action is rejected with 409.
