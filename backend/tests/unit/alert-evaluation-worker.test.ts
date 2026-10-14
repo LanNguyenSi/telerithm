@@ -735,3 +735,30 @@ describe("AlertEvaluationWorker — rule-level error handling", () => {
     expect(mockMetricsEvaluationsInc).toHaveBeenCalledWith({ status: "ok" });
   });
 });
+
+// ---------------------------------------------------------------------------
+// ClickHouse query parameters
+// ---------------------------------------------------------------------------
+
+describe("AlertEvaluationWorker — log count query parameters", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockMaintenanceWindowFindFirst.mockResolvedValue(null);
+    mockAlertIncidentFindFirst.mockResolvedValue(null);
+    stubClickhouseCount(0);
+  });
+
+  it("sends the window bounds in ClickHouse's DateTime64 text form, not as ISO strings", async () => {
+    mockAlertRuleFindMany.mockResolvedValue([makeRule()]);
+
+    await privateWorker(new AlertEvaluationWorker()).evaluate();
+
+    const { from, to } = mockClickhouseQuery.mock.calls[0][0].query_params;
+    // ClickHouse rejects "2026-10-14T04:44:41.318Z" for a DateTime64(3) parameter
+    expect(from).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
+    expect(to).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
+    expect(new Date(`${to.replace(" ", "T")}Z`).getTime() - new Date(`${from.replace(" ", "T")}Z`).getTime()).toBe(
+      5 * 60_000,
+    );
+  });
+});

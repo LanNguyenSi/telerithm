@@ -6,6 +6,13 @@ import { NotificationDispatcher } from "../notification/notification-dispatcher.
 
 const log = createChildLogger("alert-eval");
 
+// ClickHouse parses a DateTime64 query parameter strictly: the ISO "T" and "Z"
+// of Date.toISOString() make it reject the value, so send "YYYY-MM-DD HH:MM:SS.mmm"
+// in UTC, the same shape LogRepository uses.
+function toClickHouseTimestamp(date: Date): string {
+  return date.toISOString().replace("T", " ").replace("Z", "");
+}
+
 export class AlertEvaluationWorker {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
@@ -148,8 +155,8 @@ export class AlertEvaluationWorker {
       query: `SELECT count() as cnt FROM logs WHERE team_id = {teamId:String} AND timestamp >= {from:DateTime64(3)} AND timestamp <= {to:DateTime64(3)} AND message ILIKE {pattern:String}`,
       query_params: {
         teamId,
-        from: from.toISOString(),
-        to: to.toISOString(),
+        from: toClickHouseTimestamp(from),
+        to: toClickHouseTimestamp(to),
         pattern: `%${query}%`,
       },
       format: "JSONEachRow",
