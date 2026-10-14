@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { type Request, type Response, type NextFunction, Router } from "express";
+import express, { type Request, type Response, type NextFunction, Router } from "express";
 import rateLimit, { ipKeyGenerator, type RateLimitInfo } from "express-rate-limit";
 import { IngestionService } from "../../ingestion/ingestion-service.js";
 import { LogRepository } from "../../repositories/log-repository.js";
@@ -12,7 +12,7 @@ import { IssueService } from "../../services/issue/issue-service.js";
 import { SubscriptionService } from "../../services/subscription/subscription-service.js";
 import { assertSafeUrl } from "../../services/notification/url-guard.js";
 import { TeamService } from "../../services/team/team-service.js";
-import { ForbiddenError, NotFoundError } from "../../errors.js";
+import { ConflictError, ForbiddenError, NotFoundError } from "../../errors.js";
 import { createWriteRoute, teamFromBody, teamFromResource, type TeamRoleName } from "./write-route.js";
 import {
   addUserToTeamSchema,
@@ -381,7 +381,11 @@ apiRouter.post(
   ingestLimiter,
   authenticateApiKey,
   asyncHandler(async (req, res) => {
-    const parsed = ingestSchema.safeParse(req.body);
+    // Forwarders such as Fluentd (out_http, json_array) and Vector (http sink,
+    // json codec) can only post a bare JSON array of events, so treat an array
+    // body as the `logs` list of the documented envelope.
+    const body = Array.isArray(req.body) ? { logs: req.body } : req.body;
+    const parsed = ingestSchema.safeParse(body);
     if (!parsed.success) {
       res.status(400).json({ error: parsed.error.flatten() });
       return;
@@ -396,14 +400,30 @@ apiRouter.post(
   }),
 );
 
-// Raw text ingest — one log line per line, accepts text/plain
+// Raw text ingest: one log line per line. The body must be sent as text
+// (Content-Type: text/plain). express.text parses only text/* bodies; any other
+// type leaves req.body as the JSON parser's result or `{}`, which the handler
+// answers with 415 instead of ingesting a stringified object. The parser sits
+// after the API-key check, so a text body is only read for a valid source.
+const rawIngestBodyParser = express.text({ type: "text/*", limit: "10mb" });
+
 apiRouter.post(
   "/ingest/:sourceId/raw",
   ingestLimiter,
   authenticateApiKey,
+  rawIngestBodyParser,
   asyncHandler(async (req, res) => {
-    const body = typeof req.body === "string" ? req.body : String(req.body ?? "");
-    const lines = body.split("\n").filter((l: string) => l.trim().length > 0);
+    if (typeof req.body !== "string") {
+      // req.is() is null when the request has no body at all, false when it
+      // has one of a type the text parser skipped.
+      if (req.is("text/*") === false) {
+        res.status(415).json({ error: "Content-Type must be text/plain" });
+        return;
+      }
+      res.status(400).json({ error: "Empty body" });
+      return;
+    }
+    const lines = req.body.split(/\r?\n/).filter((l: string) => l.trim().length > 0);
     if (lines.length === 0) {
       res.status(400).json({ error: "Empty body" });
       return;
@@ -1132,7 +1152,7 @@ function handlePrismaError(
   return false;
 }
 
-// Maps typed service-layer errors (NotFoundError/ForbiddenError) to an HTTP
+// Maps typed service-layer errors (NotFoundError/ForbiddenError/ConflictError) to an HTTP
 // response, mirroring handlePrismaError's return-true-if-handled contract so
 // callers can `return` on a hit or rethrow (and fall through to the central
 // error middleware) on a miss.
@@ -1143,6 +1163,10 @@ function handleServiceError(error: unknown, res: Response): boolean {
   }
   if (error instanceof ForbiddenError) {
     res.status(403).json({ error: error.message });
+    return true;
+  }
+  if (error instanceof ConflictError) {
+    res.status(409).json({ error: error.message });
     return true;
   }
   return false;
@@ -1160,6 +1184,8 @@ const loadIncidentTeamId = (incidentId: string) =>
 const requireIncidentTeam = requireResourceTeam(loadIncidentTeamId, "Incident not found");
 const incidentTeam = teamFromResource(loadIncidentTeamId, "Incident not found");
 
+// The actions below reject a transition the incident's current status does not
+// allow with 409 (ConflictError from AlertService); see INCIDENT_TRANSITIONS.
 writeRoute(
   "post",
   "/alerts/incidents/:id/acknowledge",
@@ -1167,23 +1193,38 @@ writeRoute(
   async ({ req, res, userId, teamId }) => {
     const parsed = incidentActionSchema.safeParse(req.body);
     const comment = parsed.success ? parsed.data.comment : undefined;
-    const incident = await alertService.acknowledgeIncident(String(req.params.id), teamId, userId, comment);
-    res.json({ incident });
+    try {
+      const incident = await alertService.acknowledgeIncident(String(req.params.id), teamId, userId, comment);
+      res.json({ incident });
+    } catch (error) {
+      if (handleServiceError(error, res)) return;
+      throw error;
+    }
   },
 );
 
 writeRoute("post", "/alerts/incidents/:id/resolve", incidentTeam, async ({ req, res, userId, teamId }) => {
   const parsed = incidentActionSchema.safeParse(req.body);
   const comment = parsed.success ? parsed.data.comment : undefined;
-  const incident = await alertService.resolveIncident(String(req.params.id), teamId, userId, comment);
-  res.json({ incident });
+  try {
+    const incident = await alertService.resolveIncident(String(req.params.id), teamId, userId, comment);
+    res.json({ incident });
+  } catch (error) {
+    if (handleServiceError(error, res)) return;
+    throw error;
+  }
 });
 
 writeRoute("post", "/alerts/incidents/:id/reopen", incidentTeam, async ({ req, res, userId, teamId }) => {
   const parsed = incidentActionSchema.safeParse(req.body);
   const comment = parsed.success ? parsed.data.comment : undefined;
-  const incident = await alertService.reopenIncident(String(req.params.id), teamId, userId, comment);
-  res.json({ incident });
+  try {
+    const incident = await alertService.reopenIncident(String(req.params.id), teamId, userId, comment);
+    res.json({ incident });
+  } catch (error) {
+    if (handleServiceError(error, res)) return;
+    throw error;
+  }
 });
 
 apiRouter.get(

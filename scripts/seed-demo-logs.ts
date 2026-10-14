@@ -8,8 +8,16 @@ import { createClient } from "@clickhouse/client";
 
 // Configuration
 const CLICKHOUSE_URL = process.env.CLICKHOUSE_URL || "http://localhost:8123";
-const TEAM_ID = process.env.TEAM_ID || "demo-team";
-const SOURCE_ID = process.env.SOURCE_ID || "demo-source";
+// Rows written under an id that is not a real team or source never show up in
+// the UI, so there is no default: pass the UUIDs from GET /api/v1/teams and
+// GET /api/v1/sources.
+const TEAM_ID = process.env.TEAM_ID;
+const SOURCE_ID = process.env.SOURCE_ID;
+if (!TEAM_ID || !SOURCE_ID) {
+  console.error("TEAM_ID and SOURCE_ID are required (real team and source UUIDs).");
+  console.error("  TEAM_ID=<team uuid> SOURCE_ID=<source uuid> npx tsx scripts/seed-demo-logs.ts");
+  process.exit(1);
+}
 const DAYS = parseInt(process.env.DAYS || "7", 10);
 const LOGS_PER_DAY = parseInt(process.env.LOGS_PER_DAY || "1000", 10);
 

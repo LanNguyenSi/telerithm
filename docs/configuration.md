@@ -22,7 +22,7 @@ All configuration is environment-driven. The backend validates its env vars on s
 | `OPENAI_MODEL`       | `openai/gpt-oss-120b`         | Model name passed to the chat completions API                                       |
 | `OPENAI_TIMEOUT_MS`  | `10000`                       | Per-call timeout in ms                                                              |
 | `MAX_LOOKBACK_MS`    | `604800000` (7 days)          | Hard cap on query time range                                                        |
-| `MAX_PAGE_SIZE`      | `500`                         | Max page size for log search. Accepted range 50 to 2000, but the request schema caps `limit` at 500, so only values below 500 change behaviour |
+| `MAX_PAGE_SIZE`      | `500`                         | Max page size for log search. Accepted range 50 to 500: the request schema caps `limit` at 500, so this setting can only lower the maximum. A value above 500 fails startup |
 | `MAX_SYNC_RUNTIME_MS`| `1500`                        | Max wall time for facet, histogram and pattern requests before they return 202 and continue as a job |
 | `SEED_DEMO_DATA`     | unset                         | Set to `true` to allow demo seeding when `NODE_ENV=production` (otherwise seeding is skipped in production) |
 | `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS` | `300000` (5 minutes) | Rate-limit window for `POST /subscriptions/:id/test`, see [api.md](api.md) |
@@ -83,7 +83,7 @@ Leave `OPENAI_API_KEY` unset. The NLQ endpoint still works; it falls back to `tr
 
 ## Ingestion sources
 
-All logs arrive over HTTP at `POST /api/v1/ingest/:sourceId` with the source's `X-API-Key`. The body is `{ "logs": [...] }`; each entry is an object (`timestamp`, `level`, `service`, `host`, `message`, `fields`) or a raw string. Raw strings in RFC 5424 or RFC 3164 syslog, JSON or plain text are parsed, using the optional `format` field or auto-detection (`backend/src/validation/schemas.ts`, `backend/src/parser/log-parser.ts`).
+All logs arrive over HTTP at `POST /api/v1/ingest/:sourceId` with the source's `X-API-Key`. The body is `{ "logs": [...] }` or the bare array; each entry is an object (`timestamp`, `level`, `service`, `host`, `message`, `fields`) or a raw string. `POST /api/v1/ingest/:sourceId/raw` takes a `text/plain` body with one log line per line ([api.md](api.md#ingest-request-bodies)). Raw strings in RFC 5424 or RFC 3164 syslog, JSON or plain text are parsed, using the optional `format` field or auto-detection (`backend/src/validation/schemas.ts`, `backend/src/parser/log-parser.ts`).
 
 A source's type (`HTTP`, `SYSLOG_UDP`, `SYSLOG_TCP`, `FILEBEAT`, `DOCKER`, `CLOUDWATCH`, from `backend/src/types/domain.ts`) is a label stored on the source. It does not change how logs arrive; the backend listens only on HTTP.
 
@@ -92,12 +92,12 @@ Senders that ship with the repository:
 - `packages/sdk-js`, the JavaScript/TypeScript client SDK
 - `packages/cli/logforge-pipe.sh`, which ships lines from stdin
 - `scripts/collect-docker-logs.sh`
-- `deploy/fluentd/` and `deploy/vector/`, reference forwarder configs that collect Docker container logs only
-- `deploy/docker-compose.logging.yml` to bring up the forwarder sidecar alongside the main stack
+- `deploy/fluentd/` and `deploy/vector/`, reference forwarder configs that collect Docker container logs only. Both post a bare JSON array of events to the ingest endpoint, which accepts it
+- `deploy/docker-compose.logging.yml` to bring up the Vector sidecar alongside the main stack (it waits for the backend's health check, which `docker-compose.yml` defines)
 
-Syslog, Filebeat and CloudWatch need a forwarder you configure yourself that posts batches in the `logs` envelope.
+Syslog, Filebeat and CloudWatch need a forwarder you configure yourself that posts batches in the `logs` envelope or as a bare array.
 
-Sources are created per team via the API; each gets a UUID and an API key. The API key authenticates the `POST /ingest/:sourceId` calls.
+Sources are created per team via the API (`POST /api/v1/sources` with `teamId`, `name` and an uppercase `type`; the response is `{ "source": { "id", "apiKey", ... } }`) or with `scripts/setup-sources.sh`, which calls it for a set of container names. The UI lists sources but has no control to create one. Each source gets a UUID and an API key; the key authenticates the `POST /ingest/:sourceId` calls.
 
 ## Tenancy modes
 
@@ -115,7 +115,7 @@ Users subscribe to alert incidents through `/api/v1/subscriptions`. A subscripti
 | `WEBHOOK` | `url`, optional `secret`                        | JSON `POST` to `url` |
 | `SLACK`   | `webhook_url`                                   | Slack incoming webhook |
 | `MSTEAMS` | `webhook_url`                                   | Microsoft Teams incoming webhook |
-| `EMAIL`   | optional `email` (defaults to the user's address) | Not delivered: the backend only writes a log line, since no SMTP transport exists |
+| `EMAIL`   | optional `email` (defaults to the user's address) | Not available: creating or updating a subscription to `EMAIL` answers 400 because no SMTP transport exists. Subscriptions that already exist stay in place; for them the backend only writes a log line and sends nothing |
 
 The webhook body carries `incidentId`, `ruleId`, `severity`, `status`, `message` and `createdAt`. When the subscription has a `secret`, each request carries `X-Telerithm-Signature: sha256=<hex>`, the hex HMAC-SHA256 of the raw request body keyed with the secret; compute the same value over the body you received and compare.
 

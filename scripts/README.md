@@ -185,9 +185,9 @@ docker ps --format '{{.Names}}'
 
 Update `TELERITHM_CONTAINERS` to match actual container names.
 
-### "Failed to send logs (HTTP 401)"
+### "Failed to send logs (HTTP 401)" or "(HTTP 403)"
 
-Invalid API key. Verify:
+The backend answers 401 `Missing X-API-Key header` when a request carries no `X-API-Key` header at all. The collector always sets it, so a 401 means something between the script and the backend dropped the header (a reverse proxy, for example). A wrong key answers 403 `Invalid API key`, and a valid key used with another source's ID answers 403 `API key does not match source`. A successful batch answers 202. Check the key and source ID with:
 
 ```bash
 curl -X POST http://localhost:4000/api/v1/ingest/$SOURCE_ID \
@@ -243,16 +243,16 @@ Or create multiple systemd services (one per container/source).
 
 ### Seed Demo Logs
 
-Generate realistic demo log data for testing and screenshots. The script writes straight to ClickHouse and imports `@clickhouse/client`, which the root `package.json` does not declare, so install it and `tsx` at the repo root first, without saving them:
+Generate realistic demo log data for testing and screenshots. The script writes straight to ClickHouse. Install the repo-root dev dependencies once (`@clickhouse/client` and `tsx` are declared there):
 
 ```bash
-npm install --no-save @clickhouse/client tsx
+npm ci
 ```
 
-`TEAM_ID` and `SOURCE_ID` must be real ids (UUIDs) from `GET /api/v1/teams` and `GET /api/v1/sources`; rows written under any other id never show up in the UI.
+`TEAM_ID` and `SOURCE_ID` are required and must be real ids (UUIDs) from `GET /api/v1/teams` and `GET /api/v1/sources`; rows written under any other id never show up in the UI. The script exits with a message when either is missing.
 
 ```bash
-# Using defaults (7 days, 1000 logs/day)
+# 7 days, 1000 logs/day
 TEAM_ID=<team uuid> SOURCE_ID=<source uuid> npx tsx scripts/seed-demo-logs.ts
 
 # Custom configuration
@@ -276,8 +276,8 @@ npx tsx scripts/seed-demo-logs.ts
 
 | Variable         | Default                 | Description                |
 | ---------------- | ----------------------- | -------------------------- |
-| `TEAM_ID`        | `demo-team`             | Team ID for logs. Set a real team UUID; the default matches no team |
-| `SOURCE_ID`      | `demo-source`           | Source ID for logs. Set a real source UUID; the default matches no source |
+| `TEAM_ID`        | (required)              | Team UUID for the logs |
+| `SOURCE_ID`      | (required)              | Source UUID for the logs |
 | `DAYS`           | `7`                     | Number of days to generate |
 | `LOGS_PER_DAY`   | `1000`                  | Logs per day               |
 | `CLICKHOUSE_URL` | `http://localhost:8123` | ClickHouse connection      |
@@ -286,8 +286,8 @@ npx tsx scripts/seed-demo-logs.ts
 
 ```
 🌱 Seeding demo logs...
-  Team ID: demo-team
-  Source ID: demo-source
+  Team ID: <team uuid>
+  Source ID: <source uuid>
   Days: 7
   Logs per day: 1000
 

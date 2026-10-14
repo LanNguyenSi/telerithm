@@ -14,6 +14,7 @@ const {
   mockMetricsEvaluationsInc,
   mockMetricsIncidentsInc,
   mockDispatch,
+  mockLogWarn,
 } = vi.hoisted(() => ({
   mockAlertRuleFindMany: vi.fn(),
   mockMaintenanceWindowFindFirst: vi.fn(),
@@ -23,6 +24,7 @@ const {
   mockMetricsEvaluationsInc: vi.fn(),
   mockMetricsIncidentsInc: vi.fn(),
   mockDispatch: vi.fn(),
+  mockLogWarn: vi.fn(),
 }));
 
 vi.mock("../../src/repositories/prisma.js", () => ({
@@ -58,7 +60,7 @@ vi.mock("../../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), fatal: vi.fn() },
   createChildLogger: () => ({
     info: vi.fn(),
-    warn: vi.fn(),
+    warn: mockLogWarn,
     error: vi.fn(),
     debug: vi.fn(),
   }),
@@ -737,15 +739,88 @@ describe("AlertEvaluationWorker — rule-level error handling", () => {
 });
 
 // ---------------------------------------------------------------------------
+// ANOMALY_DETECTED (reserved, not evaluated)
+// ---------------------------------------------------------------------------
+
+describe("AlertEvaluationWorker - ANOMALY_DETECTED condition", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockMaintenanceWindowFindFirst.mockResolvedValue(null);
+    mockAlertIncidentFindFirst.mockResolvedValue(null);
+    stubClickhouseCount(1000);
+  });
+
+  it("is skipped without querying ClickHouse and never opens an incident", async () => {
+    mockAlertRuleFindMany.mockResolvedValue([makeRule({ condition: "ANOMALY_DETECTED", threshold: 1 })]);
+
+    const worker = new AlertEvaluationWorker();
+    await privateWorker(worker).evaluate();
+
+    expect(mockClickhouseQuery).not.toHaveBeenCalled();
+    expect(mockAlertIncidentCreate).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockMetricsEvaluationsInc).toHaveBeenCalledWith({ status: "ok" });
+    expect(mockMetricsEvaluationsInc).not.toHaveBeenCalledWith({ status: "error" });
+  });
+
+  it("reports the unsupported condition once per rule, not on every loop", async () => {
+    mockAlertRuleFindMany.mockResolvedValue([
+      makeRule({ id: "anomaly-1", condition: "ANOMALY_DETECTED" }),
+      makeRule({ id: "anomaly-2", condition: "ANOMALY_DETECTED" }),
+    ]);
+
+    const worker = new AlertEvaluationWorker();
+    await privateWorker(worker).evaluate();
+    await privateWorker(worker).evaluate();
+
+    expect(mockLogWarn).toHaveBeenCalledTimes(2);
+    expect(mockLogWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ ruleId: "anomaly-1", condition: "ANOMALY_DETECTED" }),
+      expect.stringContaining("not supported"),
+    );
+    expect(mockLogWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ ruleId: "anomaly-2" }),
+      expect.stringContaining("not supported"),
+    );
+  });
+
+  it("does not hold back the evaluated rules next to it", async () => {
+    mockAlertRuleFindMany.mockResolvedValue([
+      makeRule({ id: "anomaly", condition: "ANOMALY_DETECTED" }),
+      makeRule({ id: "plain", condition: "GREATER_THAN", threshold: 5 }),
+    ]);
+    mockAlertIncidentCreate.mockResolvedValue(CREATED_INCIDENT);
+    mockDispatch.mockResolvedValue(undefined);
+
+    const worker = new AlertEvaluationWorker();
+    await privateWorker(worker).evaluate();
+
+    expect(mockAlertIncidentCreate).toHaveBeenCalledOnce();
+    expect(mockAlertIncidentCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ ruleId: "plain" }) });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // ClickHouse query parameters
 // ---------------------------------------------------------------------------
 
-describe("AlertEvaluationWorker — log count query parameters", () => {
+describe("AlertEvaluationWorker - log count query parameters", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockMaintenanceWindowFindFirst.mockResolvedValue(null);
     mockAlertIncidentFindFirst.mockResolvedValue(null);
     stubClickhouseCount(0);
+  });
+
+  it("binds the rule query as a case-insensitive substring pattern", async () => {
+    mockAlertRuleFindMany.mockResolvedValue([makeRule({ query: "Payment failed" })]);
+
+    await privateWorker(new AlertEvaluationWorker()).evaluate();
+
+    const call = mockClickhouseQuery.mock.calls[0][0];
+    expect(call.query).toContain("message ILIKE {pattern:String}");
+    expect(call.query_params.pattern).toBe("%Payment failed%");
+    expect(call.query_params.teamId).toBe("team-1");
   });
 
   it("sends the window bounds in ClickHouse's DateTime64 text form, not as ISO strings", async () => {

@@ -46,6 +46,40 @@ The `/admin/*` routes need the instance admin (global `ADMIN` user role, given t
 
 There are two role systems: the instance role (`USER` or `ADMIN`) gates `/admin/*`, and the team role (`OWNER`, `ADMIN`, `MEMBER`, `VIEWER`) gates team-scoped routes.
 
+### Ingest request bodies
+
+`POST /ingest/:sourceId` takes `Content-Type: application/json` and answers `202` with `{ accepted, rejected, errors, batchId }`. The body is `{ "logs": [...] }`; a bare JSON array of the same entries is accepted too, because forwarders such as Fluentd and Vector can only post an array. An empty `logs` array, or one entry that fails validation (for example an unknown `level`), answers `400` for the whole batch.
+
+`POST /ingest/:sourceId/raw` takes `Content-Type: text/plain` (any `text/*` type, with or without a `charset`). Each line of the body is one log line: `\n` and `\r\n` both end a line, blank lines are skipped, and every line is parsed like a string entry in `logs` (the format is auto-detected). It answers `202` with the same body as above, `400 Empty body` when no line is left, and `415` for any other content type, JSON included. `curl -d` sends `application/x-www-form-urlencoded` by default, so pass `-H "Content-Type: text/plain"` and `--data-binary`:
+
+```bash
+curl -X POST http://localhost:4000/api/v1/ingest/$SOURCE_ID/raw \
+  -H "X-API-Key: $API_KEY" -H "Content-Type: text/plain" \
+  --data-binary $'first line\nsecond line'
+```
+
+Both routes answer `401` without an `X-API-Key` header and `403` for a wrong key or a key that belongs to another source.
+
+### Incident actions
+
+An incident is `OPEN`, `ACKNOWLEDGED` or `RESOLVED`. The actions only apply from these states:
+
+| Action | Allowed from | Result |
+| ------ | ------------ | ------ |
+| `acknowledge` | `OPEN` | `ACKNOWLEDGED` |
+| `resolve` | `OPEN`, `ACKNOWLEDGED` | `RESOLVED` |
+| `reopen` | `RESOLVED` | `OPEN` |
+
+Any other combination answers `409` with a message such as `Cannot acknowledge an incident that is RESOLVED; acknowledge applies to OPEN incidents`, and writes nothing (no status change, no timeline event). `409` is also the answer when another request changed the status between the check and the write. An unknown id answers `404`, and an incident of a team the caller does not belong to answers `403`.
+
+### Subscription channels
+
+`channel` is `WEBHOOK`, `SLACK` or `MSTEAMS`. `POST /subscriptions` and `PUT /subscriptions/:id` answer `400` for `EMAIL` (`EMAIL subscriptions are not supported yet because no email transport is configured; ...`) because the backend has no mail transport. Existing `EMAIL` subscriptions are not migrated: they stay listed and can be updated (leave `channel` out of the body), tested and deleted, and delivery for them only writes a log line.
+
+### Log search page size
+
+`limit` on the search requests is 1 to 500 (default 100). `MAX_PAGE_SIZE` can lower that maximum (50 to 500) but not raise it; see [configuration.md](configuration.md).
+
 ## Rate limiting
 
 Every request passes through a global limiter first, then (for a few route groups) a second, more specific one. All limiters are per-process, in-memory counters (`express-rate-limit`'s default `MemoryStore`); see [architecture.md#rate-limiting](architecture.md#rate-limiting) for what that means for a multi-instance deployment.

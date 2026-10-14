@@ -17,7 +17,7 @@ Thanks for your interest in contributing. This guide covers the basics.
 make init
 ```
 
-To run backend and frontend outside Docker, start only the datastores in Docker. This also creates the ClickHouse tables from `backend/clickhouse/init.sql`; the backend does not create them itself.
+To run backend and frontend outside Docker, start only the datastores in Docker. This also creates the ClickHouse tables from `backend/clickhouse/init.sql`; the backend does not create them itself. `make setup` runs these steps for you (datastores, example env files, `npm install` in both packages, `db:push`); the manual version:
 
 ```bash
 docker compose up -d postgres clickhouse redis

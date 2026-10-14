@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SEARCH_LIMIT_CEILING } from "../constants/search.js";
 
 const levelSchema = z.enum(["debug", "info", "warn", "error", "fatal"]);
 
@@ -43,7 +44,7 @@ export const searchSchema = z.object({
   filters: z.array(logFilterSchema).optional(),
   sortBy: z.enum(["timestamp", "level", "service", "host"]).default("timestamp"),
   sortDirection: z.enum(["asc", "desc"]).default("desc"),
-  limit: z.number().int().min(1).max(500).default(100),
+  limit: z.number().int().min(1).max(SEARCH_LIMIT_CEILING).default(100),
   offset: z.number().int().min(0).default(0),
   pageToken: z.string().optional(),
 });
@@ -134,16 +135,27 @@ export const incidentActionSchema = z.object({
   comment: z.string().max(1000).optional(),
 });
 
+// The EMAIL channel exists in the database enum, but no mail transport does
+// (backend/src/services/notification/channels/email.ts only logs), so a new or
+// changed subscription may not pick it. Existing EMAIL subscriptions are left
+// alone: an update that does not send `channel` still passes.
+export const EMAIL_CHANNEL_UNSUPPORTED_MESSAGE =
+  "EMAIL subscriptions are not supported yet because no email transport is configured; use WEBHOOK, SLACK or MSTEAMS";
+
+const subscriptionChannelSchema = z
+  .enum(["EMAIL", "WEBHOOK", "SLACK", "MSTEAMS"])
+  .refine((channel) => channel !== "EMAIL", { message: EMAIL_CHANNEL_UNSUPPORTED_MESSAGE });
+
 export const createSubscriptionSchema = z.object({
   teamId: z.string().min(1),
   ruleId: z.string().optional(),
-  channel: z.enum(["EMAIL", "WEBHOOK", "SLACK", "MSTEAMS"]),
+  channel: subscriptionChannelSchema,
   config: z.record(z.unknown()),
   severities: z.array(z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"])).optional(),
 });
 
 export const updateSubscriptionSchema = z.object({
-  channel: z.enum(["EMAIL", "WEBHOOK", "SLACK", "MSTEAMS"]).optional(),
+  channel: subscriptionChannelSchema.optional(),
   config: z.record(z.unknown()).optional(),
   severities: z.array(z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"])).optional(),
   enabled: z.boolean().optional(),

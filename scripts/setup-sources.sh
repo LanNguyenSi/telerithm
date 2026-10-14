@@ -51,7 +51,8 @@ fi
 # Create a log source
 create_source() {
   local name="$1"
-  local type="${2:-http}"
+  # createSourceSchema accepts the uppercase SourceType values only
+  local type="${2:-HTTP}"
   
   log_info "Creating source: $name (type: $type)"
   
@@ -73,8 +74,9 @@ EOF
   body=$(echo "$response" | head -n-1)
   
   if [ "$http_code" -eq 201 ] || [ "$http_code" -eq 200 ]; then
-    source_id=$(echo "$body" | jq -r '.id')
-    api_key=$(echo "$body" | jq -r '.apiKey')
+    # POST /sources answers { "source": { "id": ..., "apiKey": ... } }
+    source_id=$(echo "$body" | jq -r '.source.id')
+    api_key=$(echo "$body" | jq -r '.source.apiKey')
     
     log_success "Created source: $name"
     echo -e "  ${BLUE}Source ID:${NC} $source_id"
@@ -114,13 +116,13 @@ main() {
   log_info "Creating log sources for Docker containers..."
   echo ""
   
-  create_source "triologue-api" "http"
-  create_source "triologue-frontend" "http"
-  create_source "event-booking-app" "http"
-  create_source "traefik" "http"
-  create_source "health-dashboard" "http"
-  create_source "telerithm-backend" "http"
-  create_source "telerithm-frontend" "http"
+  create_source "triologue-api" "HTTP"
+  create_source "triologue-frontend" "HTTP"
+  create_source "event-booking-app" "HTTP"
+  create_source "traefik" "HTTP"
+  create_source "health-dashboard" "HTTP"
+  create_source "telerithm-backend" "HTTP"
+  create_source "telerithm-frontend" "HTTP"
   
   echo ""
   log_success "All sources created!"

@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import express from "express";
 import { z } from "zod";
+import { SEARCH_LIMIT_CEILING } from "../constants/search.js";
 
 // Value handed to Express's `trust proxy` setting: a hop count, the
 // `loopback` keyword, or a list of trusted proxy IPs/CIDRs. `undefined` means
@@ -175,7 +176,8 @@ const configSchema = z.object({
     .int()
     .positive()
     .default(7 * 24 * 60 * 60 * 1000),
-  maxPageSize: z.coerce.number().int().min(50).max(2000).default(500),
+  // Capped at the request schema's own limit ceiling: a higher value would have no effect.
+  maxPageSize: z.coerce.number().int().min(50).max(SEARCH_LIMIT_CEILING).default(SEARCH_LIMIT_CEILING),
   maxSyncRuntimeMs: z.coerce.number().int().min(100).max(30_000).default(1500),
   // Strict per-user limit on routes that trigger a real notification dispatch
   // (currently POST /subscriptions/:id/test). Default: 5 requests / 5 minutes.
