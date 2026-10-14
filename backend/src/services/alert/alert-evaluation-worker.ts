@@ -6,9 +6,9 @@ import { NotificationDispatcher } from "../notification/notification-dispatcher.
 
 const log = createChildLogger("alert-eval");
 
-// ClickHouse parses a DateTime64 query parameter strictly: the ISO "T" and "Z"
-// of Date.toISOString() make it reject the value, so send "YYYY-MM-DD HH:MM:SS.mmm"
-// in UTC, the same shape LogRepository uses.
+// ClickHouse parses a DateTime64 query parameter strictly: the trailing "Z" of
+// Date.toISOString() makes it reject the value. Send "YYYY-MM-DD HH:MM:SS.mmm"
+// in UTC; the "T" is replaced too, to match the format LogRepository uses.
 function toClickHouseTimestamp(date: Date): string {
   return date.toISOString().replace("T", " ").replace("Z", "");
 }

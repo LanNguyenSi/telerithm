@@ -22,7 +22,7 @@ All configuration is environment-driven. The backend validates its env vars on s
 | `OPENAI_MODEL`       | `openai/gpt-oss-120b`         | Model name passed to the chat completions API                                       |
 | `OPENAI_TIMEOUT_MS`  | `10000`                       | Per-call timeout in ms                                                              |
 | `MAX_LOOKBACK_MS`    | `604800000` (7 days)          | Hard cap on query time range                                                        |
-| `MAX_PAGE_SIZE`      | `500`                         | Max page size for log search. Accepted range 50 to 500: the request schema caps `limit` at 500, so this setting can only lower the maximum. A value above 500 fails startup |
+| `MAX_PAGE_SIZE`      | `500`                         | Max page size for log search. Accepted range 50 to 500: the request schema caps `limit` at 500, so this setting can only lower the maximum. A value above 500 is clamped to 500 and logged as one startup warning; a non-numeric value or one below 50 fails startup |
 | `MAX_SYNC_RUNTIME_MS`| `1500`                        | Max wall time for facet, histogram and pattern requests before they return 202 and continue as a job |
 | `SEED_DEMO_DATA`     | unset                         | Set to `true` to allow demo seeding when `NODE_ENV=production` (otherwise seeding is skipped in production) |
 | `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS` | `300000` (5 minutes) | Rate-limit window for `POST /subscriptions/:id/test`, see [api.md](api.md) |

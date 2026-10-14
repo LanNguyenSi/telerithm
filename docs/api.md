@@ -78,7 +78,7 @@ Any other combination answers `409` with a message such as `Cannot acknowledge a
 
 ### Log search page size
 
-`limit` on the search requests is 1 to 500 (default 100). `MAX_PAGE_SIZE` can lower that maximum (50 to 500) but not raise it; see [configuration.md](configuration.md).
+`limit` on the search requests is 1 to 500 (default 100). `MAX_PAGE_SIZE` can lower that maximum (50 to 500) but not raise it (a larger value is clamped to 500 with a startup warning); see [configuration.md](configuration.md).
 
 ## Rate limiting
 
