@@ -81,7 +81,8 @@ send_logs() {
   http_code=$(echo "$response" | tail -n1)
   body=$(echo "$response" | head -n-1)
   
-  if [ "$http_code" -eq 201 ]; then
+  # POST /ingest/:sourceId answers 202 Accepted
+  if [ "$http_code" -eq 202 ]; then
     log_info "Sent batch successfully"
     return 0
   else
@@ -114,8 +115,10 @@ process_container_logs() {
   fi
   docker_cmd="$docker_cmd $container 2>&1"
   
-  # Process logs line by line
-  eval "$docker_cmd" | while IFS= read -r line; do
+  # Process logs line by line. The loop reads from a process substitution, not a
+  # pipe: a piped loop runs in a subshell, so the batch left over after the loop
+  # (fewer than $batch_size lines) would never be sent.
+  while IFS= read -r line; do
     # Parse timestamp (Docker format: 2026-03-21T07:30:00.123456789Z)
     if [[ "$line" =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+Z)\ (.*)$ ]]; then
       timestamp="${BASH_REMATCH[1]}"
@@ -130,7 +133,7 @@ process_container_logs() {
     level=$(parse_level "$message")
     
     # Escape JSON
-    message_escaped=$(echo "$message" | jq -Rs .)
+    message_escaped=$(printf '%s' "$message" | jq -Rs .)
     
     # Add to batch
     log_entry=$(cat <<EOF
@@ -155,7 +158,7 @@ EOF
       logs_array="[]"
       count=0
     fi
-  done
+  done < <(eval "$docker_cmd")
   
   # Send remaining logs
   if [ $count -gt 0 ]; then

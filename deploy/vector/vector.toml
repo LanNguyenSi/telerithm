@@ -12,9 +12,10 @@ type = "docker_logs"
 type = "remap"
 inputs = ["docker"]
 source = '''
-# Try to parse as JSON first
+# Try to parse as JSON first. Anything that is not a JSON object is treated as
+# plain text.
 parsed, err = parse_json(.message)
-if err == null {
+if err == null && is_object(parsed) {
   .level = downcase(string(parsed.level) ?? "info")
   .service = string(parsed.service) ?? .container_name
   .host = string(parsed.host) ?? .host
@@ -22,9 +23,10 @@ if err == null {
   .fields = {}
 } else {
   # Plain text: try to detect log level from message
-  if match(.message, r'(?i)\berror\b') {
+  msg = string(.message) ?? ""
+  if match(msg, r'(?i)\berror\b') {
     .level = "error"
-  } else if match(.message, r'(?i)\bwarn(ing)?\b') {
+  } else if match(msg, r'(?i)\bwarn(ing)?\b') {
     .level = "warn"
   } else {
     .level = "info"
@@ -33,8 +35,19 @@ if err == null {
   .fields = {}
 }
 
-# Ensure timestamp is ISO format
-.timestamp = to_string(.timestamp)
+# The ingest endpoint rejects the whole batch for a level it does not know
+if .level == "warning" {
+  .level = "warn"
+}
+if !includes(["debug", "info", "warn", "error", "fatal"], .level) {
+  .level = "info"
+}
+
+# Ensure timestamp is ISO format (UTC, with a trailing Z)
+if !is_timestamp(.timestamp) {
+  .timestamp = now()
+}
+.timestamp = format_timestamp!(.timestamp, format: "%Y-%m-%dT%H:%M:%S%.3fZ")
 '''
 
 # --- Transform: Format for Telerithm ingest API ---
@@ -65,7 +78,8 @@ encoding.codec = "json"
 max_events = 100
 timeout_secs = 5
 
-# Wrap events in the Telerithm ingest format
+# Request headers. The json codec posts each batch as a bare JSON array of
+# events, and POST /ingest/:sourceId accepts that as well as { "logs": [...] }.
 [sinks.telerithm.request]
 headers.X-API-Key = "${TELERITHM_API_KEY}"
 headers.Content-Type = "application/json"
@@ -73,5 +87,5 @@ headers.Content-Type = "application/json"
 # Buffer to disk for reliability
 [sinks.telerithm.buffer]
 type = "disk"
-max_size = 104857600  # 100MB
+max_size = 268435488  # 256MB, the smallest disk buffer Vector accepts
 when_full = "block"

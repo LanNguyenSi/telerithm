@@ -421,7 +421,7 @@ export class LogRepository {
       column = filter.field;
     } else {
       // Sanitise the dynamic map key with the same allow-list used for free-text
-      // search (line ~497) so an attacker cannot break out of the
+      // search (buildSearchCondition) so an attacker cannot break out of the
       // fields['<key>'] literal and inject WHERE-clause SQL (e.g. neutralising
       // the parameterised team_id tenant scope). Drop the filter if nothing
       // safe remains.

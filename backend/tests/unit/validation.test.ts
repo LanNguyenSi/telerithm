@@ -6,6 +6,9 @@ import {
   ingestSchema,
   createTeamSchema,
   createSourceSchema,
+  createSubscriptionSchema,
+  updateSubscriptionSchema,
+  EMAIL_CHANNEL_UNSUPPORTED_MESSAGE,
 } from "../../src/validation/schemas.js";
 
 describe("Validation Schemas", () => {
@@ -125,6 +128,44 @@ describe("Validation Schemas", () => {
         type: "INVALID",
       });
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe("subscription channels", () => {
+    const base = { teamId: "t1", config: {} };
+
+    it("createSubscriptionSchema rejects EMAIL with the reason on the channel field", () => {
+      const result = createSubscriptionSchema.safeParse({ ...base, channel: "EMAIL" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.flatten().fieldErrors.channel).toEqual([EMAIL_CHANNEL_UNSUPPORTED_MESSAGE]);
+      }
+      expect(EMAIL_CHANNEL_UNSUPPORTED_MESSAGE).toMatch(/no email transport/);
+    });
+
+    it.each(["WEBHOOK", "SLACK", "MSTEAMS"])("createSubscriptionSchema accepts %s", (channel) => {
+      expect(createSubscriptionSchema.safeParse({ ...base, channel }).success).toBe(true);
+    });
+
+    it("createSubscriptionSchema still rejects an unknown channel", () => {
+      expect(createSubscriptionSchema.safeParse({ ...base, channel: "SMS" }).success).toBe(false);
+    });
+
+    it("updateSubscriptionSchema rejects switching to EMAIL", () => {
+      const result = updateSubscriptionSchema.safeParse({ channel: "EMAIL" });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.flatten().fieldErrors.channel).toEqual([EMAIL_CHANNEL_UNSUPPORTED_MESSAGE]);
+      }
+    });
+
+    it("updateSubscriptionSchema accepts an update that leaves the channel alone (existing EMAIL subscriptions)", () => {
+      expect(updateSubscriptionSchema.safeParse({ enabled: false }).success).toBe(true);
+      expect(updateSubscriptionSchema.safeParse({ severities: ["HIGH"] }).success).toBe(true);
+    });
+
+    it("updateSubscriptionSchema accepts the other channels", () => {
+      expect(updateSubscriptionSchema.safeParse({ channel: "SLACK" }).success).toBe(true);
     });
   });
 });

@@ -50,7 +50,8 @@ export default async function SettingsPage() {
             </svg>
             <p className="text-sm font-medium text-ink">No log sources configured</p>
             <p className="max-w-xs text-sm text-muted">
-              Add a source to start ingesting logs from your services.
+              Sources are not created in the UI yet. Create one with POST /api/v1/sources or
+              scripts/setup-sources.sh, then send logs with its API key.
             </p>
           </div>
         ) : (

@@ -1,6 +1,7 @@
 import { isIP } from "node:net";
 import express from "express";
 import { z } from "zod";
+import { SEARCH_LIMIT_CEILING } from "../constants/search.js";
 
 // Value handed to Express's `trust proxy` setting: a hop count, the
 // `loopback` keyword, or a list of trusted proxy IPs/CIDRs. `undefined` means
@@ -175,7 +176,9 @@ const configSchema = z.object({
     .int()
     .positive()
     .default(7 * 24 * 60 * 60 * 1000),
-  maxPageSize: z.coerce.number().int().min(50).max(2000).default(500),
+  // A value above the request schema's own limit ceiling would have no effect;
+  // loadConfig clamps it to the ceiling and records a warning.
+  maxPageSize: z.coerce.number().int().min(50).default(SEARCH_LIMIT_CEILING),
   maxSyncRuntimeMs: z.coerce.number().int().min(100).max(30_000).default(1500),
   // Strict per-user limit on routes that trigger a real notification dispatch
   // (currently POST /subscriptions/:id/test). Default: 5 requests / 5 minutes.
@@ -234,7 +237,19 @@ function loadConfig(): Config {
     throw new Error(`Invalid configuration:\n${missing}`);
   }
 
-  return result.data;
+  const data = result.data;
+  if (data.maxPageSize > SEARCH_LIMIT_CEILING) {
+    configWarnings.push(
+      `MAX_PAGE_SIZE=${data.maxPageSize} is above the cap of ${SEARCH_LIMIT_CEILING}, the largest limit a search request may ask for; using ${SEARCH_LIMIT_CEILING}`,
+    );
+    data.maxPageSize = SEARCH_LIMIT_CEILING;
+  }
+
+  return data;
 }
+
+// Problems loadConfig corrected instead of rejecting. The logger imports this
+// module, so the warnings are logged by server.ts once the logger exists.
+export const configWarnings: string[] = [];
 
 export const config = loadConfig();

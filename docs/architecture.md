@@ -72,11 +72,11 @@ flowchart TD
   DISP -.->|log only| EM[Email]
 ```
 
-Alerting does not run on ingest: `AlertEvaluationWorker` polls every 60 seconds. Postgres also holds teams, users, sources, saved views and the other tenancy state; Redis also backs the health check.
+The Email branch only serves subscriptions that already exist: creating or switching to an `EMAIL` subscription is rejected until a mail transport exists. Alerting does not run on ingest: `AlertEvaluationWorker` polls every 60 seconds. Postgres also holds teams, users, sources, saved views and the other tenancy state; Redis also backs the health check.
 
 ## Ingestion pipeline
 
-`POST /api/v1/ingest/:sourceId` is the main ingest entrypoint; `POST /api/v1/ingest/:sourceId/raw` splits its body into lines and passes them to the same `IngestionService.ingest` as raw strings. The main route's body is a JSON object whose `logs` field holds an array. Each entry is either:
+`POST /api/v1/ingest/:sourceId` is the main ingest entrypoint; `POST /api/v1/ingest/:sourceId/raw` takes a `text/plain` body, splits it into lines and passes them to the same `IngestionService.ingest` as raw strings (other content types get 415). The main route's body is a JSON object whose `logs` field holds an array, or the bare array itself, which is what Fluentd and Vector post ([api.md](api.md#ingest-request-bodies) has the details). Each entry is either:
 
 - A structured `LogEntry` object (`timestamp`, `level`, `service`, `host`, `message`, `fields`).
 - A raw string, parsed by `LogParser` based on `payload.format` or auto-detection.
@@ -95,7 +95,7 @@ export type SourceType =
   | "CLOUDWATCH";
 ```
 
-The source type is a label stored on the source; it does not change how logs arrive. `deploy/fluentd` and `deploy/vector` ship reference forwarder configs (plus `deploy/docker-compose.logging.yml` to run the sidecar) that collect Docker container logs and post them to the HTTP endpoint. Syslog, Filebeat and CloudWatch need a forwarder you configure yourself that posts batches in the `logs` envelope; see [configuration.md](configuration.md#ingestion-sources).
+The source type is a label stored on the source; it does not change how logs arrive. `deploy/fluentd` and `deploy/vector` ship reference forwarder configs (plus `deploy/docker-compose.logging.yml` to run the sidecar) that collect Docker container logs and post them to the HTTP endpoint. Syslog, Filebeat and CloudWatch need a forwarder you configure yourself that posts batches in the `logs` envelope or as a bare array; see [configuration.md](configuration.md#ingestion-sources).
 
 ## NLQ pipeline
 
@@ -135,17 +135,17 @@ Key design choices:
 
 ## Alerting
 
-`AlertEvaluationWorker` runs inside the backend process: once at startup, then every 60 seconds (one evaluation loop per backend process). It loads the enabled rules, counts matching log rows in ClickHouse for each, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Rules are read from Postgres; the API can list, mute and unmute them (the UI only lists them); no route or UI creates a rule or edits anything else on it, and only the demo seed inserts one. Maintenance windows suppress rule evaluation entirely (no incidents, no notifications). `POST /api/v1/subscriptions/:id/test` is the exception: it dispatches a synthetic test notification straight through `NotificationDispatcher` without checking maintenance windows at all, so an operator can verify a channel is wired up even while a window is active. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
+`AlertEvaluationWorker` runs inside the backend process: once at startup, then every 60 seconds (one evaluation loop per backend process). It loads the enabled rules, counts matching log rows in ClickHouse for each, and on threshold breach creates an `Incident` and dispatches notifications via `NotificationDispatcher`. Rules are read from Postgres; the API can list, mute and unmute them (the UI only lists them); no route or UI creates a rule or edits anything else on it. The demo seed inserts one example rule, and any other rule has to be inserted into the database directly. Maintenance windows suppress rule evaluation entirely (no incidents, no notifications). `POST /api/v1/subscriptions/:id/test` is the exception: it dispatches a synthetic test notification straight through `NotificationDispatcher` without checking maintenance windows at all, so an operator can verify a channel is wired up even while a window is active. Escalation policies are planned: the `EscalationPolicy`/`EscalationStep` schema ships, but nothing evaluates or advances the steps yet; the worker fires notifications once per incident.
 
 How a rule is evaluated:
 
 - The rule `query` is not a query language: it is a case-insensitive substring match on the log message (`message ILIKE '%<query>%'`) within the rule window (`windowMinutes`). The rule's `queryType` is ignored.
-- Evaluated conditions are `GREATER_THAN`, `LESS_THAN`, `EQUALS`, and `CHANGES_BY` (the absolute difference to the previous window of the same length). `ANOMALY_DETECTED` exists in the schema but is not evaluated, so it never fires.
+- Evaluated conditions are `GREATER_THAN`, `LESS_THAN`, `EQUALS`, and `CHANGES_BY` (the absolute difference to the previous window of the same length). `ANOMALY_DETECTED` is a reserved value in the schema with no detector behind it: the worker skips such a rule before it counts anything and logs one warning per rule and process, so it never fires.
 - Muted rules (`muteUntil` in the future) and teams inside an active maintenance window are skipped.
 - Deduplication checks only for an `OPEN` incident of the rule. A rule that is still breached after its incident was acknowledged or resolved opens a new incident on the next run.
 - New incidents always get severity `MEDIUM`.
 
-Incidents move between three states. The acknowledge, resolve and reopen actions (`POST /api/v1/alerts/incidents/:id/acknowledge`, `/resolve`, `/reopen`) set the target state without checking the current one, and each writes an `IncidentEvent` to the timeline. The state diagram shows the transitions.
+Incidents move between three states. The acknowledge, resolve and reopen actions (`POST /api/v1/alerts/incidents/:id/acknowledge`, `/resolve`, `/reopen`) check the current state first: acknowledge applies to `OPEN`, resolve to `OPEN` or `ACKNOWLEDGED`, reopen to `RESOLVED` or `ACKNOWLEDGED`. Any other combination answers 409 and writes nothing; an accepted action writes an `IncidentEvent` to the timeline. The state diagram shows the transitions.
 
 ```mermaid
 stateDiagram-v2
@@ -155,11 +155,11 @@ stateDiagram-v2
   ACKNOWLEDGED --> RESOLVED: resolve
   ACKNOWLEDGED --> OPEN: reopen
   RESOLVED --> OPEN: reopen
-  RESOLVED --> ACKNOWLEDGED: acknowledge
   note right of ACKNOWLEDGED
-    Actions do not check the current state.
+    Every other action is rejected with 409.
     The worker deduplicates only against OPEN incidents,
-    so a rule still breached opens a new incident.
+    so a rule still breached after acknowledge or resolve
+    opens a new incident.
   end note
 ```
 

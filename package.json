@@ -4,5 +4,9 @@
   },
   "overrides": {
     "picomatch": ">=4.0.4"
+  },
+  "devDependencies": {
+    "@clickhouse/client": "^1.18.2",
+    "tsx": "^4.22.4"
   }
 }

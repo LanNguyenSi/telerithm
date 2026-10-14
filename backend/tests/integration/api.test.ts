@@ -919,7 +919,7 @@ describe("API Routes", () => {
       const res = await app
         .post("/api/v1/subscriptions")
         .set("Authorization", "Bearer sess_admin")
-        .send({ teamId: "other-team", channel: "EMAIL", config: {} });
+        .send({ teamId: "other-team", channel: "WEBHOOK", config: {} });
       expect(res.status).toBe(403);
       expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
         where: { teamId_userId: { teamId: "other-team", userId: "user-1" } },
@@ -3112,7 +3112,7 @@ describe("API Routes", () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       seedIncident("t1");
       mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(MEMBERSHIP);
-      mockedPrisma.alertIncident.findFirst.mockResolvedValueOnce({ id: "inc-1" });
+      mockedPrisma.alertIncident.findFirst.mockResolvedValueOnce({ id: "inc-1", status: "OPEN" });
       mockedPrisma.alertIncident.update.mockResolvedValueOnce({ id: "inc-1", status: "ACKNOWLEDGED" });
       mockedPrisma.incidentEvent.create.mockResolvedValueOnce({ id: "ev-1" });
 
@@ -3125,7 +3125,7 @@ describe("API Routes", () => {
       expect(res.body.incident.status).toBe("ACKNOWLEDGED");
       expect(mockedPrisma.alertIncident.findFirst).toHaveBeenCalledWith({
         where: { id: "inc-1", rule: { teamId: "t1" } },
-        select: { id: true },
+        select: { id: true, status: true },
       });
     });
 
@@ -3525,7 +3525,11 @@ describe("API Routes", () => {
           send: () => authed(writeApp.post(`/api/v1/alerts/incidents/inc-1/${action}`)).send({}),
           arrange: () => {
             mockedPrisma.alertIncident.findUnique.mockResolvedValueOnce({ rule: { teamId: "t1" } });
-            mockedPrisma.alertIncident.findFirst.mockResolvedValueOnce({ id: "inc-1" });
+            // the status each action may start from
+            mockedPrisma.alertIncident.findFirst.mockResolvedValueOnce({
+              id: "inc-1",
+              status: action === "reopen" ? "RESOLVED" : "OPEN",
+            });
             mockedPrisma.alertIncident.update.mockResolvedValueOnce({ id: "inc-1", status: "OK" });
             mockedPrisma.incidentEvent.create.mockResolvedValueOnce({ id: "ev-1" });
           },

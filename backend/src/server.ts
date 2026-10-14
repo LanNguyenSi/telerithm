@@ -1,5 +1,5 @@
 import { createApp } from "./app.js";
-import { config } from "./config/index.js";
+import { config, configWarnings } from "./config/index.js";
 import { logger } from "./logger.js";
 import { connectDatabase, disconnectDatabase } from "./repositories/prisma.js";
 import { connectClickHouse, disconnectClickHouse } from "./repositories/clickhouse.js";
@@ -25,6 +25,8 @@ async function connectWithRetry(
 }
 
 async function main() {
+  for (const warning of configWarnings) logger.warn(warning);
+
   await Promise.all([
     connectWithRetry("PostgreSQL", connectDatabase),
     connectWithRetry("ClickHouse", connectClickHouse),

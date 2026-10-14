@@ -6,10 +6,20 @@ import { NotificationDispatcher } from "../notification/notification-dispatcher.
 
 const log = createChildLogger("alert-eval");
 
+// ClickHouse parses a DateTime64 query parameter strictly: the trailing "Z" of
+// Date.toISOString() makes it reject the value. Send "YYYY-MM-DD HH:MM:SS.mmm"
+// in UTC; the "T" is replaced too, to match the format LogRepository uses.
+function toClickHouseTimestamp(date: Date): string {
+  return date.toISOString().replace("T", " ").replace("Z", "");
+}
+
 export class AlertEvaluationWorker {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private readonly dispatcher = new NotificationDispatcher();
+  // Rules already reported as unsupported, so the warning is logged once per
+  // process instead of on every evaluation loop.
+  private readonly warnedUnsupported = new Set<string>();
 
   constructor(private readonly intervalMs = 60_000) {}
 
@@ -62,6 +72,20 @@ export class AlertEvaluationWorker {
     windowMinutes: number;
     muteUntil: Date | null;
   }): Promise<void> {
+    // ANOMALY_DETECTED is a reserved AlertCondition value: no detector exists,
+    // so the rule could never trigger. Skip it before any lookup and say so,
+    // rather than letting it look like a rule whose threshold is never reached.
+    if (rule.condition === "ANOMALY_DETECTED") {
+      if (!this.warnedUnsupported.has(rule.id)) {
+        this.warnedUnsupported.add(rule.id);
+        log.warn(
+          { ruleId: rule.id, condition: rule.condition },
+          "Alert condition ANOMALY_DETECTED is not supported, rule is skipped",
+        );
+      }
+      return;
+    }
+
     // Skip muted rules
     if (rule.muteUntil && rule.muteUntil > new Date()) {
       log.debug({ ruleId: rule.id, muteUntil: rule.muteUntil }, "Rule is muted, skipping");
@@ -143,13 +167,16 @@ export class AlertEvaluationWorker {
   }
 
   private async queryLogCount(teamId: string, query: string, from: Date, to: Date): Promise<number> {
-    // The rule.query is treated as a WHERE fragment matching against message content
+    // The rule.query is a plain substring: it is bound as the ILIKE pattern
+    // `%<query>%` and matched case-insensitively against the log message. It is
+    // not SQL and not a WHERE fragment, and `%` and `_` inside it act as ILIKE
+    // wildcards.
     const result = await clickhouse.query({
       query: `SELECT count() as cnt FROM logs WHERE team_id = {teamId:String} AND timestamp >= {from:DateTime64(3)} AND timestamp <= {to:DateTime64(3)} AND message ILIKE {pattern:String}`,
       query_params: {
         teamId,
-        from: from.toISOString(),
-        to: to.toISOString(),
+        from: toClickHouseTimestamp(from),
+        to: toClickHouseTimestamp(to),
         pattern: `%${query}%`,
       },
       format: "JSONEachRow",

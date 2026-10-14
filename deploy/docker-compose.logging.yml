@@ -8,6 +8,8 @@
 services:
   vector:
     image: timberio/vector:0.41.1-alpine
+    # The image only loads /etc/vector/vector.yaml unless told otherwise
+    command: ["--config", "/etc/vector/vector.toml"]
     volumes:
       - ./deploy/vector/vector.toml:/etc/vector/vector.toml:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro

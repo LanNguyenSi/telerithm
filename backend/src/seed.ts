@@ -54,7 +54,9 @@ async function main() {
       teamId: team.id,
       name: "Spike in payment errors",
       description: "Triggers when payment errors exceed threshold",
-      query: "SELECT count() FROM logs WHERE level = 'error' AND service = 'payment'",
+      // A rule query is a case-insensitive substring of the log message, not SQL.
+      // "Payment failed" is the message scripts/seed-demo-logs.ts writes.
+      query: "Payment failed",
       queryType: "SQL",
       condition: "GREATER_THAN",
       threshold: 10,

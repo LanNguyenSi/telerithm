@@ -50,7 +50,8 @@ export default async function AlertsPage() {
               </svg>
               <p className="text-sm font-medium text-ink">No alert rules configured</p>
               <p className="max-w-xs text-sm text-muted">
-                Create rules to get notified when log patterns exceed thresholds.
+                Rules cannot be created or edited in the UI or the API yet. The demo seed adds one example rule; any
+                other rule has to be inserted into the database directly.
               </p>
             </div>
           ) : (

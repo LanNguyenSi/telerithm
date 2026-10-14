@@ -3,7 +3,7 @@ type: invariant
 title: Compose file topology — three files, one actually deployed, and the mirroring invariant between the two prod variants
 description: docker-compose.yml is local dev only (no logging bounds, no ClickHouse config.d mounts); docker-compose.prod.yml is a generic/reference prod compose that is NOT deployed; docker-compose.traefik.yml is the actually-deployed VPS-01 variant, pinned by .relay.yml's compose_file. The three ClickHouse config mounts plus the json-file x-logging anchor must stay identical between prod.yml and traefik.yml; PR #59/#60/#110 are the precedent for that drift risk, the last of which finally applied a fix to both proactively instead of needing a follow-up mirror.
 tags: [docker-compose, deploy, drift, topology, ops]
-timestamp: 2026-10-10T18:10:03Z
+timestamp: 2026-10-14T05:23:33Z
 sources:
   - docker-compose.yml
   - docker-compose.prod.yml
@@ -16,7 +16,7 @@ sources:
 
 Three compose files exist at the repo root and serve three different purposes, not three redundant copies:
 
-- **`docker-compose.yml`** — local dev only. Exposes Postgres/ClickHouse/Redis ports directly on the host (`5432`, `8123`/`9000`, `6379`), has no per-service memory/CPU limits, no `x-logging` bound, and mounts only `backend/clickhouse/init.sql` into ClickHouse — no `limits.xml`, no `system-logs.xml`.
+- **`docker-compose.yml`** — local dev only. Exposes Postgres/ClickHouse/Redis ports directly on the host (`5432`, `8123`/`9000`, `6379`), has no per-service memory/CPU limits, no `x-logging` bound, and mounts only `backend/clickhouse/init.sql` into ClickHouse — no `limits.xml`, no `system-logs.xml`. Its backend carries a health check, the same `/api/v1/health` probe as `prod.yml` with shorter intervals, because `deploy/docker-compose.logging.yml` makes its Vector sidecar wait for `service_healthy`.
 - **`docker-compose.prod.yml`** — a generic/reference production compose (internal-only Postgres/ClickHouse/Redis, `deploy.resources.limits` on every service, an `x-logging` anchor bounding json-file logs to `10m x 3`, all three ClickHouse `backend/clickhouse/{init.sql,limits.xml,system-logs.xml}` mounts). It is **not** what is actually deployed anywhere; it exists as the non-Traefik reference shape.
 - **`docker-compose.traefik.yml`** — the file **actually deployed** on VPS-01. Structurally the same service set and resource limits as `prod.yml`, plus Traefik network wiring and routing labels (`traefik.http.routers.*`, `Host(...)` rules for `demo.telerithm.cloud`; `play.telerithm.cloud` appears only as an allowed CORS origin, not as a Traefik Host rule). `.relay.yml` (repo root) pins this explicitly: `compose_file: docker-compose.traefik.yml`, and its `pre_update`/`post_update` hooks (`docker compose -f docker-compose.traefik.yml build ...` / `... exec backend npx prisma db push --skip-generate`) run only against this file. `DEPLOYMENT.md`'s entire deploy walkthrough also only ever invokes `-f docker-compose.traefik.yml`.
 
