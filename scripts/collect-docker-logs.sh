@@ -54,7 +54,8 @@ INGEST_URL="${TELERITHM_API}/ingest/${SOURCE_ID}"
 # Parse log level from message (heuristic)
 parse_level() {
   local msg="$1"
-  local msg_lower=$(echo "$msg" | tr '[:upper:]' '[:lower:]')
+  local msg_lower
+  msg_lower=$(echo "$msg" | tr '[:upper:]' '[:lower:]')
   
   if [[ "$msg_lower" =~ (fatal|critical) ]]; then
     echo "fatal"

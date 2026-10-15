@@ -150,3 +150,21 @@ jobs:
 
       - name: Run bats tests
         run: bats packages/cli/logforge-pipe.bats
+
+  sender-configs:
+    name: Sender configs
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # vector validate and fluentd --dry-run against the shipped configs,
+      # in the pinned images (digests pinned in the script). Any non-zero
+      # exit from either docker run fails the job.
+      - name: Validate sender configs
+        run: bash scripts/validate-sender-configs.sh
+
+      # Warnings and errors fail the job; style notes (for example the ls
+      # globs in backup.sh) are reported but do not.
+      - name: Shellcheck
+        run: shellcheck --severity=warning scripts/*.sh
