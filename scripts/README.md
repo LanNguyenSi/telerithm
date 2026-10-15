@@ -130,10 +130,12 @@ The image pins can be overridden with `VECTOR_IMAGE` / `FLUENTD_IMAGE`.
 Beyond the two validators' own exit codes, the check fails the two mistakes
 `fluentd --dry-run` accepts with only a warning or silently:
 
-- **Unknown parameter.** A parameter fluentd does not recognise makes the dry
-  run exit 0 and print a `[warn]: parameter '<name>' in <section> ... is not
-  used` line. The check captures the dry run output, still prints it, and fails
-  naming the parameter and its section from that warning's header line. It
+- **Unknown parameter or section.** A parameter or section fluentd does not
+  recognise makes the dry run exit 0 and print a warning instead:
+  `[warn]: parameter '<name>' in <section> ... is not used` or
+  `[warn]: section <name> is not used in <parent>` (for example a misspelled
+  `<buffr>`). The check captures the dry run output, still prints it, and fails
+  naming what is unused and where from that warning's header line. It
   matches the header line, not a bare `is not used`, so a config *value* that
   merely contains those words (fluentd echoes the whole config back) is not a
   false failure.
@@ -151,15 +153,16 @@ caught instead of shipping as an empty string. A variable that must be empty in
 some deployment should be passed explicitly as empty (`-e NAME=`) rather than
 omitted.
 
-Fixtures live in `scripts/fixtures/sender-configs/`. Three are negative
+Fixtures live in `scripts/fixtures/sender-configs/`. Four are negative
 controls, each passed as the second argument and each making the check fail with
-its own message: `unused-param.conf` (unknown parameter), `unset-env.conf`
+its own message: `unused-param.conf` (unknown parameter), `unused-section.conf`
+(misspelled `<buffr>` section), `unset-env.conf`
 (`#{ENV['UNSET_NAME']}`) and `bad-plugin.conf` (a `<match>` with an unregistered
 `@type`, which makes `fluentd --dry-run` itself exit non-zero). One is a positive
 control, `value-text.conf`, whose only oddity is a record value containing the
 words `is not used`; it must keep passing.
 
-The CI `Sender configs` job runs all four. It does not use `!` to invert the exit
+The CI `Sender configs` job runs all five. It does not use `!` to invert the exit
 status: bash does not apply `errexit` to a `!`-negated command, so a line like
 `! ...` can never fail the step and only the last line of a block counts. Each
 negative fixture instead captures the output, fails the step when the script
@@ -169,7 +172,7 @@ a zero exit):
 
 ```bash
 out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unused-param.conf 2>&1) && { echo "$out"; echo "unused-param.conf passed but must fail"; exit 1; }
-echo "$out" | grep -qF "fluentd config has an unused parameter (the dry run warned 'is not used'):" || { echo "$out"; echo "unused-param.conf failed for another reason"; exit 1; }
+echo "$out" | grep -qF "fluentd config has an unused parameter or section (the dry run warned 'is not used'):" || { echo "$out"; echo "unused-param.conf failed for another reason"; exit 1; }
 ```
 
 ## Configuration Options

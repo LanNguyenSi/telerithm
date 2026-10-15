@@ -176,7 +176,10 @@ jobs:
       - name: Negative and positive controls for the check
         run: |
           out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unused-param.conf 2>&1) && { echo "$out"; echo "unused-param.conf passed but must fail"; exit 1; }
-          echo "$out" | grep -qF "fluentd config has an unused parameter (the dry run warned 'is not used'):" || { echo "$out"; echo "unused-param.conf failed for another reason"; exit 1; }
+          echo "$out" | grep -qF "fluentd config has an unused parameter or section (the dry run warned 'is not used'):" || { echo "$out"; echo "unused-param.conf failed for another reason"; exit 1; }
+
+          out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unused-section.conf 2>&1) && { echo "$out"; echo "unused-section.conf passed but must fail"; exit 1; }
+          echo "$out" | grep -qF "fluentd config has an unused parameter or section (the dry run warned 'is not used'):" || { echo "$out"; echo "unused-section.conf failed for another reason"; exit 1; }
 
           out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unset-env.conf 2>&1) && { echo "$out"; echo "unset-env.conf passed but must fail"; exit 1; }
           echo "$out" | grep -qF "fluentd config references #{ENV[...]} variables the check does not set (fluentd would substitute an empty string):" || { echo "$out"; echo "unset-env.conf failed for another reason"; exit 1; }

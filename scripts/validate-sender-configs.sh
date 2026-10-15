@@ -80,16 +80,17 @@ if [[ $fluentd_status -ne 0 ]]; then
   exit "$fluentd_status"
 fi
 
-# An unknown parameter is accepted with a warning and exit 0; treat fluentd's
-# warning as an error. Match the warning's header line
-# ([warn]: parameter '<name>' in <section>) instead of a bare "is not used": the
-# header names both the parameter and the section, so the summary is correct for
-# a section of any length, and a config VALUE that merely contains the words
-# "is not used" (fluentd echoes the whole config) no longer fails the check.
+# An unknown parameter or section is accepted with a warning and exit 0; treat
+# fluentd's warning as an error. Match the warning's header line, in either of
+# its two forms ([warn]: parameter '<name>' in <section>, and
+# [warn]: section <name> is not used in <parent>) instead of a bare
+# "is not used": the header names what is unused and where, so the summary is
+# correct for a section of any length, and a config VALUE that merely contains
+# the words "is not used" (fluentd echoes the whole config) does not fail it.
 if unused="$(printf '%s\n' "$fluentd_out" \
-    | grep -E "\[warn\]: parameter '[^']+' in <")"; then
+    | grep -E "\[warn\]: (parameter '[^']+' in <|section <[^>]+> is not used in <)")"; then
   {
-    echo "fluentd config has an unused parameter (the dry run warned 'is not used'):"
+    echo "fluentd config has an unused parameter or section (the dry run warned 'is not used'):"
     printf '%s\n' "$unused"
   } >&2
   exit 1
