@@ -76,6 +76,8 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
   red. The moderate runtime gate is unchanged. The script's self-test runs
   in the same job (`node --test scripts/audit-gate.test.mjs`).
 
+- CI: a new `sender-configs` job runs `scripts/validate-sender-configs.sh`, which validates `deploy/vector/vector.toml` with `vector validate --skip-healthchecks` in `timberio/vector:0.41.1-alpine` (the tag `deploy/docker-compose.logging.yml` uses) and `deploy/fluentd/fluent.conf` with `fluentd --dry-run` in `fluent/fluentd:v1.17-debian-1`; both images are additionally pinned by digest and any non-zero validator exit fails the job. The script takes optional config paths (defaulting to the shipped ones) so developers can run it locally, and the job also runs `shellcheck --severity=warning` over `scripts/*.sh` (one warning in `collect-docker-logs.sh` fixed).
+
 - The `Audit` gate is re-vendored from depsight #172: `scripts/audit-gate.mjs` now treats a report whose `metadata.vulnerabilities` HIGH plus CRITICAL tally disagrees with, or is missing against, its `vulnerabilities` map as UNCLASSIFIED (exit 3), prints npm's stderr itself through a sanitiser (each line behind an `npm stderr| ` prefix, reduced to a safe character set, length and count bounded) instead of the workflow step copying it raw, and the gate step fails (exit 3) when the classifier exits 0 without the `npm audit gate: CLEAN` line. The non-blocking report step prints npm's output between `::stop-commands::` and a per-run random resume token. The allowlist entries are unchanged. Tracker task dbbc4994.
 
 ## [0.3.0] - 2026-10-05

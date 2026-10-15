@@ -113,6 +113,20 @@ systemctl status telerithm-collector
 journalctl -u telerithm-collector -f
 ```
 
+### Validate Sender Configs
+
+CI check for the shipped log-sender configs: runs `vector validate --skip-healthchecks` and `fluentd --dry-run` in pinned images (the Vector tag matches `deploy/docker-compose.logging.yml`), with dummy values for `TELERITHM_URL`, `TELERITHM_SOURCE_ID` and `TELERITHM_API_KEY`. Requires `docker`. Exits non-zero on any config error.
+
+```bash
+# Validate the shipped configs (deploy/vector/vector.toml, deploy/fluentd/fluent.conf)
+./scripts/validate-sender-configs.sh
+
+# Or validate other files
+./scripts/validate-sender-configs.sh path/to/vector.toml path/to/fluent.conf
+```
+
+The image pins can be overridden with `VECTOR_IMAGE` / `FLUENTD_IMAGE`.
+
 ## Configuration Options
 
 ### collect-docker-logs.sh
