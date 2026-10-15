@@ -131,8 +131,12 @@ Beyond the two validators' own exit codes, the check fails the two mistakes
 `fluentd --dry-run` accepts with only a warning or silently:
 
 - **Unknown parameter.** A parameter fluentd does not recognise makes the dry
-  run exit 0 and print a warning containing `is not used`. The check captures
-  the dry run output, still prints it, and fails naming the offending line(s).
+  run exit 0 and print a `[warn]: parameter '<name>' in <section> ... is not
+  used` line. The check captures the dry run output, still prints it, and fails
+  naming the parameter and its section from that warning's header line. It
+  matches the header line, not a bare `is not used`, so a config *value* that
+  merely contains those words (fluentd echoes the whole config back) is not a
+  false failure.
 - **Unset `#{ENV[...]}` reference.** fluentd substitutes an empty string for an
   unset variable, so the dry run exits 0 with no warning at all.
 
@@ -147,15 +151,25 @@ caught instead of shipping as an empty string. A variable that must be empty in
 some deployment should be passed explicitly as empty (`-e NAME=`) rather than
 omitted.
 
-Negative-control fixtures live in `scripts/fixtures/sender-configs/` and each
-makes the check fail when passed as the second argument:
-`unused-param.conf` (unknown parameter) and `unset-env.conf`
-(`#{ENV['UNSET_NAME']}`). The CI `Sender configs` job runs both and expects a
-non-zero exit:
+Fixtures live in `scripts/fixtures/sender-configs/`. Three are negative
+controls, each passed as the second argument and each making the check fail with
+its own message: `unused-param.conf` (unknown parameter), `unset-env.conf`
+(`#{ENV['UNSET_NAME']}`) and `bad-plugin.conf` (a `<match>` with an unregistered
+`@type`, which makes `fluentd --dry-run` itself exit non-zero). One is a positive
+control, `value-text.conf`, whose only oddity is a record value containing the
+words `is not used`; it must keep passing.
+
+The CI `Sender configs` job runs all four. It does not use `!` to invert the exit
+status: bash does not apply `errexit` to a `!`-negated command, so a line like
+`! ...` can never fail the step and only the last line of a block counts. Each
+negative fixture instead captures the output, fails the step when the script
+exits 0, and then asserts the specific message its branch prints, so the step
+still fails if the script breaks for another reason (the positive fixture asserts
+a zero exit):
 
 ```bash
-! ./scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unused-param.conf
-! ./scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unset-env.conf
+out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unused-param.conf 2>&1) && { echo "$out"; echo "unused-param.conf passed but must fail"; exit 1; }
+echo "$out" | grep -qF "fluentd config has an unused parameter (the dry run warned 'is not used'):" || { echo "$out"; echo "unused-param.conf failed for another reason"; exit 1; }
 ```
 
 ## Configuration Options
