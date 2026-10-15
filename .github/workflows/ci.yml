@@ -164,6 +164,31 @@ jobs:
       - name: Validate sender configs
         run: bash scripts/validate-sender-configs.sh
 
+      # Controls: each negative fixture must make the check fail, and fail with
+      # the exact message its branch prints (a bare non-zero exit is not enough:
+      # the step would also pass if the script broke for another reason). The
+      # `out=$(...) && { ...; exit 1; }` shape replaces `!` because bash does not
+      # apply errexit to a `!`-negated command, so the first such line could
+      # never fail the step and only the last line counted; here every fixture
+      # fails the step on its own. value-text.conf is the positive control: its
+      # only oddity is a config value containing the words "is not used", which
+      # the check must NOT read as an unused-parameter failure.
+      - name: Negative and positive controls for the check
+        run: |
+          out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unused-param.conf 2>&1) && { echo "$out"; echo "unused-param.conf passed but must fail"; exit 1; }
+          echo "$out" | grep -qF "fluentd config has an unused parameter or section (the dry run warned 'is not used'):" || { echo "$out"; echo "unused-param.conf failed for another reason"; exit 1; }
+
+          out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unused-section.conf 2>&1) && { echo "$out"; echo "unused-section.conf passed but must fail"; exit 1; }
+          echo "$out" | grep -qF "fluentd config has an unused parameter or section (the dry run warned 'is not used'):" || { echo "$out"; echo "unused-section.conf failed for another reason"; exit 1; }
+
+          out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unset-env.conf 2>&1) && { echo "$out"; echo "unset-env.conf passed but must fail"; exit 1; }
+          echo "$out" | grep -qF "fluentd config references #{ENV[...]} variables the check does not set (fluentd would substitute an empty string):" || { echo "$out"; echo "unset-env.conf failed for another reason"; exit 1; }
+
+          out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/bad-plugin.conf 2>&1) && { echo "$out"; echo "bad-plugin.conf passed but must fail"; exit 1; }
+          echo "$out" | grep -qF "fluentd --dry-run failed" || { echo "$out"; echo "bad-plugin.conf failed for another reason"; exit 1; }
+
+          out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/value-text.conf 2>&1) || { echo "$out"; echo "value-text.conf failed but must pass"; exit 1; }
+
       # Warnings and errors fail the job; style notes (for example the ls
       # globs in backup.sh) are reported but do not.
       - name: Shellcheck

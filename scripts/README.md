@@ -127,6 +127,54 @@ CI check for the shipped log-sender configs: runs `vector validate --skip-health
 
 The image pins can be overridden with `VECTOR_IMAGE` / `FLUENTD_IMAGE`.
 
+Beyond the two validators' own exit codes, the check fails the two mistakes
+`fluentd --dry-run` accepts with only a warning or silently:
+
+- **Unknown parameter or section.** A parameter or section fluentd does not
+  recognise makes the dry run exit 0 and print a warning instead:
+  `[warn]: parameter '<name>' in <section> ... is not used` or
+  `[warn]: section <name> is not used in <parent>` (for example a misspelled
+  `<buffr>`). The check captures the dry run output, still prints it, and fails
+  naming what is unused and where from that warning's header line. It
+  matches the header line, not a bare `is not used`, so a config *value* that
+  merely contains those words (fluentd echoes the whole config back) is not a
+  false failure.
+- **Unset `#{ENV[...]}` reference.** fluentd substitutes an empty string for an
+  unset variable, so the dry run exits 0 with no warning at all.
+
+ENV decision: rather than let an unset `#{ENV[...]}` reference pass, the check
+extracts every `#{ENV['NAME']}` / `#{ENV["NAME"]}` name from the fluentd config
+and fails, naming the variable, when it is not one of the names the script
+passes to the container (the same set behind `TELERITHM_URL`,
+`TELERITHM_SOURCE_ID` and `TELERITHM_API_KEY`). The shipped
+`deploy/fluentd/fluent.conf` sets all three names it references, so it keeps
+passing; a typo or a new variable added to the config but not to the check is
+caught instead of shipping as an empty string. A variable that must be empty in
+some deployment should be passed explicitly as empty (`-e NAME=`) rather than
+omitted.
+
+Fixtures live in `scripts/fixtures/sender-configs/`. Four are negative
+controls, each passed as the second argument and each making the check fail with
+its own message: `unused-param.conf` (unknown parameter), `unused-section.conf`
+(misspelled `<buffr>` section), `unset-env.conf`
+(`#{ENV['UNSET_NAME']}`) and `bad-plugin.conf` (a `<match>` with an unregistered
+`@type`, which makes `fluentd --dry-run` itself exit non-zero). One is a positive
+control, `value-text.conf`, whose only oddity is a record value containing the
+words `is not used`; it must keep passing.
+
+The CI `Sender configs` job runs all five. It does not use `!` to invert the exit
+status: bash does not apply `errexit` to a `!`-negated command, so a line like
+`! ...` can never fail the step and only the last line of a block counts. Each
+negative fixture instead captures the output, fails the step when the script
+exits 0, and then asserts the specific message its branch prints, so the step
+still fails if the script breaks for another reason (the positive fixture asserts
+a zero exit):
+
+```bash
+out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unused-param.conf 2>&1) && { echo "$out"; echo "unused-param.conf passed but must fail"; exit 1; }
+echo "$out" | grep -qF "fluentd config has an unused parameter or section (the dry run warned 'is not used'):" || { echo "$out"; echo "unused-param.conf failed for another reason"; exit 1; }
+```
+
 ## Configuration Options
 
 ### collect-docker-logs.sh

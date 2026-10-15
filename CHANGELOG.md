@@ -27,6 +27,7 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 - NLQ retry ownership tests also pin a persistent HTTP 503 (3 attempts, the
   app loop retries `server` errors) and HTTP 408 / 409 (1 attempt each, they
   classify as `unknown` and are not retried) (task 9c7a5039).
+- `scripts/validate-sender-configs.sh` now fails on two fluentd config mistakes that `fluentd --dry-run` accepts: an unknown parameter or section (the dry run exits 0 and only warns `[warn]: parameter '<name>' in <section> ... is not used` or `[warn]: section <name> is not used in <parent>`; the check fails naming what is unused from that warning's header line, so a config value that merely contains the words "is not used" is not a false failure), and a `#{ENV[...]}` reference to a variable the check does not pass to the container (fluentd substitutes an empty string silently; the check extracts every ENV name and fails naming any it does not set). A dry run that itself exits non-zero still fails the check and is now reported with its own message. Fixtures in `scripts/fixtures/sender-configs/` (negative: `unused-param.conf`, `unused-section.conf`, `unset-env.conf`, `bad-plugin.conf`; positive control: `value-text.conf`) run in the CI job, which fails on each negative control's own message rather than a bare non-zero exit. The shipped `deploy/fluentd/fluent.conf` keeps passing.
 
 ### Fixed
 
