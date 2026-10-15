@@ -127,6 +127,37 @@ CI check for the shipped log-sender configs: runs `vector validate --skip-health
 
 The image pins can be overridden with `VECTOR_IMAGE` / `FLUENTD_IMAGE`.
 
+Beyond the two validators' own exit codes, the check fails the two mistakes
+`fluentd --dry-run` accepts with only a warning or silently:
+
+- **Unknown parameter.** A parameter fluentd does not recognise makes the dry
+  run exit 0 and print a warning containing `is not used`. The check captures
+  the dry run output, still prints it, and fails naming the offending line(s).
+- **Unset `#{ENV[...]}` reference.** fluentd substitutes an empty string for an
+  unset variable, so the dry run exits 0 with no warning at all.
+
+ENV decision: rather than let an unset `#{ENV[...]}` reference pass, the check
+extracts every `#{ENV['NAME']}` / `#{ENV["NAME"]}` name from the fluentd config
+and fails, naming the variable, when it is not one of the names the script
+passes to the container (the same set behind `TELERITHM_URL`,
+`TELERITHM_SOURCE_ID` and `TELERITHM_API_KEY`). The shipped
+`deploy/fluentd/fluent.conf` sets all three names it references, so it keeps
+passing; a typo or a new variable added to the config but not to the check is
+caught instead of shipping as an empty string. A variable that must be empty in
+some deployment should be passed explicitly as empty (`-e NAME=`) rather than
+omitted.
+
+Negative-control fixtures live in `scripts/fixtures/sender-configs/` and each
+makes the check fail when passed as the second argument:
+`unused-param.conf` (unknown parameter) and `unset-env.conf`
+(`#{ENV['UNSET_NAME']}`). The CI `Sender configs` job runs both and expects a
+non-zero exit:
+
+```bash
+! ./scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unused-param.conf
+! ./scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unset-env.conf
+```
+
 ## Configuration Options
 
 ### collect-docker-logs.sh

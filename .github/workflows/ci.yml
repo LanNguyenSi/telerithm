@@ -164,6 +164,16 @@ jobs:
       - name: Validate sender configs
         run: bash scripts/validate-sender-configs.sh
 
+      # Negative controls: each fixture must make the check exit non-zero, so
+      # the `!` inverts the status and the step passes only when the script
+      # fails. unused-param.conf trips the fluentd "is not used" warning
+      # (dry run exits 0); unset-env.conf trips an unset #{ENV[...]} reference
+      # (dry run also exits 0 silently).
+      - name: Negative controls fail the check
+        run: |
+          ! bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unused-param.conf
+          ! bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/unset-env.conf
+
       # Warnings and errors fail the job; style notes (for example the ls
       # globs in backup.sh) are reported but do not.
       - name: Shellcheck
