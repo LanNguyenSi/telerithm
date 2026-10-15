@@ -53,7 +53,8 @@ export default async function SubscriptionsPage() {
           ))}
           {subscriptions.length === 0 && (
             <p className="py-8 text-center text-muted">
-              No subscriptions yet. Create one to get notified about incidents.
+              Subscriptions are not created in the UI yet. Create one with POST
+              /api/v1/subscriptions (channel WEBHOOK, SLACK or MSTEAMS).
             </p>
           )}
         </div>
