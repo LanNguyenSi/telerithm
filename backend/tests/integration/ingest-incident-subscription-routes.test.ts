@@ -351,6 +351,16 @@ describe("POST /subscriptions: ruleId must belong to the body's team", () => {
     expect(missing.body).toEqual(foreign.body);
   });
 
+  it("answers 403 to a non-member of the body's team before any rule lookup", async () => {
+    db.teamMember.findUnique.mockResolvedValue(null);
+
+    const res = await app.post("/api/v1/subscriptions").set(auth).send({ ...body, teamId: "other-team" });
+
+    expect(res.status).toBe(403);
+    expect(db.alertRule.findFirst).not.toHaveBeenCalled();
+    expect(db.alertSubscription.create).not.toHaveBeenCalled();
+  });
+
   it("does not look up a rule for a team-wide subscription without ruleId", async () => {
     db.alertSubscription.create.mockResolvedValue({ id: "sub-4" });
 

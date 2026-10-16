@@ -77,6 +77,8 @@ Any other combination answers `409` with a message such as `Cannot acknowledge a
 
 `channel` is `WEBHOOK`, `SLACK` or `MSTEAMS`. `POST /subscriptions` and `PUT /subscriptions/:id` answer `400` for `EMAIL` (`EMAIL subscriptions are not supported yet because no email transport is configured; ...`) because the backend has no mail transport. Existing `EMAIL` subscriptions are not migrated: they stay listed and can be updated (leave `channel` out of the body), tested and deleted, and delivery for them only writes a log line.
 
+A `ruleId` in the `POST /subscriptions` body must be a rule of the body's `teamId`. A rule of another team and a nonexistent rule give the same `404` `Alert rule not found`, so the answer does not reveal whether an id exists. A caller who is not a member of `teamId` gets `403` first, before any rule lookup. `GET /subscriptions` returns `rule: null` for a subscription whose rule belongs to another team (such rows predate this check and are not migrated); the row stays listed and can be deleted.
+
 ### Log search page size
 
 `limit` on the search requests is 1 to 500 (default 100). `MAX_PAGE_SIZE` can lower that maximum (50 to 500) but not raise it (a larger value is clamped to 500 with a startup warning); see [configuration.md](configuration.md).

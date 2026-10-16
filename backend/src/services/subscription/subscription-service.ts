@@ -5,11 +5,18 @@ const log = createChildLogger("subscription-service");
 
 export class SubscriptionService {
   async listByUser(userId: string, teamId: string) {
-    return prisma.alertSubscription.findMany({
+    const rows = await prisma.alertSubscription.findMany({
       where: { userId, teamId },
-      include: { rule: { select: { id: true, name: true } } },
+      include: { rule: { select: { id: true, name: true, teamId: true } } },
       orderBy: { createdAt: "desc" },
     });
+    // A subscription made before POST /subscriptions checked the rule's team can
+    // point at another team's rule. Keep the row (the owner can still see and
+    // delete it) but never return that rule's id or name.
+    return rows.map(({ rule, ...row }) => ({
+      ...row,
+      rule: rule && rule.teamId === teamId ? { id: rule.id, name: rule.name } : null,
+    }));
   }
 
   async create(data: {
