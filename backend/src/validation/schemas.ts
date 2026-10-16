@@ -28,6 +28,54 @@ export const createSourceSchema = z.object({
   type: z.enum(["HTTP", "SYSLOG_UDP", "SYSLOG_TCP", "FILEBEAT", "DOCKER", "CLOUDWATCH"]),
 });
 
+// Alert rules are authored through the API with the four conditions the
+// evaluation worker implements. ANOMALY_DETECTED is not accepted (the worker
+// skips it), and neither is a queryType other than the default: `query` is
+// matched as a substring of the log message, so SQL or natural-language text
+// would silently never match.
+const alertRuleConditionSchema = z.enum(["GREATER_THAN", "LESS_THAN", "EQUALS", "CHANGES_BY"]);
+
+const alertRuleFields = {
+  name: z.string().trim().min(2).max(200),
+  description: z.string().max(1000),
+  query: z.string().trim().min(1).max(1000),
+  queryType: z.literal("sql"),
+  condition: alertRuleConditionSchema,
+  threshold: z.number().int().min(0),
+  windowMinutes: z.number().int().min(1).max(1440),
+  enabled: z.boolean(),
+};
+
+export const createAlertRuleSchema = z.object({
+  teamId: z.string().min(1),
+  name: alertRuleFields.name,
+  description: alertRuleFields.description.optional(),
+  query: alertRuleFields.query,
+  queryType: alertRuleFields.queryType.optional(),
+  condition: alertRuleFields.condition,
+  threshold: alertRuleFields.threshold,
+  windowMinutes: alertRuleFields.windowMinutes,
+  enabled: alertRuleFields.enabled.default(true),
+});
+
+// Partial update: only the keys present are changed, and the team is never
+// taken from the body (it comes from the rule). `description: null` clears it.
+// queryType is not editable: the worker ignores it, and create only accepts the
+// default.
+export const updateAlertRuleSchema = z
+  .object({
+    name: alertRuleFields.name.optional(),
+    description: alertRuleFields.description.nullable().optional(),
+    query: alertRuleFields.query.optional(),
+    condition: alertRuleFields.condition.optional(),
+    threshold: alertRuleFields.threshold.optional(),
+    windowMinutes: alertRuleFields.windowMinutes.optional(),
+    enabled: alertRuleFields.enabled.optional(),
+  })
+  .refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: "At least one field is required",
+  });
+
 export const logFilterSchema = z.object({
   field: z.string(),
   operator: z.enum(["eq", "neq", "gt", "lt", "contains"]),

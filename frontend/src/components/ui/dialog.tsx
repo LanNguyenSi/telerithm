@@ -10,6 +10,10 @@ type DialogProps = {
   open: boolean;
   title: string;
   description?: string;
+  /** Overrides the confirm button text; the default depends on the variant. */
+  confirmLabel?: string;
+  /** Overrides the cancel button text (default "Abbrechen"). */
+  cancelLabel?: string;
   onClose: () => void;
 } & (
   | { variant: "confirm"; onConfirm: () => void }
@@ -147,14 +151,14 @@ export function Dialog(props: DialogProps) {
             onClick={onClose}
             className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink transition hover:border-slate-400"
           >
-            Abbrechen
+            {props.cancelLabel ?? "Abbrechen"}
           </button>
           <button
             type="button"
             onClick={handleConfirm}
             className="rounded-lg bg-slate-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
           >
-            {props.variant === "confirm" ? "Bestätigen" : "Speichern"}
+            {props.confirmLabel ?? (props.variant === "confirm" ? "Bestätigen" : "Speichern")}
           </button>
         </div>
       </div>

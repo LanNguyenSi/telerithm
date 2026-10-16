@@ -101,7 +101,9 @@ vi.mock("../../src/repositories/prisma.js", () => {
     alertRule: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
+      create: vi.fn(),
       update: vi.fn(),
+      delete: vi.fn(),
     },
     alertIncident: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -141,6 +143,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      deleteMany: vi.fn(),
     },
   };
   return {
@@ -230,7 +233,9 @@ const mockedPrisma = prisma as typeof prisma & {
   alertRule: {
     findMany: ReturnType<typeof vi.fn>;
     findUnique: ReturnType<typeof vi.fn>;
+    create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
   };
   alertIncident: {
     findMany: ReturnType<typeof vi.fn>;
@@ -270,6 +275,7 @@ const mockedPrisma = prisma as typeof prisma & {
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
+    deleteMany: ReturnType<typeof vi.fn>;
   };
 };
 const mockedClickhouse = clickhouse as typeof clickhouse & {
@@ -430,6 +436,7 @@ beforeEach(() => {
   mockedPrisma.issue.count.mockResolvedValue(0);
   mockedPrisma.alertSubscription.findMany.mockResolvedValue([]);
   mockedPrisma.alertSubscription.findFirst.mockResolvedValue(null);
+  mockedPrisma.alertSubscription.deleteMany.mockResolvedValue({ count: 0 });
   mockDispatch.mockResolvedValue(undefined);
 });
 
@@ -3448,6 +3455,31 @@ describe("API Routes", () => {
 
     const authed = (req: supertest.Test) => req.set("Authorization", "Bearer sess_admin");
 
+    const validRuleBody = {
+      name: "Timeouts",
+      query: "timeout",
+      condition: "GREATER_THAN",
+      threshold: 5,
+      windowMinutes: 10,
+    };
+
+    const makeRuleRow = (overrides: Record<string, unknown> = {}) => ({
+      id: "rule-1",
+      teamId: "t1",
+      name: "Timeouts",
+      description: null,
+      query: "timeout",
+      queryType: "SQL",
+      condition: "GREATER_THAN",
+      threshold: 5,
+      windowMinutes: 10,
+      enabled: true,
+      muteUntil: null,
+      createdAt: new Date("2026-03-23T00:00:00.000Z"),
+      updatedAt: new Date("2026-03-23T00:00:00.000Z"),
+      ...overrides,
+    });
+
     const writeCases: WriteCase[] = [
       {
         name: "POST /sources",
@@ -3490,6 +3522,38 @@ describe("API Routes", () => {
         },
         mutations: () => [mockedPrisma.alertRule.update],
         successStatus: 200,
+      },
+      {
+        name: "POST /alerts/rules",
+        group: "rule create/update/delete",
+        send: () => authed(writeApp.post("/api/v1/alerts/rules")).send({ teamId: "t1", ...validRuleBody }),
+        arrange: () => {
+          mockedPrisma.alertRule.create.mockResolvedValueOnce(makeRuleRow());
+        },
+        mutations: () => [mockedPrisma.alertRule.create],
+        successStatus: 201,
+      },
+      {
+        name: "PUT /alerts/rules/:id",
+        group: "rule create/update/delete",
+        send: () => authed(writeApp.put("/api/v1/alerts/rules/rule-1")).send({ enabled: false }),
+        arrange: () => {
+          mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.alertRule.update.mockResolvedValueOnce(makeRuleRow({ enabled: false }));
+        },
+        mutations: () => [mockedPrisma.alertRule.update],
+        successStatus: 200,
+      },
+      {
+        name: "DELETE /alerts/rules/:id",
+        group: "rule create/update/delete",
+        send: () => authed(writeApp.delete("/api/v1/alerts/rules/rule-1")),
+        arrange: () => {
+          mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.alertRule.delete.mockResolvedValueOnce(makeRuleRow());
+        },
+        mutations: () => [mockedPrisma.alertRule.delete, mockedPrisma.alertSubscription.deleteMany],
+        successStatus: 204,
       },
       {
         name: "POST /maintenance-windows",
@@ -3566,6 +3630,7 @@ describe("API Routes", () => {
         "incidents",
         "issues",
         "maintenance-windows",
+        "rule create/update/delete",
         "rule mute/unmute",
         "sources",
       ]);
@@ -3603,6 +3668,169 @@ describe("API Routes", () => {
         expect(c.mutations().some((m) => m.mock.calls.length > 0)).toBe(true);
       });
     }
+
+    describe("alert rule create, update and delete", () => {
+      const asMember = (role: Role = "MEMBER") => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership(role));
+      };
+
+      it("POST creates the rule in the body's team and returns it with 201", async () => {
+        asMember("ADMIN");
+        mockedPrisma.alertRule.create.mockResolvedValueOnce(makeRuleRow());
+
+        const res = await authed(writeApp.post("/api/v1/alerts/rules")).send({
+          teamId: "t1",
+          ...validRuleBody,
+        });
+
+        expect(res.status).toBe(201);
+        expect(res.body.rule).toMatchObject({
+          id: "rule-1",
+          teamId: "t1",
+          condition: "GREATER_THAN",
+          windowMinutes: 10,
+          enabled: true,
+        });
+        expect(mockedPrisma.alertRule.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ teamId: "t1", query: "timeout", enabled: true }),
+        });
+      });
+
+      it.each([
+        ["ANOMALY_DETECTED", { condition: "ANOMALY_DETECTED" }],
+        ["a natural-language queryType", { queryType: "natural" }],
+        ["a blank query", { query: "" }],
+        ["a window of 0", { windowMinutes: 0 }],
+      ])("POST rejects %s with 400 and writes nothing", async (_label, patch) => {
+        asMember();
+
+        const res = await authed(writeApp.post("/api/v1/alerts/rules")).send({
+          teamId: "t1",
+          ...validRuleBody,
+          ...patch,
+        });
+
+        expect(res.status).toBe(400);
+        expect(mockedPrisma.alertRule.create).not.toHaveBeenCalled();
+      });
+
+      it("PUT rejects ANOMALY_DETECTED with 400 and writes nothing", async () => {
+        asMember();
+        mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+
+        const res = await authed(writeApp.put("/api/v1/alerts/rules/rule-1")).send({
+          condition: "ANOMALY_DETECTED",
+        });
+
+        expect(res.status).toBe(400);
+        expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
+      });
+
+      it("PUT scopes the update by id and the rule's team", async () => {
+        asMember();
+        mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+        mockedPrisma.alertRule.update.mockResolvedValueOnce(makeRuleRow({ threshold: 9 }));
+
+        const res = await authed(writeApp.put("/api/v1/alerts/rules/rule-1")).send({ threshold: 9 });
+
+        expect(res.status).toBe(200);
+        expect(res.body.rule.threshold).toBe(9);
+        expect(mockedPrisma.alertRule.update).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: "rule-1", teamId: "t1" } }),
+        );
+      });
+
+      it("DELETE scopes the rule delete by id and team and deletes every subscription to the rule", async () => {
+        asMember();
+        mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+        mockedPrisma.alertRule.delete.mockResolvedValueOnce(makeRuleRow());
+
+        const res = await authed(writeApp.delete("/api/v1/alerts/rules/rule-1"));
+
+        expect(res.status).toBe(204);
+        expect(mockedPrisma.alertRule.delete).toHaveBeenCalledWith({ where: { id: "rule-1", teamId: "t1" } });
+        expect(mockedPrisma.alertSubscription.deleteMany).toHaveBeenCalledWith({
+          where: { ruleId: "rule-1" },
+        });
+      });
+
+      it.each([
+        ["PUT", () => authed(writeApp.put("/api/v1/alerts/rules/nope")).send({ enabled: true })],
+        ["DELETE", () => authed(writeApp.delete("/api/v1/alerts/rules/nope"))],
+      ])("%s on an unknown id is 404 and no member lookup or write happens", async (_method, send) => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.alertRule.findUnique.mockResolvedValueOnce(null);
+
+        const res = await send();
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe("Alert rule not found");
+        expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
+        expect(mockedPrisma.alertRule.delete).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ["PUT", () => authed(writeApp.put("/api/v1/alerts/rules/rule-1")).send({ enabled: true })],
+        ["DELETE", () => authed(writeApp.delete("/api/v1/alerts/rules/rule-1"))],
+      ])("%s by a user who is not a member of the rule's team is 403", async (_method, send) => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "other-team" });
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+        const res = await send();
+
+        expect(res.status).toBe(403);
+        expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledWith({
+          where: { teamId_userId: { teamId: "other-team", userId: "user-1" } },
+        });
+        expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
+        expect(mockedPrisma.alertRule.delete).not.toHaveBeenCalled();
+      });
+
+      it("POST by a non-member is 403 and creates nothing", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+        const res = await authed(writeApp.post("/api/v1/alerts/rules")).send({
+          teamId: "t1",
+          ...validRuleBody,
+        });
+
+        expect(res.status).toBe(403);
+        expect(mockedPrisma.alertRule.create).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ["PUT", () => authed(writeApp.put("/api/v1/alerts/rules/rule-1")).send({ enabled: true }), "update"],
+        ["DELETE", () => authed(writeApp.delete("/api/v1/alerts/rules/rule-1")), "delete"],
+      ] as const)(
+        "%s answers 404 when the row no longer matches id and team (service-level scope)",
+        async (_method, send, op) => {
+          asMember();
+          mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.alertRule[op].mockRejectedValueOnce(
+            Object.assign(new Error("gone"), { code: "P2025" }),
+          );
+
+          const res = await send();
+
+          expect(res.status).toBe(404);
+          expect(res.body.error).toBe("Alert rule not found");
+        },
+      );
+
+      it("GET /alerts/rules returns condition and windowMinutes", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership("VIEWER"));
+        mockedPrisma.alertRule.findMany.mockResolvedValueOnce([makeRuleRow()]);
+
+        const res = await authed(writeApp.get("/api/v1/alerts/rules?teamId=t1"));
+
+        expect(res.status).toBe(200);
+        expect(res.body.rules[0]).toMatchObject({ condition: "GREATER_THAN", windowMinutes: 10 });
+      });
+    });
 
     it("OWNER and ADMIN keep write access (POST /sources)", async () => {
       for (const role of ["OWNER", "ADMIN"] as const) {

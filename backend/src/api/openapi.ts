@@ -318,6 +318,46 @@ export const openApiSpec = {
         parameters: [{ name: "teamId", in: "query", required: true, schema: { type: "string" } }],
         responses: { 200: { description: "List of alert rules" } },
       },
+      post: {
+        summary: "Create an alert rule",
+        description:
+          "`query` is matched as a substring of the log message. `condition` is one of GREATER_THAN, LESS_THAN, EQUALS, CHANGES_BY; ANOMALY_DETECTED is rejected. Requires a team role that may write (VIEWER gets 403).",
+        tags: ["Alerts"],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object" } } } },
+        responses: {
+          201: { description: "Created rule" },
+          400: { description: "Invalid body" },
+          403: { description: "Not a member, or read-only role" },
+        },
+      },
+    },
+    "/alerts/rules/{id}": {
+      put: {
+        summary: "Update an alert rule",
+        description:
+          "Partial update; send only the fields to change. Same field rules as create, except that queryType cannot be changed (it is ignored).",
+        tags: ["Alerts"],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: { required: true, content: { "application/json": { schema: { type: "object" } } } },
+        responses: {
+          200: { description: "Updated rule" },
+          400: { description: "Invalid body" },
+          403: { description: "Not a member, or read-only role" },
+          404: { description: "Rule not found" },
+        },
+      },
+      delete: {
+        summary: "Delete an alert rule",
+        description:
+          "Hard delete. Every subscription to this rule is deleted with it, whichever team owns it (in one transaction, so none turns into a team-wide subscription); its incidents are deleted with it as well.",
+        tags: ["Alerts"],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          204: { description: "Deleted" },
+          403: { description: "Not a member, or read-only role" },
+          404: { description: "Rule not found" },
+        },
+      },
     },
     "/alerts/incidents": {
       get: {

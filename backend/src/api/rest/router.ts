@@ -17,6 +17,7 @@ import { createWriteRoute, teamFromBody, teamFromResource, type TeamRoleName } f
 import {
   addUserToTeamSchema,
   createInviteSchema,
+  createAlertRuleSchema,
   createSourceSchema,
   createSavedViewSchema,
   createSubscriptionSchema,
@@ -35,6 +36,7 @@ import {
   facetsSchema,
   histogramSchema,
   patternsSchema,
+  updateAlertRuleSchema,
   updateSavedViewSchema,
   updateSubscriptionSchema,
   updateUserRoleSchema,
@@ -892,6 +894,46 @@ writeRoute(
       res.json({ rule: { id: rule.id, muteUntil: null } });
     } catch (error) {
       if (handlePrismaError(error, res, { notFound: "Alert rule not found" })) return;
+      throw error;
+    }
+  },
+);
+
+// --- Alert rule create, edit, delete ---
+
+// The team of a new rule comes from the body; PUT and DELETE take it from the
+// stored rule (loadRuleTeamId above), and the service scopes the write by
+// {id, teamId} again. A VIEWER gets 403 from writeRoute before any handler runs.
+writeRoute("post", "/alerts/rules", teamFromBody(createAlertRuleSchema), async ({ res, teamId, input }) => {
+  const rule = await alertService.createRule(teamId, input);
+  res.status(201).json({ rule });
+});
+
+writeRoute(
+  "put",
+  "/alerts/rules/:id",
+  teamFromResource(loadRuleTeamId, "Alert rule not found", updateAlertRuleSchema),
+  async ({ req, res, teamId, input }) => {
+    try {
+      const rule = await alertService.updateRule(String(req.params.id), teamId, input);
+      res.json({ rule });
+    } catch (error) {
+      if (handleServiceError(error, res)) return;
+      throw error;
+    }
+  },
+);
+
+writeRoute(
+  "delete",
+  "/alerts/rules/:id",
+  teamFromResource(loadRuleTeamId, "Alert rule not found"),
+  async ({ req, res, teamId }) => {
+    try {
+      await alertService.deleteRule(String(req.params.id), teamId);
+      res.status(204).end();
+    } catch (error) {
+      if (handleServiceError(error, res)) return;
       throw error;
     }
   },

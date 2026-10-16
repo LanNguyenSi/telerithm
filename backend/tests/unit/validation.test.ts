@@ -6,6 +6,8 @@ import {
   ingestSchema,
   createTeamSchema,
   createSourceSchema,
+  createAlertRuleSchema,
+  updateAlertRuleSchema,
   createSubscriptionSchema,
   updateSubscriptionSchema,
   EMAIL_CHANNEL_UNSUPPORTED_MESSAGE,
@@ -128,6 +130,97 @@ describe("Validation Schemas", () => {
         type: "INVALID",
       });
       expect(result.success).toBe(false);
+    });
+  });
+
+  describe("alert rule schemas", () => {
+    const valid = {
+      teamId: "t1",
+      name: "High error rate",
+      query: "timeout",
+      condition: "GREATER_THAN",
+      threshold: 5,
+      windowMinutes: 10,
+    };
+
+    it("accepts a valid rule and defaults enabled to true", () => {
+      const result = createAlertRuleSchema.safeParse(valid);
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.enabled).toBe(true);
+    });
+
+    it.each(["GREATER_THAN", "LESS_THAN", "EQUALS", "CHANGES_BY"])("accepts condition %s", (condition) => {
+      expect(createAlertRuleSchema.safeParse({ ...valid, condition }).success).toBe(true);
+    });
+
+    it("rejects ANOMALY_DETECTED", () => {
+      expect(createAlertRuleSchema.safeParse({ ...valid, condition: "ANOMALY_DETECTED" }).success).toBe(
+        false,
+      );
+      expect(updateAlertRuleSchema.safeParse({ condition: "ANOMALY_DETECTED" }).success).toBe(false);
+    });
+
+    it("rejects a queryType other than sql", () => {
+      expect(createAlertRuleSchema.safeParse({ ...valid, queryType: "natural" }).success).toBe(false);
+      expect(createAlertRuleSchema.safeParse({ ...valid, queryType: "sql" }).success).toBe(true);
+    });
+
+    it("does not carry queryType through an update", () => {
+      const result = updateAlertRuleSchema.safeParse({ name: "Renamed", queryType: "natural" });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toEqual({ name: "Renamed" });
+    });
+
+    it("trims the name before the minimum length applies", () => {
+      expect(createAlertRuleSchema.safeParse({ ...valid, name: "  a  " }).success).toBe(false);
+      const result = createAlertRuleSchema.safeParse({ ...valid, name: "  ab  " });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.name).toBe("ab");
+    });
+
+    it.each([
+      ["a name of 201 characters", { name: "n".repeat(201) }],
+      ["a description of 1001 characters", { description: "d".repeat(1001) }],
+      ["a query of 1001 characters", { query: "q".repeat(1001) }],
+    ])("rejects %s", (_label, patch) => {
+      expect(createAlertRuleSchema.safeParse({ ...valid, ...patch }).success).toBe(false);
+      expect(updateAlertRuleSchema.safeParse(patch).success).toBe(false);
+    });
+
+    it("accepts the upper length bounds", () => {
+      const patch = { name: "n".repeat(200), description: "d".repeat(1000), query: "q".repeat(1000) };
+      expect(createAlertRuleSchema.safeParse({ ...valid, ...patch }).success).toBe(true);
+    });
+
+    it.each([
+      ["a one character name", { name: "a" }],
+      ["a blank query", { query: "   " }],
+      ["a negative threshold", { threshold: -1 }],
+      ["a fractional threshold", { threshold: 1.5 }],
+      ["a zero window", { windowMinutes: 0 }],
+      ["a window above 1440", { windowMinutes: 1441 }],
+      ["a non-boolean enabled", { enabled: "yes" }],
+    ])("rejects %s", (_label, patch) => {
+      expect(createAlertRuleSchema.safeParse({ ...valid, ...patch }).success).toBe(false);
+    });
+
+    it("accepts the window bounds 1 and 1440 and threshold 0", () => {
+      expect(createAlertRuleSchema.safeParse({ ...valid, windowMinutes: 1, threshold: 0 }).success).toBe(
+        true,
+      );
+      expect(createAlertRuleSchema.safeParse({ ...valid, windowMinutes: 1440 }).success).toBe(true);
+    });
+
+    it("update accepts a single field and a null description, and rejects an empty body", () => {
+      expect(updateAlertRuleSchema.safeParse({ enabled: false }).success).toBe(true);
+      expect(updateAlertRuleSchema.safeParse({ description: null }).success).toBe(true);
+      expect(updateAlertRuleSchema.safeParse({}).success).toBe(false);
+    });
+
+    it("update drops a teamId in the body, so a rule cannot be moved between teams", () => {
+      const result = updateAlertRuleSchema.safeParse({ enabled: true, teamId: "other" });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).not.toHaveProperty("teamId");
     });
   });
 
