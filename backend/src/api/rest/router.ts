@@ -1090,16 +1090,23 @@ async function resolveTeamRole(
 // Team-membership gate, mirrored on requireAuth: returns the role on
 // success, or sends a 403 and returns null. Used after requireAuth so
 // non-member callers get a Forbidden response instead of a 500 from the
-// async error middleware.
+// async error middleware. With `nonMemberNotFound` a non-member gets 404 with
+// that message instead: the by-id write routes pass their resolver's not-found
+// message so a resource of another team answers like an unknown id.
 async function requireTeamRole(
   userId: string,
   teamId: string,
   res: Response,
+  nonMemberNotFound?: string,
 ): Promise<"OWNER" | "ADMIN" | "MEMBER" | "VIEWER" | null> {
   try {
     return await resolveTeamRole(userId, teamId);
   } catch {
-    res.status(403).json({ error: "Forbidden" });
+    if (nonMemberNotFound !== undefined) {
+      res.status(404).json({ error: nonMemberNotFound });
+    } else {
+      res.status(403).json({ error: "Forbidden" });
+    }
     return null;
   }
 }
@@ -1120,13 +1127,16 @@ export function canWrite(role: TeamRoleName): boolean {
 // Write-gate counterpart of requireTeamRole: the caller must be a member of
 // the team AND hold a role that canWrite. Sends 403 and returns null for a
 // non-member (via requireTeamRole) or for a read-only role, so the handler
-// can early-return before any mutation. Read paths keep using requireTeamRole.
+// can early-return before any mutation; `nonMemberNotFound` turns the
+// non-member answer into a 404 (see requireTeamRole), a read-only member
+// still gets 403. Read paths keep using requireTeamRole.
 async function requireTeamWriteRole(
   userId: string,
   teamId: string,
   res: Response,
+  nonMemberNotFound?: string,
 ): Promise<TeamRoleName | null> {
-  const role = await requireTeamRole(userId, teamId, res);
+  const role = await requireTeamRole(userId, teamId, res, nonMemberNotFound);
   if (role === null) return null;
   if (!canWrite(role)) {
     res.status(403).json({ error: "Forbidden" });

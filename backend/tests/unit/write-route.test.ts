@@ -115,7 +115,12 @@ function harness(options: Options = {}): Harness {
 
 const allowingGate =
   (events: Event[], role: TeamRoleName = "MEMBER") =>
-  async (_userId: string, _teamId: string, _res: Response): Promise<TeamRoleName | null> => {
+  async (
+    _userId: string,
+    _teamId: string,
+    _res: Response,
+    _nonMemberNotFound?: string,
+  ): Promise<TeamRoleName | null> => {
     events.push("gate");
     return role;
   };
@@ -296,7 +301,34 @@ describe("a handler cannot run before the gate (route-author shapes)", () => {
     createWriteRoute(h.deps)("post", "/w", resolver(h.events), async () => {});
     await h.invoke(0);
     expect(gate).toHaveBeenCalledTimes(1);
-    expect(gate.mock.calls[0]).toHaveLength(3);
+    // user, team, response, and the resolver's not-found message (undefined for
+    // a resolver that names none): the one extra argument comes from the
+    // resolved target, never from the route.
+    expect(gate.mock.calls[0]).toHaveLength(4);
+    expect(gate.mock.calls[0][3]).toBeUndefined();
+  });
+
+  it("hands the gate the not-found message of a by-id resolver, so a non-member can be answered like an unknown id", async () => {
+    const h = harness();
+    const gate = vi.fn(allowingGate(h.events));
+    h.deps.requireTeamWriteRole = gate;
+    createWriteRoute(h.deps)(
+      "delete",
+      "/w/:id",
+      teamFromResource(async () => "team-9", "Widget not found"),
+      async () => {},
+    );
+    await h.invoke(0);
+    expect(gate.mock.calls[0]).toEqual(["user-1", "team-9", expect.anything(), "Widget not found"]);
+  });
+
+  it("hands the gate no not-found message for a team named in the body: a non-member stays 403", async () => {
+    const h = harness();
+    const gate = vi.fn(allowingGate(h.events));
+    h.deps.requireTeamWriteRole = gate;
+    createWriteRoute(h.deps)("post", "/w", teamFromBody(z.object({ teamId: z.string() })), async () => {});
+    await h.invoke(0, { body: { teamId: "team-from-body" } });
+    expect(gate.mock.calls[0][3]).toBeUndefined();
   });
 });
 
@@ -369,7 +401,7 @@ describe("teamFromResource", () => {
       fakeRes() as unknown as Response,
     );
     expect(load).toHaveBeenCalledWith("42");
-    expect(result).toEqual({ teamId: "team-9", input: undefined });
+    expect(result).toEqual({ teamId: "team-9", input: undefined, notFoundMessage: "Widget not found" });
   });
 
   it("answers 404 with the given message when the resource does not exist", async () => {
@@ -401,7 +433,7 @@ describe("teamFromResource", () => {
       "nf",
       schema,
     )({ params: { id: "x" }, body: { minutes: 5 } } as unknown as Request, fakeRes() as unknown as Response);
-    expect(ok).toEqual({ teamId: "team-9", input: { minutes: 5 } });
+    expect(ok).toEqual({ teamId: "team-9", input: { minutes: 5 }, notFoundMessage: "nf" });
   });
 });
 

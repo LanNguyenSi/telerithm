@@ -9,7 +9,10 @@ import type { NextFunction, Request, Response, Router } from "express";
 //
 //   1. authentication            (401, handler not called)
 //   2. team resolution           (400 invalid body / 404 unknown resource)
-//   3. the team write gate       (403 for a non-member or a read-only role)
+//   3. the team write gate       (403 for a read-only role, and for a non-member
+//                                 of a team named in the body; 404 for a
+//                                 non-member of the team that owns a by-id
+//                                 resource, the answer an unknown id gets)
 //   4. the handler
 //
 // The handler is invoked from exactly one place, after step 3, and receives
@@ -63,9 +66,16 @@ export interface BodySchema<T> {
 
 // What team resolution yields: the team the request acts on, plus any value
 // the resolver derived on the way (the validated body) for the handler.
+//
+// `notFoundMessage` is set by a by-id resolver (`teamFromResource`). It makes
+// the gate answer a caller who is not a member of the resolved team with the
+// same 404 and body the resolver sends for an unknown id, so the status does
+// not tell a caller whether an id exists in another team. A member whose role
+// cannot write still gets 403: that caller already knows the resource exists.
 export interface TeamTarget<TInput> {
   teamId: string;
   input: TInput;
+  notFoundMessage?: string;
 }
 
 // Resolves the team a request acts on. It runs after authentication and
@@ -90,8 +100,15 @@ export interface WriteRouteDeps {
   router: Pick<Router, WriteMethod>;
   // Sends 401 and returns null when the caller is not authenticated.
   requireAuth: (req: Request, res: Response) => Promise<string | null>;
-  // Sends 403 and returns null for a non-member or a read-only role.
-  requireTeamWriteRole: (userId: string, teamId: string, res: Response) => Promise<TeamRoleName | null>;
+  // Sends 403 and returns null for a read-only role, and for a non-member
+  // unless `nonMemberNotFound` is given: then a non-member gets 404 with that
+  // message as the error, matching the resolver's own not-found answer.
+  requireTeamWriteRole: (
+    userId: string,
+    teamId: string,
+    res: Response,
+    nonMemberNotFound?: string,
+  ) => Promise<TeamRoleName | null>;
 }
 
 export type WriteRoute = <TInput>(
@@ -122,7 +139,7 @@ export function createWriteRoute(deps: WriteRouteDeps): WriteRoute {
         if (userId === null) return;
         const target = await resolveTeam(req, res);
         if (target === null) return;
-        const role = await deps.requireTeamWriteRole(userId, target.teamId, res);
+        const role = await deps.requireTeamWriteRole(userId, target.teamId, res, target.notFoundMessage);
         if (role === null) return;
         await handler({ req, res, userId, teamId: target.teamId, role, input: target.input });
       };
@@ -151,7 +168,10 @@ export function teamFromBody<T extends { teamId: string }>(schema: BodySchema<T>
 
 // Team resolver for a by-id route: loads the resource named by the `:id` path
 // parameter and takes the team that owns it (404 when the resource does not
-// exist). With a `bodySchema` the body is validated first (400) and handed to
+// exist). The target also carries `notFoundMessage`, so the write gate answers
+// a caller outside the owning team with that same 404 instead of a 403 (an id
+// that exists in another team is indistinguishable from one that does not).
+// With a `bodySchema` the body is validated first (400) and handed to
 // the handler as `input`; without one, `input` is undefined and the handler
 // parses what it needs. `loadTeamId` and `bodySchema` run before the gate and
 // must be free of side effects (see the header).
@@ -184,6 +204,6 @@ export function teamFromResource<T>(
       res.status(404).json({ error: notFoundMessage });
       return null;
     }
-    return { teamId, input };
+    return { teamId, input, notFoundMessage };
   };
 }

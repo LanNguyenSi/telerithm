@@ -71,7 +71,7 @@ An incident is `OPEN`, `ACKNOWLEDGED` or `RESOLVED`. The actions only apply from
 | `resolve` | `OPEN`, `ACKNOWLEDGED` | `RESOLVED` |
 | `reopen` | `RESOLVED`, `ACKNOWLEDGED` | `OPEN` |
 
-Any other combination answers `409` with a message such as `Cannot acknowledge an incident that is RESOLVED; acknowledge applies to OPEN incidents`, and writes nothing (no status change, no timeline event). `409` is also the answer when another request changed the status between the check and the write. An unknown id answers `404`, and an incident of a team the caller does not belong to answers `403`.
+Any other combination answers `409` with a message such as `Cannot acknowledge an incident that is RESOLVED; acknowledge applies to OPEN incidents`, and writes nothing (no status change, no timeline event). `409` is also the answer when another request changed the status between the check and the write. An unknown id answers `404`, and so does an incident of a team the caller does not belong to (same body), so the answer does not reveal whether an id exists. A member of the incident's team without write access (`VIEWER`) gets `403`.
 
 ### Subscription channels
 
