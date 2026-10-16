@@ -3741,7 +3741,7 @@ describe("API Routes", () => {
         );
       });
 
-      it("DELETE scopes the delete by id and the rule's team", async () => {
+      it("DELETE scopes the rule delete by id and team and deletes every subscription to the rule", async () => {
         asMember();
         mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
         mockedPrisma.alertRule.delete.mockResolvedValueOnce(makeRuleRow());
@@ -3751,7 +3751,7 @@ describe("API Routes", () => {
         expect(res.status).toBe(204);
         expect(mockedPrisma.alertRule.delete).toHaveBeenCalledWith({ where: { id: "rule-1", teamId: "t1" } });
         expect(mockedPrisma.alertSubscription.deleteMany).toHaveBeenCalledWith({
-          where: { ruleId: "rule-1", teamId: "t1" },
+          where: { ruleId: "rule-1" },
         });
       });
 

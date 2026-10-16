@@ -96,13 +96,15 @@ export class AlertService {
   // Hard delete. Incidents cascade in the schema, but AlertSubscription.ruleId
   // has no onDelete, so Postgres would null it and the subscription would then
   // match every rule of the team. The rule's subscriptions are therefore
-  // deleted explicitly, in the same transaction as the rule. Both statements
-  // carry teamId; an unknown or other-team id rolls the whole delete back
-  // (P2025 -> NotFoundError).
+  // deleted explicitly, in the same transaction as the rule, whichever team
+  // owns them (a subscription of another team that targets this rule would
+  // otherwise turn team-wide too). Only the rule delete carries teamId; an
+  // unknown or other-team id rolls the whole delete back (P2025 ->
+  // NotFoundError), so the subscriptions are not touched in that case.
   async deleteRule(ruleId: string, teamId: string): Promise<void> {
     try {
       await prisma.$transaction([
-        prisma.alertSubscription.deleteMany({ where: { ruleId, teamId } }),
+        prisma.alertSubscription.deleteMany({ where: { ruleId } }),
         prisma.alertRule.delete({ where: { id: ruleId, teamId } }),
       ]);
       log.info({ ruleId, teamId }, "Alert rule deleted");

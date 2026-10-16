@@ -262,16 +262,22 @@ describe("AlertService rule create, update and delete", () => {
     await expect(service.updateRule("rule-1", TEAM_ID, { enabled: true })).rejects.toBe(boom);
   });
 
-  it("deleteRule deletes the rule's subscriptions and the rule in one transaction, both scoped by team", async () => {
+  it("deleteRule deletes the rule's subscriptions and the rule in one transaction, subscriptions first", async () => {
     mockSubscriptionDeleteMany.mockResolvedValue({ count: 2 });
     mockAlertRuleDelete.mockResolvedValue(makePrismaRule());
 
     await service.deleteRule("rule-1", TEAM_ID);
 
-    expect(mockSubscriptionDeleteMany).toHaveBeenCalledWith({ where: { ruleId: "rule-1", teamId: TEAM_ID } });
+    // Subscriptions of every team that target the rule go, so no teamId here;
+    // toHaveBeenCalledWith compares the where object exactly.
+    expect(mockSubscriptionDeleteMany).toHaveBeenCalledWith({ where: { ruleId: "rule-1" } });
     expect(mockAlertRuleDelete).toHaveBeenCalledWith({ where: { id: "rule-1", teamId: TEAM_ID } });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
     expect(mockTransaction.mock.calls[0][0]).toHaveLength(2);
+    // Order matters: the subscriptions are deleted before the rule.
+    expect(mockSubscriptionDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+      mockAlertRuleDelete.mock.invocationCallOrder[0],
+    );
   });
 
   it("deleteRule throws NotFoundError when no rule matches the id and team (cross-team id)", async () => {

@@ -349,7 +349,7 @@ export const openApiSpec = {
       delete: {
         summary: "Delete an alert rule",
         description:
-          "Hard delete. The subscriptions to this rule are deleted with it (in one transaction, so they never turn into team-wide subscriptions); its incidents are deleted with it as well.",
+          "Hard delete. Every subscription to this rule is deleted with it, whichever team owns it (in one transaction, so none turns into a team-wide subscription); its incidents are deleted with it as well.",
         tags: ["Alerts"],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
