@@ -72,7 +72,7 @@ export function LogTable({
                     <tr
                       key={log.id}
                       className={clsx(
-                        "border-b bg-white/70 dark:bg-white/5",
+                        "border-b border-line/80 bg-white/70 dark:bg-white/5",
                         selectedLogId === log.id && "bg-cyan-50/70 dark:bg-cyan-900/20",
                         isLong && "cursor-pointer hover:bg-white/90 dark:hover:bg-white/10",
                       )}
@@ -146,7 +146,7 @@ export function LogTable({
             <article
               key={log.id}
               className={clsx(
-                "rounded-xl border border-line p-3 shadow-panel backdrop-blur-sm dark:shadow-panel-dark",
+                "rounded-xl border border-line bg-panel/85 p-3 shadow-panel backdrop-blur-sm dark:shadow-panel-dark",
                 isLong && "cursor-pointer",
               )}
               onClick={isLong ? () => toggle(log.id) : undefined}

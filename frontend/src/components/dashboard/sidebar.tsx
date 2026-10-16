@@ -102,7 +102,7 @@ function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => 
           open ? "bg-white/10" : "hover:bg-white/6"
         }`}
       >
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-signal">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-signal/20 text-[11px] font-semibold text-signal">
           {user.name.charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1 text-left">

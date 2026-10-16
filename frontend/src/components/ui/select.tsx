@@ -138,7 +138,7 @@ export function Select({
               onClick={() => commitSelection(option.value, option.disabled)}
               className={clsx(
                 "flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition",
-                option.disabled && "cursor-not-allowed",
+                option.disabled && "cursor-not-allowed text-muted/60",
                 !option.disabled && "text-ink",
                 isFocused && !option.disabled && "bg-slate-100 dark:bg-white/10",
                 isSelected && !option.disabled && "bg-cyan-50 text-cyan-700 dark:bg-cyan-400/10 dark:text-cyan-300",

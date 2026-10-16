@@ -29,7 +29,7 @@ export function FieldExplorer({
       ) : (
         <div className="space-y-3">
           {fields.map((field) => (
-            <section key={field.key} className="rounded-md border p-2">
+            <section key={field.key} className="rounded-md border border-line/70 p-2">
               <div className="flex items-center justify-between gap-2">
                 <p className="font-mono text-xs text-ink">{field.key}</p>
                 <p className="text-[11px] text-muted">{field.hits} hits</p>

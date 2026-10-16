@@ -12,7 +12,7 @@ export default function IssuesError({
   return (
     <Card>
       <div className="flex flex-col items-center gap-4 py-12 text-center">
-        <div className="rounded-full p-4">
+        <div className="rounded-full bg-danger/10 p-4">
           <svg
             className="h-8 w-8 text-danger"
             fill="none"

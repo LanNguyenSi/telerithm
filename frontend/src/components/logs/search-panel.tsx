@@ -306,7 +306,7 @@ export function SearchPanel({
                 className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
               />
             </label>
-            <label className="col-span-full flex items-center gap-2 rounded-lg border bg-white/60 px-3 py-2 text-xs text-muted dark:bg-white/5">
+            <label className="col-span-full flex items-center gap-2 rounded-lg border border-line/70 bg-white/60 px-3 py-2 text-xs text-muted dark:bg-white/5">
               <input
                 type="checkbox"
                 checked={shareAbsoluteTime}

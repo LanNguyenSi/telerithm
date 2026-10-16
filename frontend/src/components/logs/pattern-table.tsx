@@ -29,7 +29,7 @@ export function PatternTable({
           </thead>
           <tbody>
             {patterns.map((pattern) => (
-              <tr key={pattern.key} className="border-b bg-white/70 dark:bg-white/5">
+              <tr key={pattern.key} className="border-b border-line/80 bg-white/70 dark:bg-white/5">
                 <td className="px-3 py-2 font-mono text-xs text-ink">{pattern.count}</td>
                 <td className="px-3 py-2 font-mono text-xs text-muted">
                   {formatDate(pattern.latestTimestamp)}

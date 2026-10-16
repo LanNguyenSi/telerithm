@@ -335,7 +335,7 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
               </thead>
               <tbody className="text-sm">
                 {issues.map((issue) => (
-                  <tr key={issue.id} className="border-b last:border-0">
+                  <tr key={issue.id} className="border-b border-line/50 last:border-0">
                     <td className="py-2 pr-3">
                       <Badge tone={statusTone(issue.status)}>{issue.status}</Badge>
                     </td>
