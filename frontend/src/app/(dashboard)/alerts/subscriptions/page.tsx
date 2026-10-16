@@ -3,6 +3,7 @@ import { Card } from "@/components/ui/card";
 import { getAlertRules, getSubscriptions } from "@/lib/api/client";
 import { requireAuth } from "@/lib/auth/guard";
 import { formatDate } from "@/lib/utils/format";
+import { subscriptionRuleLabel } from "@/lib/utils/subscription-rule-label";
 
 export const dynamic = "force-dynamic";
 
@@ -45,7 +46,7 @@ export default async function SubscriptionsPage() {
                   {!sub.enabled && <Badge tone="neutral">DISABLED</Badge>}
                 </div>
                 <p className="mt-2 text-sm font-medium text-ink">
-                  {sub.rule ? `Rule: ${sub.rule.name}` : "All rules in team"}
+                  {subscriptionRuleLabel(sub)}
                 </p>
                 <p className="mt-1 text-xs text-muted">Created {formatDate(sub.createdAt)}</p>
               </div>
