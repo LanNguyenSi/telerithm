@@ -32,7 +32,7 @@ export function LogEventDrawer({
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/40 backdrop-blur-xs">
-      <aside className="h-full w-full max-w-2xl overflow-y-auto border-l border-line p-4 shadow-panel dark:shadow-panel-dark">
+      <aside className="h-full w-full max-w-2xl overflow-y-auto border-l border-line bg-panel p-4 shadow-panel dark:shadow-panel-dark">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-muted">Event detail</p>
