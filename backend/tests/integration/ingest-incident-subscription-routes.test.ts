@@ -56,6 +56,7 @@ vi.mock("../../src/repositories/prisma.js", () => ({
     alertIncident: { findUnique: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     incidentEvent: { create: vi.fn() },
     alertSubscription: { create: vi.fn(), update: vi.fn() },
+    alertRule: { findFirst: vi.fn() },
   },
   connectDatabase: vi.fn(),
   disconnectDatabase: vi.fn(),
@@ -84,6 +85,7 @@ const db = prisma as unknown as {
   alertIncident: { findUnique: Mock; findFirst: Mock; update: Mock };
   incidentEvent: { create: Mock };
   alertSubscription: { create: Mock; update: Mock };
+  alertRule: { findFirst: Mock };
 };
 
 let server: Server;
@@ -307,5 +309,64 @@ describe("subscriptions: the EMAIL channel is rejected until an email transport 
 
     expect(res.status).toBe(201);
     expect(db.alertSubscription.create).toHaveBeenCalledOnce();
+  });
+});
+
+describe("POST /subscriptions: ruleId must belong to the body's team", () => {
+  const body = { teamId: "t1", ruleId: "rule-1", channel: "WEBHOOK", config: {} };
+
+  it("creates a subscription for a rule of the same team, looked up scoped to that team", async () => {
+    db.alertRule.findFirst.mockResolvedValue({ id: "rule-1" });
+    db.alertSubscription.create.mockResolvedValue({ id: "sub-3", ruleId: "rule-1" });
+
+    const res = await app.post("/api/v1/subscriptions").set(auth).send(body);
+
+    expect(res.status).toBe(201);
+    expect(db.alertRule.findFirst).toHaveBeenCalledWith({
+      where: { id: "rule-1", teamId: "t1" },
+      select: { id: true },
+    });
+    expect(db.alertSubscription.create).toHaveBeenCalledOnce();
+  });
+
+  it("answers 404 for a rule of another team (the scoped lookup finds nothing), nothing is created", async () => {
+    db.alertRule.findFirst.mockResolvedValue(null);
+
+    const res = await app.post("/api/v1/subscriptions").set(auth).send(body);
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: "Alert rule not found" });
+    expect(db.alertSubscription.create).not.toHaveBeenCalled();
+  });
+
+  it("answers the same 404 body for a nonexistent rule as for a foreign one", async () => {
+    db.alertRule.findFirst.mockResolvedValue(null);
+    const foreign = await app.post("/api/v1/subscriptions").set(auth).send(body);
+    const missing = await app
+      .post("/api/v1/subscriptions")
+      .set(auth)
+      .send({ ...body, ruleId: "does-not-exist" });
+
+    expect(missing.status).toBe(foreign.status);
+    expect(missing.body).toEqual(foreign.body);
+  });
+
+  it("answers 403 to a non-member of the body's team before any rule lookup", async () => {
+    db.teamMember.findUnique.mockResolvedValue(null);
+
+    const res = await app.post("/api/v1/subscriptions").set(auth).send({ ...body, teamId: "other-team" });
+
+    expect(res.status).toBe(403);
+    expect(db.alertRule.findFirst).not.toHaveBeenCalled();
+    expect(db.alertSubscription.create).not.toHaveBeenCalled();
+  });
+
+  it("does not look up a rule for a team-wide subscription without ruleId", async () => {
+    db.alertSubscription.create.mockResolvedValue({ id: "sub-4" });
+
+    const res = await app.post("/api/v1/subscriptions").set(auth).send({ teamId: "t1", channel: "WEBHOOK", config: {} });
+
+    expect(res.status).toBe(201);
+    expect(db.alertRule.findFirst).not.toHaveBeenCalled();
   });
 });
