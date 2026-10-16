@@ -25,7 +25,8 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `POST` | `/logs/views/:id/duplicate`       | Duplicate a saved view            |
 | `POST` | `/query/natural`                  | Translate NL to query plan        |
 | `GET`  | `/stream/logs`                    | SSE live tail                     |
-| `GET`  | `/alerts/rules`                   | Alert rules (list)                |
+| `GET`, `POST` | `/alerts/rules`            | Alert rules (list, create)        |
+| `PUT`, `DELETE` | `/alerts/rules/:id`      | Update (partial), delete an alert rule |
 | `POST` | `/alerts/rules/:id/mute`, `/alerts/rules/:id/unmute` | Mute and unmute a rule |
 | `GET`  | `/alerts/incidents`               | Alert incidents (list)            |
 | `POST` | `/alerts/incidents/:id/acknowledge`, `/resolve`, `/reopen` | Incident workflow |

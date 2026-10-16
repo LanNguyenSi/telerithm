@@ -14,12 +14,12 @@ Telerithm turns plain-language questions into structured queries over your logs.
 - Real-time SSE log streaming, Today view, log detail with surrounding context
 - Saved views, faceted search, histograms, automatic pattern clustering
 - Log ingestion over HTTP: structured JSON entries or raw JSON, syslog (RFC 5424/3164) and plain-text lines, with reference shippers for Docker container logs
-- Alert incidents (acknowledge, resolve, reopen, timeline), alert rule mute and unmute, maintenance windows, and notification channels for Webhook, Slack and Microsoft Teams
+- Alert incidents (acknowledge, resolve, reopen, timeline), alert rules (create, edit, enable or disable, delete, mute and unmute), log source creation in Settings, maintenance windows, and notification channels for Webhook, Slack and Microsoft Teams
 - Error grouping with fingerprinting and an assignment workflow
 - Team management with RBAC (Owner, Admin, Member, Viewer), invites, and an admin API; single-tenant by default, optional multi-tenant via config flag
 - Prometheus metrics endpoint (`/metrics`) covering HTTP, ingest, alert, SSE, and NLQ stats
 
-**Planned:** creating and editing alert rules through the API or UI (today only the demo seed inserts one, anything else goes into the database directly), email delivery (new Email subscriptions are rejected until a mail transport exists), escalation policies (schema exists, evaluation not yet wired), AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, per-source retention (logs currently expire after a fixed 30 days), `telerithm` CLI.
+**Planned:** email delivery (new Email subscriptions are rejected until a mail transport exists), escalation policies (schema exists, evaluation not yet wired), AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, per-source retention (logs currently expire after a fixed 30 days), `telerithm` CLI.
 
 ## Quick start
 

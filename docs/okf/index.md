@@ -19,9 +19,9 @@ their areas; these docs deliberately do not duplicate them.
 - [Alert evaluation and incident lifecycle](alert-evaluation-and-incident-lifecycle.md),
   the cross-file couplings around `AlertEvaluationWorker` that
   `docs/architecture.md`'s "Alerting" section does not state: one unlocked
-  loop per backend process, skipped evaluations that are not made up, no
-  rule-authoring route and the single demo seed with its plain-text rule, the
-  reserved `ANOMALY_DETECTED` condition, the allowed incident transitions, the
+  loop per backend process, skipped evaluations that are not made up, the rule
+  create, edit and delete routes and what they refuse, the demo seed with its
+  plain-text rule, the reserved `ANOMALY_DETECTED` condition, the allowed incident transitions, the
   fixed `MEDIUM` severity against subscription severity filters, team scoping
   through the rule relation, and what the alert metrics count.
 
