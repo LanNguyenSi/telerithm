@@ -40,7 +40,7 @@ export function FieldExplorer({
                     key={`${field.key}:${value}`}
                     type="button"
                     onClick={() => onAddFilter(field.key, value)}
-                    className="rounded bg-slate-900/5 px-2 py-0.5 font-mono text-[11px] text-muted transition hover:bg-slate-900/10 hover:text-ink dark:bg-white/5 dark:hover:bg-white/10"
+                    className="rounded-sm bg-slate-900/5 px-2 py-0.5 font-mono text-[11px] text-muted transition hover:bg-slate-900/10 hover:text-ink dark:bg-white/5 dark:hover:bg-white/10"
                   >
                     {value}
                   </button>
@@ -51,7 +51,7 @@ export function FieldExplorer({
                   type="button"
                   disabled={selectedColumns.includes(field.key)}
                   onClick={() => onAddColumn(field.key)}
-                  className="rounded border border-line px-2 py-0.5 text-[11px] text-muted transition enabled:hover:text-ink disabled:opacity-50"
+                  className="rounded-sm border border-line px-2 py-0.5 text-[11px] text-muted transition enabled:hover:text-ink disabled:opacity-50"
                 >
                   {selectedColumns.includes(field.key) ? "Column added" : "Add as column"}
                 </button>

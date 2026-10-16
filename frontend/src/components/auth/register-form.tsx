@@ -55,7 +55,7 @@ export function RegisterForm({
                 type="text"
                 required
                 autoComplete="name"
-                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
               />
             </div>
             <div>
@@ -68,7 +68,7 @@ export function RegisterForm({
                 type="email"
                 required
                 autoComplete="email"
-                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
               />
             </div>
             <div>
@@ -82,7 +82,7 @@ export function RegisterForm({
                 required
                 minLength={6}
                 autoComplete="new-password"
-                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+                className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
               />
             </div>
             <button

@@ -11,7 +11,7 @@ const CONDITION_LABELS: Record<EditableAlertCondition, string> = {
 };
 
 const inputClass =
-  "mt-1 w-full rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:focus:border-slate-500";
+  "mt-1 w-full rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:focus:border-slate-500";
 
 /**
  * Create / edit dialog for an alert rule. `rule` is null for a new rule.
@@ -90,7 +90,7 @@ export function AlertRuleForm({
   };
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 px-4">
+    <div className="fixed inset-0 z-300 flex items-center justify-center bg-slate-950/40 px-4">
       <div
         role="dialog"
         aria-modal="true"

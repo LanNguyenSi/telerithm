@@ -8,7 +8,7 @@ WORKDIR /app
 ARG NEXT_PUBLIC_API_BASE_URL=http://localhost:4000/api/v1
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 COPY --from=deps /app/node_modules ./node_modules
-COPY package.json package-lock.json tsconfig.json next-env.d.ts next.config.mjs postcss.config.js tailwind.config.ts ./
+COPY package.json package-lock.json tsconfig.json next-env.d.ts next.config.mjs postcss.config.js ./
 COPY src ./src
 COPY public ./public
 RUN npm run build

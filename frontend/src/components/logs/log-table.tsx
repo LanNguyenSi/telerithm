@@ -120,7 +120,7 @@ export function LogTable({
                               event.stopPropagation();
                               onSelectLog?.(log);
                             }}
-                            className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted transition hover:text-ink"
+                            className="rounded-sm border border-line px-1.5 py-0.5 text-[10px] text-muted transition hover:text-ink"
                           >
                             details
                           </button>
@@ -146,7 +146,7 @@ export function LogTable({
             <article
               key={log.id}
               className={clsx(
-                "rounded-xl border border-line bg-panel/85 p-3 shadow-panel backdrop-blur dark:shadow-panel-dark",
+                "rounded-xl border border-line bg-panel/85 p-3 shadow-panel backdrop-blur-sm dark:shadow-panel-dark",
                 isLong && "cursor-pointer",
               )}
               onClick={isLong ? () => toggle(log.id) : undefined}
@@ -168,14 +168,14 @@ export function LogTable({
                 )}
               </p>
               <div className="mt-1.5 flex flex-wrap gap-2 text-[11px] text-muted">
-                <span className="rounded bg-slate-900/5 px-1.5 py-0.5 font-mono dark:bg-white/5">
+                <span className="rounded-sm bg-slate-900/5 px-1.5 py-0.5 font-mono dark:bg-white/5">
                   {decodeHtml(log.service)}
                 </span>
                 <span className="font-mono">{decodeHtml(log.host)}</span>
                 {extraColumns.map((column) => (
                   <span
                     key={`${log.id}-mobile-${column}`}
-                    className="rounded bg-slate-900/5 px-1.5 py-0.5 font-mono dark:bg-white/5"
+                    className="rounded-sm bg-slate-900/5 px-1.5 py-0.5 font-mono dark:bg-white/5"
                   >
                     {column}={String(log.fields[column] ?? "-")}
                   </span>
@@ -185,7 +185,7 @@ export function LogTable({
                 <button
                   type="button"
                   onClick={() => onSelectLog?.(log)}
-                  className="rounded border border-line px-1.5 py-0.5 text-[10px] text-muted transition hover:text-ink"
+                  className="rounded-sm border border-line px-1.5 py-0.5 text-[10px] text-muted transition hover:text-ink"
                 >
                   details
                 </button>

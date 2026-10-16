@@ -84,7 +84,7 @@ export function Dialog(props: DialogProps) {
 
   return (
     <div
-      className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 px-4"
+      className="fixed inset-0 z-300 flex items-center justify-center bg-slate-950/40 px-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
@@ -104,7 +104,7 @@ export function Dialog(props: DialogProps) {
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
-            className="mt-3 w-full rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:focus:border-slate-500"
+            className="mt-3 w-full rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:focus:border-slate-500"
           />
         ) : null}
 
@@ -117,7 +117,7 @@ export function Dialog(props: DialogProps) {
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
               placeholder="Name der Ansicht"
-              className="w-full rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:focus:border-slate-500"
+              className="w-full rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:focus:border-slate-500"
             />
             <label className="flex items-center gap-2 text-sm text-muted">
               <input
@@ -125,7 +125,7 @@ export function Dialog(props: DialogProps) {
                 checked={shared}
                 disabled={props.canManageShared !== true}
                 onChange={(e) => setShared(e.target.checked)}
-                className="rounded border-line"
+                className="rounded-sm border-line"
               />
               Team-weit teilen
             </label>
@@ -135,7 +135,7 @@ export function Dialog(props: DialogProps) {
                 checked={isDefault}
                 disabled={props.canManageShared !== true}
                 onChange={(e) => setIsDefault(e.target.checked)}
-                className="rounded border-line"
+                className="rounded-sm border-line"
               />
               Als Standardansicht setzen
             </label>

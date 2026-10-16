@@ -117,7 +117,7 @@ export function Select({
       tabIndex={-1}
       style={dropdownStyle}
       className={clsx(
-        "max-h-60 overflow-y-auto rounded-xl border border-line bg-white/95 p-1 shadow-2xl backdrop-blur dark:bg-slate-900/95",
+        "max-h-60 overflow-y-auto rounded-xl border border-line bg-white/95 p-1 shadow-2xl backdrop-blur-sm dark:bg-slate-900/95",
         listClassName,
       )}
     >
@@ -194,7 +194,7 @@ export function Select({
           }
         }}
         className={clsx(
-          "flex w-full items-center justify-between rounded-lg border border-line bg-white px-3 py-2 text-left text-sm text-ink outline-none transition",
+          "flex w-full items-center justify-between rounded-lg border border-line bg-white px-3 py-2 text-left text-sm text-ink outline-hidden transition",
           "focus:border-slate-400 focus:ring-2 focus:ring-slate-400/20 dark:bg-white/10",
           disabled && "cursor-not-allowed opacity-50",
           buttonClassName,

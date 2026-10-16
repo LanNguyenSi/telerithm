@@ -225,7 +225,7 @@ export function SearchPanel({
               }
             }}
             rows={2}
-            className="w-full rounded-xl border border-line bg-white/90 px-3 py-2.5 text-sm text-ink outline-none ring-0 resize-none dark:bg-white/10"
+            className="w-full rounded-xl border border-line bg-white/90 px-3 py-2.5 text-sm text-ink outline-hidden ring-0 resize-none dark:bg-white/10"
             placeholder="Show me payment failures from the last hour"
           />
           {isPending && (
@@ -281,7 +281,7 @@ export function SearchPanel({
             value={sourceId}
             onChange={(event) => setSourceId(event.target.value)}
             placeholder="source-id"
-            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
           />
         </label>
 
@@ -293,7 +293,7 @@ export function SearchPanel({
                 type="datetime-local"
                 value={startTime}
                 onChange={(event) => setStartTime(event.target.value)}
-                className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+                className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
               />
             </label>
 
@@ -303,7 +303,7 @@ export function SearchPanel({
                 type="datetime-local"
                 value={endTime}
                 onChange={(event) => setEndTime(event.target.value)}
-                className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+                className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
               />
             </label>
             <label className="col-span-full flex items-center gap-2 rounded-lg border border-line/70 bg-white/60 px-3 py-2 text-xs text-muted dark:bg-white/5">
@@ -311,7 +311,7 @@ export function SearchPanel({
                 type="checkbox"
                 checked={shareAbsoluteTime}
                 onChange={(event) => setShareAbsoluteTime(event.target.checked)}
-                className="h-3.5 w-3.5 rounded border-line text-slate-900 focus:ring-slate-400"
+                className="h-3.5 w-3.5 rounded-sm border-line text-slate-900 focus:ring-slate-400"
               />
               <span>
                 Share exact timestamps in URL
@@ -342,7 +342,7 @@ export function SearchPanel({
             value={service}
             onChange={(event) => setService(event.target.value)}
             placeholder="payment"
-            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
           />
         </label>
 
@@ -352,7 +352,7 @@ export function SearchPanel({
             value={host}
             onChange={(event) => setHost(event.target.value)}
             placeholder="api-1"
-            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+            className="w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
           />
         </label>
 
@@ -505,7 +505,7 @@ export function SearchPanel({
               <polyline points="9 18 15 12 9 6" />
             </svg>
             <span>AI interpretation</span>
-            <span className="rounded bg-cyan-100 px-1.5 py-0.5 font-mono text-[10px] text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
+            <span className="rounded-sm bg-cyan-100 px-1.5 py-0.5 font-mono text-[10px] text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300">
               AI
             </span>
           </button>
@@ -526,7 +526,7 @@ export function SearchPanel({
                   {aiPlan.filtersApplied.map((filter, index) => (
                     <span
                       key={`${filter.field}:${filter.operator}:${String(filter.value)}:${index}`}
-                      className="rounded bg-cyan-900/40 px-2 py-0.5 font-mono text-[11px] text-cyan-200"
+                      className="rounded-sm bg-cyan-900/40 px-2 py-0.5 font-mono text-[11px] text-cyan-200"
                     >
                       {filter.field} {filter.operator} {String(filter.value)}
                     </span>
@@ -544,14 +544,14 @@ export function SearchPanel({
                 <button
                   type="button"
                   onClick={() => onApplyAiPlan?.(aiPlan)}
-                  className="rounded border border-cyan-600 px-2 py-1 text-[11px] text-cyan-100 hover:bg-cyan-800/30"
+                  className="rounded-sm border border-cyan-600 px-2 py-1 text-[11px] text-cyan-100 hover:bg-cyan-800/30"
                 >
                   Apply AI filters
                 </button>
                 <button
                   type="button"
                   onClick={() => onDiscardAiPlan?.()}
-                  className="rounded border border-slate-600 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800/30"
+                  className="rounded-sm border border-slate-600 px-2 py-1 text-[11px] text-slate-200 hover:bg-slate-800/30"
                 >
                   Discard plan
                 </button>

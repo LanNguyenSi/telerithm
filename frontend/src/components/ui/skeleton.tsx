@@ -10,7 +10,7 @@ export function SkeletonCard({ className }: { className?: string }) {
   return (
     <section
       className={clsx(
-        "rounded-2xl border border-line bg-panel/85 p-5 shadow-panel backdrop-blur dark:shadow-panel-dark",
+        "rounded-2xl border border-line bg-panel/85 p-5 shadow-panel backdrop-blur-sm dark:shadow-panel-dark",
         className,
       )}
     >
@@ -35,11 +35,11 @@ export function SkeletonRow() {
 
 export function SkeletonTable({ rows = 8 }: { rows?: number }) {
   return (
-    <section className="overflow-hidden rounded-2xl border border-line bg-panel/85 p-0 shadow-panel backdrop-blur dark:shadow-panel-dark">
+    <section className="overflow-hidden rounded-2xl border border-line bg-panel/85 p-0 shadow-panel backdrop-blur-sm dark:shadow-panel-dark">
       <div className="border-b border-line bg-slate-950 px-4 py-3">
         <div className="flex gap-4">
           {["w-28", "w-16", "w-24", "w-20", "flex-1"].map((w, i) => (
-            <div key={i} className={clsx("h-3 rounded bg-white/10", w)} />
+            <div key={i} className={clsx("h-3 rounded-sm bg-white/10", w)} />
           ))}
         </div>
       </div>

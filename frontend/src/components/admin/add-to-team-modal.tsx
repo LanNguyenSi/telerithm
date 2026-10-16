@@ -35,7 +35,7 @@ export function AddToTeamModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 px-4">
+    <div className="fixed inset-0 z-300 flex items-center justify-center bg-slate-950/40 px-4">
       <div className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-panel dark:bg-slate-900">
         <div className="flex items-start justify-between gap-4">
           <div>
