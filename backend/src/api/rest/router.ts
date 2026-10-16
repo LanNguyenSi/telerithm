@@ -1338,6 +1338,19 @@ apiRouter.post(
       return;
     }
     if ((await requireTeamRole(userId, parsed.data.teamId, res)) === null) return;
+    // A rule id from another team must not be subscribable: listByUser returns
+    // the rule's name. A foreign and a nonexistent rule answer the same 404, so
+    // the id gives no existence oracle.
+    if (parsed.data.ruleId !== undefined) {
+      const rule = await prisma.alertRule.findFirst({
+        where: { id: parsed.data.ruleId, teamId: parsed.data.teamId },
+        select: { id: true },
+      });
+      if (!rule) {
+        res.status(404).json({ error: "Alert rule not found" });
+        return;
+      }
+    }
     const subscription = await subscriptionService.create({ ...parsed.data, userId });
     res.status(201).json({ subscription });
   }),

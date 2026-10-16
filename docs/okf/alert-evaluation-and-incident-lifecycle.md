@@ -3,7 +3,7 @@ type: module
 title: Alert evaluation and incident lifecycle - how rules become incidents and what the cross-file couplings are
 description: AlertEvaluationWorker (one per backend process, 60 s, no cross-process lock) turns enabled AlertRule rows into OPEN MEDIUM AlertIncident rows and hands them to NotificationDispatcher fire-and-forget; humans author rules and move incidents through writeRoute-gated actions in router.ts and AlertService. Covers the couplings docs/architecture.md's Alerting section does not state - rule authoring through the three rule write routes and what they refuse (ANOMALY_DETECTED, a non-default queryType), the demo seed, the fixed MEDIUM severity against subscription severity filters, team scoping through the rule relation, unescaped ILIKE wildcards, skipped evaluations that are not made up, and what the metrics count.
 tags: [alerting, incidents, worker, notifications, maintenance-windows]
-timestamp: 2026-10-16T07:36:12Z
+timestamp: 2026-10-16T09:37:53Z
 sources:
   - backend/src/services/alert/alert-evaluation-worker.ts
   - backend/src/services/alert/alert-service.ts
