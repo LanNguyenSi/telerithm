@@ -115,7 +115,12 @@ function harness(options: Options = {}): Harness {
 
 const allowingGate =
   (events: Event[], role: TeamRoleName = "MEMBER") =>
-  async (_userId: string, _teamId: string, _res: Response): Promise<TeamRoleName | null> => {
+  async (
+    _userId: string,
+    _teamId: string,
+    _res: Response,
+    _nonMemberNotFound?: string,
+  ): Promise<TeamRoleName | null> => {
     events.push("gate");
     return role;
   };
