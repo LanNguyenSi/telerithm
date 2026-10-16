@@ -2,6 +2,8 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-16T18:34:41Z, re-stamped api-authz-and-team-scoping.md after `ENGINEERING.md` listed all twelve `writeRoute` routes (it said nine); the doc already says twelve, claims unchanged.
+
 - 2026-10-16T18:28:35Z, re-verified and re-stamped api-authz-and-team-scoping.md after `ENGINEERING.md` (writeRoute paragraph) was aligned with the non-member 404 of the by-id write routes; the doc's claims already state it, no citation moved.
 
 - 2026-10-16T18:24:42Z, re-stamped after the type of a gate stub in `write-route.test.ts` changed (a parameter declaration, no behaviour): api-authz-and-team-scoping.md, claims and citations unchanged.
