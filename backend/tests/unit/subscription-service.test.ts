@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { findMany } = vi.hoisted(() => ({ findMany: vi.fn() }));
 
+vi.mock("../../src/logger.js", () => ({
+  createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
+}));
+
 vi.mock("../../src/repositories/prisma.js", () => ({
   prisma: { alertSubscription: { findMany } },
 }));
