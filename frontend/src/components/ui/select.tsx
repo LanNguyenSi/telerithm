@@ -117,7 +117,7 @@ export function Select({
       tabIndex={-1}
       style={dropdownStyle}
       className={clsx(
-        "max-h-60 overflow-y-auto rounded-xl border border-line bg-white/95 p-1 shadow-2xl backdrop-blur dark:bg-slate-900/95",
+        "max-h-60 overflow-y-auto rounded-xl border border-line bg-white/95 p-1 shadow-2xl backdrop-blur-sm dark:bg-slate-900/95",
         listClassName,
       )}
     >
@@ -138,7 +138,7 @@ export function Select({
               onClick={() => commitSelection(option.value, option.disabled)}
               className={clsx(
                 "flex w-full items-center rounded-lg px-3 py-2 text-left text-sm transition",
-                option.disabled && "cursor-not-allowed text-muted/60",
+                option.disabled && "cursor-not-allowed",
                 !option.disabled && "text-ink",
                 isFocused && !option.disabled && "bg-slate-100 dark:bg-white/10",
                 isSelected && !option.disabled && "bg-cyan-50 text-cyan-700 dark:bg-cyan-400/10 dark:text-cyan-300",
@@ -194,7 +194,7 @@ export function Select({
           }
         }}
         className={clsx(
-          "flex w-full items-center justify-between rounded-lg border border-line bg-white px-3 py-2 text-left text-sm text-ink outline-none transition",
+          "flex w-full items-center justify-between rounded-lg border border-line bg-white px-3 py-2 text-left text-sm text-ink outline-hidden transition",
           "focus:border-slate-400 focus:ring-2 focus:ring-slate-400/20 dark:bg-white/10",
           disabled && "cursor-not-allowed opacity-50",
           buttonClassName,

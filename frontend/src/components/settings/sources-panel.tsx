@@ -8,7 +8,7 @@ import { canWriteTeam } from "@/lib/auth/roles";
 import { SOURCE_TYPES, type Source, type SourceType, type TeamRole } from "@/types";
 
 const inputClass =
-  "mt-1 w-full rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:focus:border-slate-500";
+  "mt-1 w-full rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:focus:border-slate-500";
 
 /**
  * Log source list with a create dialog. The dialog posts to the existing
@@ -139,7 +139,7 @@ export function SourcesPanel({
       )}
 
       {writable && open ? (
-        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-slate-950/40 px-4">
+        <div className="fixed inset-0 z-300 flex items-center justify-center bg-slate-950/40 px-4">
           <div
             role="dialog"
             aria-modal="true"

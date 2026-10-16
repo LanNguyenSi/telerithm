@@ -31,8 +31,8 @@ export function LogEventDrawer({
   const pretty = JSON.stringify(log, null, 2);
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/40 backdrop-blur-sm">
-      <aside className="h-full w-full max-w-2xl overflow-y-auto border-l border-line bg-panel p-4 shadow-panel dark:shadow-panel-dark">
+    <div className="fixed inset-0 z-40 flex justify-end bg-slate-950/40 backdrop-blur-xs">
+      <aside className="h-full w-full max-w-2xl overflow-y-auto border-l border-line p-4 shadow-panel dark:shadow-panel-dark">
         <div className="mb-3 flex items-start justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.18em] text-muted">Event detail</p>
@@ -50,7 +50,7 @@ export function LogEventDrawer({
         <Card className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 font-mono text-xs">
             <span className={levelTone(log.level)}>{log.level.toUpperCase()}</span>
-            <span className="rounded bg-slate-900/5 px-1.5 py-0.5 dark:bg-white/5">{decodeHtml(log.service)}</span>
+            <span className="rounded-sm bg-slate-900/5 px-1.5 py-0.5 dark:bg-white/5">{decodeHtml(log.service)}</span>
             <span className="text-muted">{decodeHtml(log.host)}</span>
             <span className="text-muted">source {decodeHtml(log.sourceId)}</span>
           </div>
@@ -89,14 +89,14 @@ export function LogEventDrawer({
                         <button
                           type="button"
                           onClick={() => onFilter(key, text)}
-                          className="rounded px-1.5 py-0.5 text-[10px] text-signal transition hover:bg-cyan-100 dark:hover:bg-cyan-900/20"
+                          className="rounded-sm px-1.5 py-0.5 text-[10px] text-signal transition hover:bg-cyan-100 dark:hover:bg-cyan-900/20"
                         >
                           filter
                         </button>
                         <button
                           type="button"
                           onClick={() => onExclude(key, text)}
-                          className="rounded px-1.5 py-0.5 text-[10px] text-danger transition hover:bg-rose-100 dark:hover:bg-rose-900/20"
+                          className="rounded-sm px-1.5 py-0.5 text-[10px] text-danger transition hover:bg-rose-100 dark:hover:bg-rose-900/20"
                         >
                           exclude
                         </button>

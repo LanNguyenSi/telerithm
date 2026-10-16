@@ -99,10 +99,10 @@ function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => 
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 transition ${
-          open ? "bg-white/10" : "hover:bg-white/[0.06]"
+          open ? "bg-white/10" : "hover:bg-white/6"
         }`}
       >
-        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-signal/20 text-[11px] font-semibold text-signal">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-signal">
           {user.name.charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1 text-left">
@@ -110,21 +110,21 @@ function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => 
         </div>
         <svg
           xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
-          className={`flex-shrink-0 text-slate-500 transition ${open ? "rotate-180" : ""}`}
+          className={`shrink-0 text-slate-500 transition ${open ? "rotate-180" : ""}`}
         >
           <polyline points="6 9 12 15 18 9" />
         </svg>
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 right-0 mb-1.5 rounded-lg border border-white/[0.08] bg-[#1a2028] py-1 shadow-xl">
+        <div className="absolute bottom-full left-0 right-0 mb-1.5 rounded-lg border border-white/8 bg-[#1a2028] py-1 shadow-xl">
           <Link
             href="/settings"
             onClick={() => { setOpen(false); onNavigate?.(); }}
             className={`flex items-center gap-2.5 px-3 py-2 text-[13px] transition ${
               settingsActive
                 ? "text-white"
-                : "text-slate-400 hover:bg-white/[0.06] hover:text-slate-200"
+                : "text-slate-400 hover:bg-white/6 hover:text-slate-200"
             }`}
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
@@ -133,11 +133,11 @@ function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => 
             </svg>
             Settings
           </Link>
-          <div className="mx-2 my-1 border-t border-white/[0.06]" />
+          <div className="mx-2 my-1 border-t border-white/6" />
           <form action={logoutAction}>
             <button
               type="submit"
-              className="flex w-full items-center gap-2.5 px-3 py-2 text-[13px] text-slate-400 transition hover:bg-white/[0.06] hover:text-slate-200"
+              className="flex w-full items-center gap-2.5 px-3 py-2 text-[13px] text-slate-400 transition hover:bg-white/6 hover:text-slate-200"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -181,10 +181,10 @@ export function Sidebar({ user }: SidebarProps) {
               className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition ${
                 active
                   ? "bg-white/10 text-white"
-                  : "text-slate-400 hover:bg-white/[0.06] hover:text-slate-200"
+                  : "text-slate-400 hover:bg-white/6 hover:text-slate-200"
               }`}
             >
-              <span className={`flex-shrink-0 ${active ? "text-signal" : "text-slate-500 group-hover:text-slate-300"}`}>
+              <span className={`shrink-0 ${active ? "text-signal" : "text-slate-500 group-hover:text-slate-300"}`}>
                 {item.icon}
               </span>
               {item.label}
@@ -194,7 +194,7 @@ export function Sidebar({ user }: SidebarProps) {
       </nav>
 
       {/* User menu */}
-      <div className="border-t border-white/[0.06] px-2 pb-3 pt-2">
+      <div className="border-t border-white/6 px-2 pb-3 pt-2">
         {user ? (
           <UserMenu user={user} onNavigate={() => setMobileOpen(false)} />
         ) : (
@@ -207,7 +207,7 @@ export function Sidebar({ user }: SidebarProps) {
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-52 flex-col border-r border-white/[0.06] bg-[#0f1419] lg:flex">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-52 flex-col border-r border-white/6 bg-[#0f1419] lg:flex">
         {navContent}
       </aside>
 

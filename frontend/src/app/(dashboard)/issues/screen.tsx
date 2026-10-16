@@ -236,7 +236,7 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
               value={queryInput}
               onChange={(event) => setQueryInput(event.target.value)}
               placeholder="Search title"
-              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
             />
             <Select
               name="status"
@@ -249,7 +249,7 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
               value={serviceInput}
               onChange={(event) => setServiceInput(event.target.value)}
               placeholder="Service"
-              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              className="rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
             />
             <Select
               name="level"
@@ -335,7 +335,7 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
               </thead>
               <tbody className="text-sm">
                 {issues.map((issue) => (
-                  <tr key={issue.id} className="border-b border-line/50 last:border-0">
+                  <tr key={issue.id} className="border-b last:border-0">
                     <td className="py-2 pr-3">
                       <Badge tone={statusTone(issue.status)}>{issue.status}</Badge>
                     </td>

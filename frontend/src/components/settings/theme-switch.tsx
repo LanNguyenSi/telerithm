@@ -23,7 +23,7 @@ export function ThemeSwitch() {
         onClick={() => select("light")}
         className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm transition ${
           !dark
-            ? "border-signal bg-signal/10 font-medium text-signal"
+            ? "border-signal font-medium text-signal"
             : "border-line text-muted hover:border-slate-400 hover:text-ink"
         }`}
       >
@@ -45,7 +45,7 @@ export function ThemeSwitch() {
         onClick={() => select("dark")}
         className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm transition ${
           dark
-            ? "border-signal bg-signal/10 font-medium text-signal"
+            ? "border-signal font-medium text-signal"
             : "border-line text-muted hover:border-slate-400 hover:text-ink"
         }`}
       >

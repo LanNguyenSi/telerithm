@@ -38,7 +38,7 @@ export function HistogramStrip({
                 className="group flex h-full items-end"
               >
                 <span
-                  className="w-3 rounded-sm bg-line transition group-hover:bg-signal dark:bg-white/10"
+                  className="w-3 rounded-xs bg-line transition group-hover:bg-signal dark:bg-white/10"
                   style={{ height: `${height}%` }}
                 />
               </button>

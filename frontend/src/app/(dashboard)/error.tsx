@@ -9,7 +9,7 @@ export default function GlobalError({
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-6 py-24 text-center">
-      <div className="rounded-full bg-danger/10 p-4">
+      <div className="rounded-full p-4">
         <svg
           className="h-8 w-8 text-danger"
           fill="none"

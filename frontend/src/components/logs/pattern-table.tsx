@@ -29,7 +29,7 @@ export function PatternTable({
           </thead>
           <tbody>
             {patterns.map((pattern) => (
-              <tr key={pattern.key} className="border-b border-line/80 bg-white/70 dark:bg-white/5">
+              <tr key={pattern.key} className="border-b bg-white/70 dark:bg-white/5">
                 <td className="px-3 py-2 font-mono text-xs text-ink">{pattern.count}</td>
                 <td className="px-3 py-2 font-mono text-xs text-muted">
                   {formatDate(pattern.latestTimestamp)}
@@ -45,14 +45,14 @@ export function PatternTable({
                     <button
                       type="button"
                       onClick={() => onOpenPattern(pattern)}
-                      className="rounded border border-line px-2 py-0.5 text-[11px] text-muted transition hover:text-ink"
+                      className="rounded-sm border border-line px-2 py-0.5 text-[11px] text-muted transition hover:text-ink"
                     >
                       Open events
                     </button>
                     <button
                       type="button"
                       onClick={() => onConvertToFilter(pattern)}
-                      className="rounded border border-line px-2 py-0.5 text-[11px] text-muted transition hover:text-ink"
+                      className="rounded-sm border border-line px-2 py-0.5 text-[11px] text-muted transition hover:text-ink"
                     >
                       Add as filter
                     </button>

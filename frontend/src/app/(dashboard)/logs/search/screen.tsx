@@ -634,7 +634,7 @@ export function SearchScreen() {
           {currentRefresh !== "off" ? <span className="ml-2 font-mono">refresh {currentRefresh}</span> : null}
         </p>
         {currentFacetSelections.length > 0 ? (
-          <div className="w-full border-t border-line/70 pt-3">
+          <div className="w-full border-t pt-3">
             <p className="mb-2 text-xs uppercase tracking-[0.16em] text-muted">Facet Chips</p>
             <div className="flex flex-wrap gap-2">
               {currentFacetSelections.map((facet, index) => (

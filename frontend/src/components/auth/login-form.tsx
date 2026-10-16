@@ -31,7 +31,7 @@ export function LoginForm({ registrationMode }: { registrationMode: "open" | "in
               type="email"
               required
               autoComplete="email"
-              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
             />
           </div>
           <div>
@@ -44,7 +44,7 @@ export function LoginForm({ registrationMode }: { registrationMode: "open" | "in
               type="password"
               required
               autoComplete="current-password"
-              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-none focus:border-slate-400 dark:bg-white/10"
+              className="mt-1 w-full rounded-xl border border-line bg-white px-4 py-2.5 text-ink outline-hidden focus:border-slate-400 dark:bg-white/10"
             />
           </div>
           <button
