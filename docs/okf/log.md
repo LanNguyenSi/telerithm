@@ -2,6 +2,8 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-16T12:14:37Z, re-stamped after the Tailwind CSS 4 migration added a Security entry to `CHANGELOG.md` under [Unreleased]: clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md; the sections they cite are untouched.
+
 - 2026-10-16T10:03:30Z, re-stamped after a comment line in `subscription-service.ts` and the wording of the `listByUser` entry changed: api-authz-and-team-scoping.md and the CHANGELOG now say the foreign rule's name is withheld while `ruleId` keeps the id the subscriber supplied. alert-evaluation-and-incident-lifecycle.md and notification-delivery-trust-boundary.md: three `subscription-service.ts` citations re-pointed by 1, claims unchanged. clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md: re-stamped after the `CHANGELOG.md` edit; the sections they cite are untouched.
 
 - 2026-10-16T09:57:43Z, re-verified and re-stamped after `listByUser` stopped returning the rule of a subscription that points at another team. api-authz-and-team-scoping.md: the subscription allowlist entry now says the list returns `rule: null` for such a row (the row stays, its owner can delete it) instead of claiming the list can never return a foreign rule name. notification-delivery-trust-boundary.md and alert-evaluation-and-incident-lifecycle.md: the three `subscription-service.ts` citations are re-pointed by 7 lines, claims unchanged. clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md: re-stamped after the `CHANGELOG.md` edit under [Unreleased]; the sections they cite are untouched. `okf-kit@0.18.0 check --json --require-anchors docs/okf`: no citation findings.
