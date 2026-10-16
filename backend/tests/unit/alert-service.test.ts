@@ -6,6 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockAlertRuleFindMany,
+  mockAlertRuleCreate,
+  mockAlertRuleUpdate,
+  mockAlertRuleDelete,
   mockAlertIncidentFindMany,
   mockAlertIncidentFindFirst,
   mockAlertIncidentUpdate,
@@ -14,6 +17,9 @@ const {
   mockTransaction,
 } = vi.hoisted(() => ({
   mockAlertRuleFindMany: vi.fn(),
+  mockAlertRuleCreate: vi.fn(),
+  mockAlertRuleUpdate: vi.fn(),
+  mockAlertRuleDelete: vi.fn(),
   mockAlertIncidentFindMany: vi.fn(),
   mockAlertIncidentFindFirst: vi.fn(),
   mockAlertIncidentUpdate: vi.fn(),
@@ -26,6 +32,9 @@ vi.mock("../../src/repositories/prisma.js", () => ({
   prisma: {
     alertRule: {
       findMany: mockAlertRuleFindMany,
+      create: mockAlertRuleCreate,
+      update: mockAlertRuleUpdate,
+      delete: mockAlertRuleDelete,
     },
     alertIncident: {
       findMany: mockAlertIncidentFindMany,
@@ -67,7 +76,9 @@ function makePrismaRule(overrides: Record<string, unknown> = {}) {
     description: null,
     query: "error",
     queryType: "SQL",
+    condition: "GREATER_THAN",
     threshold: 10,
+    windowMinutes: 5,
     enabled: true,
     createdAt: new Date("2024-01-15T10:00:00.000Z"),
     ...overrides,
@@ -162,6 +173,107 @@ describe("AlertService.listRules", () => {
     expect(result).toHaveLength(2);
     expect(result[0].id).toBe("r1");
     expect(result[1].id).toBe("r2");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AlertService.createRule / updateRule / deleteRule
+// ---------------------------------------------------------------------------
+
+describe("AlertService rule create, update and delete", () => {
+  let service: AlertService;
+  const notFound = () => Object.assign(new Error("Record not found"), { code: "P2025" });
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    service = new AlertService();
+  });
+
+  it("createRule writes the rule into the given team and returns the mapped rule", async () => {
+    mockAlertRuleCreate.mockResolvedValue(makePrismaRule({ windowMinutes: 15, condition: "LESS_THAN" }));
+
+    const rule = await service.createRule(TEAM_ID, {
+      teamId: "ignored-body-team",
+      name: "High Error Rate",
+      query: "error",
+      condition: "LESS_THAN",
+      threshold: 10,
+      windowMinutes: 15,
+      enabled: true,
+    });
+
+    expect(mockAlertRuleCreate).toHaveBeenCalledWith({
+      data: {
+        teamId: TEAM_ID,
+        name: "High Error Rate",
+        description: undefined,
+        query: "error",
+        condition: "LESS_THAN",
+        threshold: 10,
+        windowMinutes: 15,
+        enabled: true,
+      },
+    });
+    expect(rule).toMatchObject({ id: "rule-1", condition: "LESS_THAN", windowMinutes: 15, queryType: "sql" });
+  });
+
+  it("updateRule scopes the write by id and teamId", async () => {
+    mockAlertRuleUpdate.mockResolvedValue(makePrismaRule({ enabled: false }));
+
+    const rule = await service.updateRule("rule-1", TEAM_ID, { enabled: false });
+
+    expect(mockAlertRuleUpdate).toHaveBeenCalledWith({
+      where: { id: "rule-1", teamId: TEAM_ID },
+      data: expect.objectContaining({ enabled: false }),
+    });
+    expect(rule.enabled).toBe(false);
+  });
+
+  it("updateRule leaves fields that were not sent undefined, so Prisma keeps them", async () => {
+    mockAlertRuleUpdate.mockResolvedValue(makePrismaRule());
+
+    await service.updateRule("rule-1", TEAM_ID, { name: "Renamed" });
+
+    const { data } = mockAlertRuleUpdate.mock.calls[0][0];
+    expect(data.name).toBe("Renamed");
+    expect(data.threshold).toBeUndefined();
+    expect(data.enabled).toBeUndefined();
+  });
+
+  it("updateRule throws NotFoundError when no rule matches the id and team (cross-team id)", async () => {
+    mockAlertRuleUpdate.mockRejectedValue(notFound());
+
+    await expect(service.updateRule("rule-of-other-team", TEAM_ID, { enabled: true })).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+  });
+
+  it("updateRule rethrows errors that are not a missing record", async () => {
+    const boom = new Error("db down");
+    mockAlertRuleUpdate.mockRejectedValue(boom);
+
+    await expect(service.updateRule("rule-1", TEAM_ID, { enabled: true })).rejects.toBe(boom);
+  });
+
+  it("deleteRule scopes the delete by id and teamId", async () => {
+    mockAlertRuleDelete.mockResolvedValue(makePrismaRule());
+
+    await service.deleteRule("rule-1", TEAM_ID);
+
+    expect(mockAlertRuleDelete).toHaveBeenCalledWith({ where: { id: "rule-1", teamId: TEAM_ID } });
+  });
+
+  it("deleteRule throws NotFoundError when no rule matches the id and team (cross-team id)", async () => {
+    mockAlertRuleDelete.mockRejectedValue(notFound());
+
+    await expect(service.deleteRule("rule-of-other-team", TEAM_ID)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it("deleteRule rethrows errors that are not a missing record", async () => {
+    const boom = new Error("db down");
+    mockAlertRuleDelete.mockRejectedValue(boom);
+
+    await expect(service.deleteRule("rule-1", TEAM_ID)).rejects.toBe(boom);
   });
 });
 

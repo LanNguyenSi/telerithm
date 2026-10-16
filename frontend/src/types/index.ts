@@ -152,13 +152,34 @@ export interface Source {
   apiKey: string;
 }
 
+/** Conditions the API accepts for new and edited rules. */
+export const ALERT_CONDITIONS = ["GREATER_THAN", "LESS_THAN", "EQUALS", "CHANGES_BY"] as const;
+export type EditableAlertCondition = (typeof ALERT_CONDITIONS)[number];
+
 export interface AlertRule {
   id: string;
   name: string;
   description?: string;
+  query: string;
+  /** ANOMALY_DETECTED can exist on older rows; the API rejects it on write. */
+  condition: EditableAlertCondition | "ANOMALY_DETECTED";
   threshold: number;
+  windowMinutes: number;
   enabled: boolean;
 }
+
+export interface AlertRuleInput {
+  name: string;
+  description?: string;
+  query: string;
+  condition: EditableAlertCondition;
+  threshold: number;
+  windowMinutes: number;
+  enabled: boolean;
+}
+
+export const SOURCE_TYPES = ["HTTP", "SYSLOG_UDP", "SYSLOG_TCP", "FILEBEAT", "DOCKER", "CLOUDWATCH"] as const;
+export type SourceType = (typeof SOURCE_TYPES)[number];
 
 export interface AlertIncident {
   id: string;

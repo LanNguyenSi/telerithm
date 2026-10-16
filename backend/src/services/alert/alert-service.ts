@@ -1,4 +1,6 @@
 import type { AlertIncident, AlertRule } from "../../types/domain.js";
+import type { z } from "zod";
+import type { createAlertRuleSchema, updateAlertRuleSchema } from "../../validation/schemas.js";
 import { prisma } from "../../repositories/prisma.js";
 import { createChildLogger } from "../../logger.js";
 import { ConflictError, NotFoundError } from "../../errors.js";
@@ -17,20 +19,89 @@ export const INCIDENT_TRANSITIONS = {
   reopen: ["RESOLVED", "ACKNOWLEDGED"],
 } as const satisfies Record<string, readonly IncidentStatus[]>;
 
+export type CreateAlertRuleInput = z.infer<typeof createAlertRuleSchema>;
+export type UpdateAlertRuleInput = z.infer<typeof updateAlertRuleSchema>;
+
+type RuleRow = Awaited<ReturnType<typeof prisma.alertRule.findMany>>[number];
+
+function toAlertRule(r: RuleRow): AlertRule {
+  return {
+    id: r.id,
+    teamId: r.teamId,
+    name: r.name,
+    description: r.description ?? undefined,
+    query: r.query,
+    queryType: r.queryType === "SQL" ? ("sql" as const) : ("natural" as const),
+    condition: r.condition,
+    threshold: r.threshold,
+    windowMinutes: r.windowMinutes,
+    enabled: r.enabled,
+    createdAt: r.createdAt.toISOString(),
+  };
+}
+
+// P2025: no row matched the id and team (deleted meanwhile, or another team's).
+function isRecordNotFound(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "P2025";
+}
+
 export class AlertService {
   async listRules(teamId: string): Promise<AlertRule[]> {
     const rules = await prisma.alertRule.findMany({ where: { teamId } });
-    return rules.map((r) => ({
-      id: r.id,
-      teamId: r.teamId,
-      name: r.name,
-      description: r.description ?? undefined,
-      query: r.query,
-      queryType: r.queryType === "SQL" ? ("sql" as const) : ("natural" as const),
-      threshold: r.threshold,
-      enabled: r.enabled,
-      createdAt: r.createdAt.toISOString(),
-    }));
+    return rules.map(toAlertRule);
+  }
+
+  async createRule(teamId: string, input: CreateAlertRuleInput): Promise<AlertRule> {
+    const rule = await prisma.alertRule.create({
+      data: {
+        teamId,
+        name: input.name,
+        description: input.description,
+        query: input.query,
+        condition: input.condition,
+        threshold: input.threshold,
+        windowMinutes: input.windowMinutes,
+        enabled: input.enabled,
+      },
+    });
+    log.info({ ruleId: rule.id, teamId }, "Alert rule created");
+    return toAlertRule(rule);
+  }
+
+  // The where clause carries teamId next to the id, so a rule of another team
+  // matches nothing (NotFoundError) even if the router's team check were
+  // bypassed.
+  async updateRule(ruleId: string, teamId: string, input: UpdateAlertRuleInput): Promise<AlertRule> {
+    try {
+      const rule = await prisma.alertRule.update({
+        where: { id: ruleId, teamId },
+        data: {
+          name: input.name,
+          description: input.description,
+          query: input.query,
+          condition: input.condition,
+          threshold: input.threshold,
+          windowMinutes: input.windowMinutes,
+          enabled: input.enabled,
+        },
+      });
+      log.info({ ruleId, teamId }, "Alert rule updated");
+      return toAlertRule(rule);
+    } catch (error) {
+      if (isRecordNotFound(error)) throw new NotFoundError("Alert rule not found");
+      throw error;
+    }
+  }
+
+  // Hard delete; incidents and subscriptions of the rule cascade.
+  async deleteRule(ruleId: string, teamId: string): Promise<void> {
+    try {
+      await prisma.alertRule.delete({ where: { id: ruleId, teamId } });
+      log.info({ ruleId, teamId }, "Alert rule deleted");
+    } catch (error) {
+      if (isRecordNotFound(error)) throw new NotFoundError("Alert rule not found");
+      throw error;
+    }
   }
 
   async listIncidents(teamId: string): Promise<AlertIncident[]> {

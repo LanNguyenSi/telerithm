@@ -192,6 +192,10 @@ export interface LogSource {
   apiKey: string;
 }
 
+// Mirrors the Prisma AlertCondition enum. ANOMALY_DETECTED is stored by older
+// data but the evaluation worker skips it, so the API does not accept it.
+export type AlertCondition = "GREATER_THAN" | "LESS_THAN" | "EQUALS" | "CHANGES_BY" | "ANOMALY_DETECTED";
+
 export interface AlertRule {
   id: string;
   teamId: string;
@@ -199,7 +203,9 @@ export interface AlertRule {
   description?: string;
   query: string;
   queryType: QueryType;
+  condition: AlertCondition;
   threshold: number;
+  windowMinutes: number;
   enabled: boolean;
   createdAt: string;
 }

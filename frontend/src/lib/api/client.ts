@@ -2,6 +2,7 @@ import type {
   AdminUser,
   AlertIncident,
   AlertRule,
+  AlertRuleInput,
   AlertSubscription,
   DashboardOverview,
   LogFacet,
@@ -15,6 +16,7 @@ import type {
   LogEntry,
   SessionUser,
   Source,
+  SourceType,
   Team,
   TeamWithRole,
 } from "@/types";
@@ -109,6 +111,13 @@ export async function getOverview(teamId: string, token: string) {
 
 export async function getSources(teamId: string, token: string) {
   return authedRequest<{ sources: Source[] }>(`/sources?teamId=${teamId}`, token);
+}
+
+export async function createSource(token: string, payload: { teamId: string; name: string; type: SourceType }) {
+  return authedRequest<{ source: Source }>("/sources", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export interface LogQueryContext {
@@ -399,6 +408,29 @@ export async function getLogContext(
 
 export async function getAlertRules(teamId: string, token: string) {
   return authedRequest<{ rules: AlertRule[] }>(`/alerts/rules?teamId=${teamId}`, token);
+}
+
+export async function createAlertRule(token: string, payload: AlertRuleInput & { teamId: string }) {
+  return authedRequest<{ rule: AlertRule }>("/alerts/rules", token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** Partial update: only the keys present are changed. `description: null` clears it. */
+export async function updateAlertRule(
+  id: string,
+  token: string,
+  payload: Partial<Omit<AlertRuleInput, "description">> & { description?: string | null },
+) {
+  return authedRequest<{ rule: AlertRule }>(`/alerts/rules/${encodeURIComponent(id)}`, token, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAlertRule(id: string, token: string) {
+  return authedRequest<void>(`/alerts/rules/${encodeURIComponent(id)}`, token, { method: "DELETE" });
 }
 
 export async function getAlertIncidents(teamId: string, token: string) {

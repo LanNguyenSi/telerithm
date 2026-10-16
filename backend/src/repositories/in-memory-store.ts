@@ -78,7 +78,9 @@ export class InMemoryStore {
       description: "Triggers when payment errors exceed threshold",
       query: "SELECT count() FROM logs WHERE level = 'error' AND service = 'payment'",
       queryType: "sql",
+      condition: "GREATER_THAN",
       threshold: 10,
+      windowMinutes: 5,
       enabled: true,
       createdAt,
     });

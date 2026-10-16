@@ -62,6 +62,8 @@ type Guard =
 // keyed by "METHOD /path" exactly as declared there.
 const ROUTE_TEAM_GUARDS: Record<string, Guard> = {
   // --- Resource-derived team resolvers, built via teamFromResource ---
+  "PUT /alerts/rules/:id": { kind: "resolver", loaderName: "loadRuleTeamId" },
+  "DELETE /alerts/rules/:id": { kind: "resolver", loaderName: "loadRuleTeamId" },
   "POST /alerts/rules/:id/mute": { kind: "resolver", loaderName: "loadRuleTeamId" },
   "POST /alerts/rules/:id/unmute": { kind: "resolver", loaderName: "loadRuleTeamId" },
   "DELETE /maintenance-windows/:id": { kind: "resolver", loaderName: "loadMaintenanceWindowTeamId" },

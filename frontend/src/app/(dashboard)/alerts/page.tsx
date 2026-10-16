@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { AlertRulesPanel } from "@/components/alerts/alert-rules-panel";
 import { IncidentList } from "@/components/alerts/incident-list";
-import { Card } from "@/components/ui/card";
 import { getAlertIncidents, getAlertRules } from "@/lib/api/client";
 import { requireAuth } from "@/lib/auth/guard";
 
@@ -29,46 +29,7 @@ export default async function AlertsPage() {
       </div>
       <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr] lg:gap-6">
         <IncidentList incidents={incidents} />
-        <Card>
-          <h2 className="text-lg font-semibold text-ink">Alert Rules</h2>
-          {rules.length === 0 ? (
-            <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-dashed border-line bg-white/50 p-8 text-center dark:bg-white/5">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="36"
-                height="36"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="text-muted"
-              >
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-              <p className="text-sm font-medium text-ink">No alert rules configured</p>
-              <p className="max-w-xs text-sm text-muted">
-                Rules cannot be created or edited in the UI or the API yet. The demo seed adds one example rule; any
-                other rule has to be inserted into the database directly.
-              </p>
-            </div>
-          ) : (
-            <div className="mt-4 space-y-3">
-              {rules.map((rule) => (
-                <article
-                  key={rule.id}
-                  className="rounded-xl border border-line bg-white/70 p-3 dark:bg-white/5"
-                >
-                  <p className="text-sm font-medium text-ink">{rule.name}</p>
-                  <p className="mt-1 text-xs text-muted">{rule.description ?? "No description"}</p>
-                  <p className="mt-1.5 font-mono text-xs text-muted">Threshold: {rule.threshold}</p>
-                </article>
-              ))}
-            </div>
-          )}
-        </Card>
+        <AlertRulesPanel rules={rules} teamId={team.id} token={token} role={team.role} />
       </section>
     </>
   );
