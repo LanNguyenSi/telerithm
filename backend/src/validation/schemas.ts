@@ -36,9 +36,9 @@ export const createSourceSchema = z.object({
 const alertRuleConditionSchema = z.enum(["GREATER_THAN", "LESS_THAN", "EQUALS", "CHANGES_BY"]);
 
 const alertRuleFields = {
-  name: z.string().min(2),
-  description: z.string(),
-  query: z.string().trim().min(1),
+  name: z.string().trim().min(2).max(200),
+  description: z.string().max(1000),
+  query: z.string().trim().min(1).max(1000),
   queryType: z.literal("sql"),
   condition: alertRuleConditionSchema,
   threshold: z.number().int().min(0),
@@ -60,12 +60,13 @@ export const createAlertRuleSchema = z.object({
 
 // Partial update: only the keys present are changed, and the team is never
 // taken from the body (it comes from the rule). `description: null` clears it.
+// queryType is not editable: the worker ignores it, and create only accepts the
+// default.
 export const updateAlertRuleSchema = z
   .object({
     name: alertRuleFields.name.optional(),
     description: alertRuleFields.description.nullable().optional(),
     query: alertRuleFields.query.optional(),
-    queryType: alertRuleFields.queryType.optional(),
     condition: alertRuleFields.condition.optional(),
     threshold: alertRuleFields.threshold.optional(),
     windowMinutes: alertRuleFields.windowMinutes.optional(),

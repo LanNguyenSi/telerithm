@@ -9,6 +9,7 @@ const {
   mockAlertRuleCreate,
   mockAlertRuleUpdate,
   mockAlertRuleDelete,
+  mockSubscriptionDeleteMany,
   mockAlertIncidentFindMany,
   mockAlertIncidentFindFirst,
   mockAlertIncidentUpdate,
@@ -20,6 +21,7 @@ const {
   mockAlertRuleCreate: vi.fn(),
   mockAlertRuleUpdate: vi.fn(),
   mockAlertRuleDelete: vi.fn(),
+  mockSubscriptionDeleteMany: vi.fn(),
   mockAlertIncidentFindMany: vi.fn(),
   mockAlertIncidentFindFirst: vi.fn(),
   mockAlertIncidentUpdate: vi.fn(),
@@ -35,6 +37,9 @@ vi.mock("../../src/repositories/prisma.js", () => ({
       create: mockAlertRuleCreate,
       update: mockAlertRuleUpdate,
       delete: mockAlertRuleDelete,
+    },
+    alertSubscription: {
+      deleteMany: mockSubscriptionDeleteMany,
     },
     alertIncident: {
       findMany: mockAlertIncidentFindMany,
@@ -186,6 +191,8 @@ describe("AlertService rule create, update and delete", () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    // The array form of $transaction runs the already-started operations.
+    mockTransaction.mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops));
     service = new AlertService();
   });
 
@@ -255,12 +262,16 @@ describe("AlertService rule create, update and delete", () => {
     await expect(service.updateRule("rule-1", TEAM_ID, { enabled: true })).rejects.toBe(boom);
   });
 
-  it("deleteRule scopes the delete by id and teamId", async () => {
+  it("deleteRule deletes the rule's subscriptions and the rule in one transaction, both scoped by team", async () => {
+    mockSubscriptionDeleteMany.mockResolvedValue({ count: 2 });
     mockAlertRuleDelete.mockResolvedValue(makePrismaRule());
 
     await service.deleteRule("rule-1", TEAM_ID);
 
+    expect(mockSubscriptionDeleteMany).toHaveBeenCalledWith({ where: { ruleId: "rule-1", teamId: TEAM_ID } });
     expect(mockAlertRuleDelete).toHaveBeenCalledWith({ where: { id: "rule-1", teamId: TEAM_ID } });
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockTransaction.mock.calls[0][0]).toHaveLength(2);
   });
 
   it("deleteRule throws NotFoundError when no rule matches the id and team (cross-team id)", async () => {

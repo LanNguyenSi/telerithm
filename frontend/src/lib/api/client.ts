@@ -33,6 +33,21 @@ export function getApiBaseUrl() {
   return process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api/v1";
 }
 
+// Validation failures arrive as a flattened Zod error: top-level `formErrors`
+// and per-field `fieldErrors`. Turn it into one readable line.
+function describeValidationError(error: Record<string, unknown>, fallback: string): string {
+  const messages: string[] = [];
+  const isStrings = (value: unknown): value is string[] =>
+    Array.isArray(value) && value.every((item) => typeof item === "string");
+  if (isStrings(error.formErrors)) messages.push(...error.formErrors);
+  if (error.fieldErrors && typeof error.fieldErrors === "object") {
+    for (const [field, issues] of Object.entries(error.fieldErrors as Record<string, unknown>)) {
+      if (isStrings(issues) && issues.length > 0) messages.push(`${field}: ${issues.join(", ")}`);
+    }
+  }
+  return messages.length > 0 ? messages.join("; ") : fallback;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
@@ -48,6 +63,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     try {
       const body = await response.json() as Record<string, unknown>;
       if (typeof body.error === "string") detail = body.error;
+      else if (body.error && typeof body.error === "object") detail = describeValidationError(body.error as Record<string, unknown>, detail);
       else if (typeof body.message === "string") detail = body.message;
     } catch { /* no parseable body */ }
     throw new Error(detail);

@@ -162,8 +162,34 @@ describe("Validation Schemas", () => {
 
     it("rejects a queryType other than sql", () => {
       expect(createAlertRuleSchema.safeParse({ ...valid, queryType: "natural" }).success).toBe(false);
-      expect(updateAlertRuleSchema.safeParse({ queryType: "natural" }).success).toBe(false);
       expect(createAlertRuleSchema.safeParse({ ...valid, queryType: "sql" }).success).toBe(true);
+    });
+
+    it("does not carry queryType through an update", () => {
+      const result = updateAlertRuleSchema.safeParse({ name: "Renamed", queryType: "natural" });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data).toEqual({ name: "Renamed" });
+    });
+
+    it("trims the name before the minimum length applies", () => {
+      expect(createAlertRuleSchema.safeParse({ ...valid, name: "  a  " }).success).toBe(false);
+      const result = createAlertRuleSchema.safeParse({ ...valid, name: "  ab  " });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.name).toBe("ab");
+    });
+
+    it.each([
+      ["a name of 201 characters", { name: "n".repeat(201) }],
+      ["a description of 1001 characters", { description: "d".repeat(1001) }],
+      ["a query of 1001 characters", { query: "q".repeat(1001) }],
+    ])("rejects %s", (_label, patch) => {
+      expect(createAlertRuleSchema.safeParse({ ...valid, ...patch }).success).toBe(false);
+      expect(updateAlertRuleSchema.safeParse(patch).success).toBe(false);
+    });
+
+    it("accepts the upper length bounds", () => {
+      const patch = { name: "n".repeat(200), description: "d".repeat(1000), query: "q".repeat(1000) };
+      expect(createAlertRuleSchema.safeParse({ ...valid, ...patch }).success).toBe(true);
     });
 
     it.each([

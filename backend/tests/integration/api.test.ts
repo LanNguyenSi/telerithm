@@ -143,6 +143,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
+      deleteMany: vi.fn(),
     },
   };
   return {
@@ -274,6 +275,7 @@ const mockedPrisma = prisma as typeof prisma & {
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
+    deleteMany: ReturnType<typeof vi.fn>;
   };
 };
 const mockedClickhouse = clickhouse as typeof clickhouse & {
@@ -434,6 +436,7 @@ beforeEach(() => {
   mockedPrisma.issue.count.mockResolvedValue(0);
   mockedPrisma.alertSubscription.findMany.mockResolvedValue([]);
   mockedPrisma.alertSubscription.findFirst.mockResolvedValue(null);
+  mockedPrisma.alertSubscription.deleteMany.mockResolvedValue({ count: 0 });
   mockDispatch.mockResolvedValue(undefined);
 });
 
@@ -3549,7 +3552,7 @@ describe("API Routes", () => {
           mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
           mockedPrisma.alertRule.delete.mockResolvedValueOnce(makeRuleRow());
         },
-        mutations: () => [mockedPrisma.alertRule.delete],
+        mutations: () => [mockedPrisma.alertRule.delete, mockedPrisma.alertSubscription.deleteMany],
         successStatus: 204,
       },
       {
@@ -3747,6 +3750,9 @@ describe("API Routes", () => {
 
         expect(res.status).toBe(204);
         expect(mockedPrisma.alertRule.delete).toHaveBeenCalledWith({ where: { id: "rule-1", teamId: "t1" } });
+        expect(mockedPrisma.alertSubscription.deleteMany).toHaveBeenCalledWith({
+          where: { ruleId: "rule-1", teamId: "t1" },
+        });
       });
 
       it.each([

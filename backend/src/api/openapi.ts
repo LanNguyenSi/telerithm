@@ -334,7 +334,8 @@ export const openApiSpec = {
     "/alerts/rules/{id}": {
       put: {
         summary: "Update an alert rule",
-        description: "Partial update; send only the fields to change. Same field rules as create.",
+        description:
+          "Partial update; send only the fields to change. Same field rules as create, except that queryType cannot be changed (it is ignored).",
         tags: ["Alerts"],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: { required: true, content: { "application/json": { schema: { type: "object" } } } },
@@ -347,7 +348,8 @@ export const openApiSpec = {
       },
       delete: {
         summary: "Delete an alert rule",
-        description: "Hard delete; the rule's incidents and subscriptions are deleted with it.",
+        description:
+          "Hard delete. The subscriptions to this rule are deleted with it (in one transaction, so they never turn into team-wide subscriptions); its incidents are deleted with it as well.",
         tags: ["Alerts"],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {

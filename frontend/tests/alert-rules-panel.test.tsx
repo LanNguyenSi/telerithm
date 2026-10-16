@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 const mocks = vi.hoisted(() => ({
   createAlertRule: vi.fn(),
@@ -138,6 +138,20 @@ describe("AlertRulesPanel", () => {
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
   });
 
+  it("sends description null when an existing description is cleared on edit", async () => {
+    mocks.updateAlertRule.mockResolvedValue({ rule });
+    renderPanel("ADMIN");
+
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(screen.getByLabelText("Description (optional)")).toHaveValue("Too many timeouts");
+    fireEvent.change(screen.getByLabelText("Description (optional)"), { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(mocks.updateAlertRule).toHaveBeenCalledTimes(1));
+    const payload = mocks.updateAlertRule.mock.calls[0][2];
+    expect(payload).toHaveProperty("description", null);
+  });
+
   it("asks for a supported condition when the stored rule uses ANOMALY_DETECTED", () => {
     renderPanel("ADMIN", [{ ...rule, condition: "ANOMALY_DETECTED" }]);
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
@@ -162,7 +176,10 @@ describe("AlertRulesPanel", () => {
     expect(screen.getByText(/Delete rule "Timeouts"\?/)).toBeInTheDocument();
     expect(mocks.deleteAlertRule).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(within(dialog).getByText(/subscriptions that target this rule/)).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
 
     await waitFor(() => expect(mocks.deleteAlertRule).toHaveBeenCalledWith("rule-1", "tok"));
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
@@ -171,7 +188,7 @@ describe("AlertRulesPanel", () => {
   it("does not delete when the confirm dialog is cancelled", () => {
     renderPanel("OWNER");
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
     expect(mocks.deleteAlertRule).not.toHaveBeenCalled();
     expect(screen.queryByText(/Delete rule/)).toBeNull();
   });
@@ -180,7 +197,7 @@ describe("AlertRulesPanel", () => {
     mocks.deleteAlertRule.mockRejectedValue(new Error("Alert rule not found"));
     renderPanel("OWNER");
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Alert rule not found");
     expect(mocks.refresh).not.toHaveBeenCalled();
   });

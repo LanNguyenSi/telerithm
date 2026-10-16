@@ -183,7 +183,9 @@ export function AlertRulesPanel({
             open={deleting !== null}
             variant="confirm"
             title={`Delete rule "${deleting?.name ?? ""}"?`}
-            description="The rule, its incidents and its subscriptions are deleted permanently."
+            description="The rule and its incidents are deleted permanently, and so are the subscriptions that target this rule."
+            confirmLabel="Delete"
+            cancelLabel="Cancel"
             onClose={() => setDeleting(null)}
             onConfirm={() => void confirmDelete()}
           />
