@@ -3,7 +3,7 @@ type: invariant
 title: Notification delivery trust boundary - every subscriber URL is re-checked by assertSafeUrl right before its fetch
 description: Webhook, Slack and Teams targets are caller-supplied strings stored in AlertSubscription.config; the three fetch calls in backend/src (sendWebhook, sendSlackMessage in the dispatcher, sendMsTeamsMessage) each call assertSafeUrl on the exact URL immediately before fetching it with redirect manual and a 10 s timeout, and that delivery-time check is the only one that runs on every path, because the input-boundary check in router.ts does not run on every write. EMAIL sends nothing. Also covers who can configure a target, what leaves the system, and the test route.
 tags: [notifications, ssrf, url-guard, subscriptions, security]
-timestamp: 2026-10-17T04:41:24Z
+timestamp: 2026-10-17T04:48:04Z
 sources:
   - backend/src/services/notification/url-guard.ts
   - backend/src/services/notification/notification-dispatcher.ts
