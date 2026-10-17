@@ -631,7 +631,8 @@ apiRouter.get(
     // The payload is team-scoped log data, so authorize against the job's own
     // team before handing it out: requireAuth alone let any authenticated user
     // read another team's query results (IDOR).
-    if ((await requireTeamRole(userId, job.teamId, res)) === null) return;
+    // A job of another team answers like an unknown id.
+    if ((await requireTeamRole(userId, job.teamId, res, "Job not found")) === null) return;
     // Project only the public fields; teamId is an internal authz attribute.
     res.json({
       requestId: job.requestId,
@@ -1074,6 +1075,17 @@ async function requireAuth(req: Request, res: Response): Promise<string | null> 
   }
 }
 
+// Thrown by resolveTeamRole when the lookup succeeded and found no membership.
+// requireTeamRole maps exactly this error to a 403/404; any other error from
+// the lookup (a database failure, say) is not a "not a member" answer and
+// propagates to the error middleware as a 500.
+class NotTeamMemberError extends Error {
+  constructor() {
+    super("Forbidden");
+    this.name = "NotTeamMemberError";
+  }
+}
+
 async function resolveTeamRole(
   userId: string,
   teamId: string,
@@ -1082,7 +1094,7 @@ async function resolveTeamRole(
     where: { teamId_userId: { teamId, userId } },
   });
   if (!membership) {
-    throw new Error("Forbidden");
+    throw new NotTeamMemberError();
   }
   return membership.role as "OWNER" | "ADMIN" | "MEMBER" | "VIEWER";
 }
@@ -1091,8 +1103,10 @@ async function resolveTeamRole(
 // success, or sends a 403 and returns null. Used after requireAuth so
 // non-member callers get a Forbidden response instead of a 500 from the
 // async error middleware. With `nonMemberNotFound` a non-member gets 404 with
-// that message instead: the by-id write routes pass their resolver's not-found
-// message so a resource of another team answers like an unknown id.
+// that message instead: the by-id routes pass their resolver's not-found
+// message so a resource of another team answers like an unknown id. Only the
+// resolver's not-a-member outcome takes either branch; a failing lookup is
+// rethrown so it surfaces as a 500, never as a false "not found" or "forbidden".
 async function requireTeamRole(
   userId: string,
   teamId: string,
@@ -1101,7 +1115,8 @@ async function requireTeamRole(
 ): Promise<"OWNER" | "ADMIN" | "MEMBER" | "VIEWER" | null> {
   try {
     return await resolveTeamRole(userId, teamId);
-  } catch {
+  } catch (error) {
+    if (!(error instanceof NotTeamMemberError)) throw error;
     if (nonMemberNotFound !== undefined) {
       res.status(404).json({ error: nonMemberNotFound });
     } else {
@@ -1147,8 +1162,9 @@ async function requireTeamWriteRole(
 
 // Membership-only resolver for by-id READ routes: loads a resource by id,
 // derives its owning team via `loadTeamId`, and requires the caller's
-// membership on that team (404 when the resource does not exist, 403 for a
-// non-member). Without the team check any authenticated user could read
+// membership on that team (404 when the resource does not exist, and the same
+// 404 for a non-member, so the status does not reveal that an id exists in
+// another team). Without the team check any authenticated user could read
 // another team's resource by enumerating its id (cross-tenant IDOR; the bug
 // class fixed across four PRs on 2026-07-12: #97 invites, #98 incident
 // actions/timeline, #100 alert-rule mute/unmute, #101 maintenance-window
@@ -1172,7 +1188,7 @@ function requireResourceTeam(
       res.status(404).json({ error: notFoundMessage });
       return null;
     }
-    const role = await requireTeamRole(userId, teamId, res);
+    const role = await requireTeamRole(userId, teamId, res, notFoundMessage);
     if (role === null) return null;
     return teamId;
   };
@@ -1480,7 +1496,8 @@ apiRouter.get(
     }
     // Scope by the issue's own team, not mere existence, otherwise any
     // authenticated user could read any issue by enumerating its id (IDOR).
-    if ((await requireTeamRole(userId, issue.teamId, res)) === null) return;
+    // A non-member gets the same 404 as for an unknown id.
+    if ((await requireTeamRole(userId, issue.teamId, res, "Issue not found")) === null) return;
     res.json({ issue });
   }),
 );
@@ -1611,7 +1628,9 @@ apiRouter.delete(
       res.status(404).json({ error: "Invite not found" });
       return;
     }
-    const role = await requireTeamRole(userId, invite.teamId, res);
+    // A non-member gets the same 404 as for an unknown id; a member without
+    // the manage role keeps the 403, which reveals nothing about other teams.
+    const role = await requireTeamRole(userId, invite.teamId, res, "Invite not found");
     if (role === null) return;
     if (!canManageInvites(role)) {
       res.status(403).json({ error: "Forbidden" });
