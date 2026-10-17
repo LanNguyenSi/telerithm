@@ -71,6 +71,7 @@ const ROUTE_TEAM_GUARDS: Record<string, Guard> = {
   "POST /alerts/incidents/:id/resolve": { kind: "resolver", loaderName: "loadIncidentTeamId" },
   "POST /alerts/incidents/:id/reopen": { kind: "resolver", loaderName: "loadIncidentTeamId" },
   "PUT /issues/:id": { kind: "resolver", loaderName: "loadIssueTeamId" },
+  "PUT /sources/:id": { kind: "resolver", loaderName: "loadSourceTeamId" },
 
   // --- Explicit, justified allowlist (never a silent skip) ---
   "POST /ingest/:sourceId": {

@@ -15,6 +15,7 @@ export type Guard = { kind: "write" } | { kind: "allowlist"; reason: string; ver
 export const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
   // --- Team-scoped writes through writeRoute: VIEWER gets 403 ---
   "POST /sources": { kind: "write" },
+  "PUT /sources/:id": { kind: "write" },
   "POST /alerts/rules": { kind: "write" },
   "PUT /alerts/rules/:id": { kind: "write" },
   "DELETE /alerts/rules/:id": { kind: "write" },

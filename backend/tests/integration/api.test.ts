@@ -88,6 +88,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
       findUnique: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
+      update: vi.fn(),
       count: vi.fn().mockResolvedValue(0),
     },
     logView: {
@@ -220,6 +221,7 @@ const mockedPrisma = prisma as typeof prisma & {
     findUnique: ReturnType<typeof vi.fn>;
     findMany: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
   };
   logView: {
@@ -3499,6 +3501,18 @@ describe("API Routes", () => {
       ...overrides,
     });
 
+    const makeSourceRow = (overrides: Record<string, unknown> = {}) => ({
+      id: "src-1",
+      teamId: "t1",
+      name: "web",
+      type: "HTTP",
+      config: {},
+      retentionDays: 7,
+      apiKey: "lf_key",
+      createdAt: new Date("2026-03-23T00:00:00.000Z"),
+      ...overrides,
+    });
+
     const writeCases: WriteCase[] = [
       {
         name: "POST /sources",
@@ -3519,6 +3533,17 @@ describe("API Routes", () => {
         },
         mutations: () => [mockedPrisma.logSource.create],
         successStatus: 201,
+      },
+      {
+        name: "PUT /sources/:id",
+        group: "sources",
+        send: () => authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "renamed" }),
+        arrange: () => {
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.logSource.update.mockResolvedValueOnce(makeSourceRow({ name: "renamed" }));
+        },
+        mutations: () => [mockedPrisma.logSource.update],
+        successStatus: 200,
       },
       {
         name: "POST /alerts/rules/:id/mute",
@@ -3852,6 +3877,145 @@ describe("API Routes", () => {
       });
     });
 
+    describe("log sources: rename and ingest key visibility", () => {
+      const asRole = (role: Role) => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership(role));
+      };
+
+      // These list cases run on the dedicated app instance: the shared one is
+      // close to its rate limit by the time this file reaches them.
+      it.each([
+        ["OWNER", true],
+        ["ADMIN", true],
+        ["MEMBER", false],
+        ["VIEWER", false],
+      ] as const)("GET /sources: %s sees the ingest key only if OWNER or ADMIN", async (role, sees) => {
+        asRole(role);
+        mockedPrisma.logSource.findMany.mockResolvedValueOnce([makeSourceRow({ apiKey: "lf_secret" })]);
+
+        const res = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
+
+        expect(res.status).toBe(200);
+        expect(res.body.sources).toHaveLength(1);
+        expect(res.body.sources[0]).toMatchObject({ id: "src-1", name: "web", type: "HTTP" });
+        if (sees) {
+          expect(res.body.sources[0].apiKey).toBe("lf_secret");
+        } else {
+          // Absent from the JSON, not masked or empty.
+          expect(res.body.sources[0]).not.toHaveProperty("apiKey");
+          expect(res.text).not.toContain("lf_secret");
+        }
+      });
+
+      it("GET /sources: a non-member still gets 403", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+
+        const res = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
+
+        expect(res.status).toBe(403);
+        expect(mockedPrisma.logSource.findMany).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ["OWNER", true],
+        ["ADMIN", true],
+        ["MEMBER", false],
+      ] as const)(
+        "PUT /sources/:id: %s renames, scoped by id and team, key only for OWNER and ADMIN",
+        async (role, sees) => {
+          asRole(role);
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.logSource.update.mockResolvedValueOnce(makeSourceRow({ name: "renamed" }));
+
+          const res = await authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "renamed" });
+
+          expect(res.status).toBe(200);
+          expect(res.body.source).toMatchObject({ id: "src-1", name: "renamed" });
+          expect(mockedPrisma.logSource.update).toHaveBeenCalledWith({
+            where: { id: "src-1", teamId: "t1" },
+            data: { name: "renamed" },
+          });
+          if (sees) {
+            expect(res.body.source.apiKey).toBe("lf_key");
+          } else {
+            expect(res.body.source).not.toHaveProperty("apiKey");
+            expect(res.text).not.toContain("lf_key");
+          }
+        },
+      );
+
+      it("PUT /sources/:id: a VIEWER gets 403 and the name is not written", async () => {
+        asRole("VIEWER");
+        mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+
+        const res = await authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "renamed" });
+
+        expect(res.status).toBe(403);
+        expect(mockedPrisma.logSource.update).not.toHaveBeenCalled();
+      });
+
+      it("PUT /sources/:id: a member of another team and an unknown id get the same 404 body", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "other-team" });
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+        const foreign = await authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "renamed" });
+
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.logSource.findUnique.mockResolvedValueOnce(null);
+        const unknown = await authed(writeApp.put("/api/v1/sources/nope")).send({ name: "renamed" });
+
+        expect(foreign.status).toBe(404);
+        expect(unknown.status).toBe(404);
+        expect(foreign.text).toBe(unknown.text);
+        expect(foreign.body.error).toBe("Source not found");
+        expect(mockedPrisma.logSource.update).not.toHaveBeenCalled();
+      });
+
+      it("PUT /sources/:id: a 1-character name is 400 and nothing is written", async () => {
+        asRole("OWNER");
+        mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+
+        const res = await authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "a" });
+
+        expect(res.status).toBe(400);
+        expect(mockedPrisma.logSource.update).not.toHaveBeenCalled();
+      });
+
+      it("PUT /sources/:id: maps P2025 to 404 when the source vanishes between the lookup and the update", async () => {
+        asRole("ADMIN");
+        mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+        mockedPrisma.logSource.update.mockRejectedValueOnce(
+          Object.assign(new Error("Record to update not found."), { code: "P2025" }),
+        );
+
+        const res = await authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "renamed" });
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe("Source not found");
+      });
+
+      it("a MEMBER gets the key in the POST response, and no later GET returns it", async () => {
+        asRole("MEMBER");
+        mockedPrisma.logSource.create.mockResolvedValueOnce(makeSourceRow());
+        const created = await authed(writeApp.post("/api/v1/sources")).send({
+          teamId: "t1",
+          name: "web",
+          type: "HTTP",
+        });
+        expect(created.status).toBe(201);
+        expect(created.body.source.apiKey).toBe("lf_key");
+
+        asRole("MEMBER");
+        mockedPrisma.logSource.findMany.mockResolvedValueOnce([makeSourceRow()]);
+        const listed = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
+        expect(listed.status).toBe(200);
+        expect(listed.body.sources[0]).not.toHaveProperty("apiKey");
+        expect(listed.text).not.toContain("lf_key");
+      });
+    });
+
     it("OWNER and ADMIN keep write access (POST /sources)", async () => {
       for (const role of ["OWNER", "ADMIN"] as const) {
         mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
@@ -3896,6 +4060,14 @@ describe("API Routes", () => {
       const ruleLookup = (teamId: string | null) =>
         mockedPrisma.alertRule.findUnique.mockResolvedValueOnce(teamId === null ? null : { teamId });
       const byIdCases: ByIdCase[] = [
+        {
+          name: "PUT /sources/:id",
+          send: () => authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "renamed" }),
+          found: (teamId) => mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId }),
+          missing: () => mockedPrisma.logSource.findUnique.mockResolvedValueOnce(null),
+          notFoundMessage: "Source not found",
+          mutations: () => [mockedPrisma.logSource.update],
+        },
         {
           name: "PUT /alerts/rules/:id",
           send: () => authed(writeApp.put("/api/v1/alerts/rules/rule-1")).send({ enabled: false }),
@@ -3969,6 +4141,7 @@ describe("API Routes", () => {
             "POST /alerts/rules/:id/unmute",
             "PUT /alerts/rules/:id",
             "PUT /issues/:id",
+            "PUT /sources/:id",
           ].sort(),
         );
       });

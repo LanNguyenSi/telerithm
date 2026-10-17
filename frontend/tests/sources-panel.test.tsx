@@ -37,6 +37,25 @@ describe("SourcesPanel", () => {
     expect(screen.queryByRole("button", { name: "New source" })).toBeNull();
   });
 
+  it.each(["VIEWER", "MEMBER"] as const)(
+    "renders sources that carry no apiKey for %s without a key pill or the word undefined",
+    (role) => {
+      const { apiKey: _omitted, ...keyless } = source;
+      const { container } = renderPanel(role, [keyless, { ...keyless, id: "src-2", name: "api", type: "DOCKER" }]);
+      expect(screen.getByText("web")).toBeInTheDocument();
+      expect(screen.getByText("api")).toBeInTheDocument();
+      expect(screen.getByText("HTTP")).toBeInTheDocument();
+      expect(screen.getByText("DOCKER")).toBeInTheDocument();
+      expect(container.querySelector("span.font-mono")).toBeNull();
+      expect(container.textContent).not.toMatch(/undefined/);
+    },
+  );
+
+  it.each(["OWNER", "ADMIN"] as const)("shows the existing key of a listed source to %s", (role) => {
+    renderPanel(role);
+    expect(screen.getByText("lf_existing")).toBeInTheDocument();
+  });
+
   it.each(["OWNER", "ADMIN", "MEMBER"] as const)("shows the create control for %s", (role) => {
     renderPanel(role);
     expect(screen.getByRole("button", { name: "New source" })).toBeInTheDocument();

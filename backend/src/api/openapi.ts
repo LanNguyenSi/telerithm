@@ -75,18 +75,52 @@ export const openApiSpec = {
     "/sources": {
       get: {
         summary: "List log sources for a team",
+        description:
+          "Each source carries its ingest key (`apiKey`) only for OWNER and ADMIN; for MEMBER and VIEWER the field is absent from the response.",
         tags: ["Sources"],
         parameters: [{ name: "teamId", in: "query", required: true, schema: { type: "string" } }],
-        responses: { 200: { description: "List of sources" } },
+        responses: {
+          200: { description: "List of sources" },
+          403: { description: "Not a member of the team" },
+        },
       },
       post: {
         summary: "Create a new log source",
+        description:
+          "The response includes the new source's ingest key (`apiKey`) for every role that may create a source, once; later reads return it only to OWNER and ADMIN.",
         tags: ["Sources"],
         requestBody: {
           required: true,
           content: { "application/json": { schema: { $ref: "#/components/schemas/CreateSourceRequest" } } },
         },
         responses: { 201: { description: "Source created" } },
+      },
+    },
+    "/sources/{id}": {
+      put: {
+        summary: "Rename a log source",
+        description:
+          "OWNER, ADMIN and MEMBER may rename; a VIEWER gets 403. A source of a team the caller is not in answers 404 like an unknown id. The response carries `apiKey` only for OWNER and ADMIN.",
+        tags: ["Sources"],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["name"],
+                properties: { name: { type: "string", minLength: 2 } },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Renamed source" },
+          400: { description: "Invalid body" },
+          403: { description: "Read-only role" },
+          404: { description: "Source not found" },
+        },
       },
     },
     "/ingest/{sourceId}": {

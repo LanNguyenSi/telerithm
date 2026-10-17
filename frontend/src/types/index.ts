@@ -149,7 +149,9 @@ export interface Source {
   name: string;
   type: string;
   retentionDays: number;
-  apiKey: string;
+  // Absent for VIEWER and MEMBER: the API omits the ingest key from reads unless
+  // the caller is OWNER or ADMIN. The create response still carries it.
+  apiKey?: string;
 }
 
 /** Conditions the API accepts for new and edited rules. */

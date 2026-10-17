@@ -23,6 +23,8 @@ const {
   mockTeamCreate,
   mockTeamFindUniqueOrThrow,
   mockTransaction,
+  mockLogSourceFindMany,
+  mockLogSourceUpdate,
   configMock,
 } = vi.hoisted(() => ({
   mockTeamInviteCreate: vi.fn(),
@@ -43,6 +45,8 @@ const {
   mockTeamCreate: vi.fn(),
   mockTeamFindUniqueOrThrow: vi.fn(),
   mockTransaction: vi.fn(),
+  mockLogSourceFindMany: vi.fn(),
+  mockLogSourceUpdate: vi.fn(),
   configMock: { multiTenant: true, registrationMode: "approval", adminEmail: undefined as string | undefined },
 }));
 
@@ -86,6 +90,10 @@ vi.mock("../../src/repositories/prisma.js", () => ({
       findUnique: mockTeamFindUnique,
       create: mockTeamCreate,
       findUniqueOrThrow: mockTeamFindUniqueOrThrow,
+    },
+    logSource: {
+      findMany: mockLogSourceFindMany,
+      update: mockLogSourceUpdate,
     },
     $transaction: mockTransaction,
   },
@@ -528,5 +536,76 @@ describe("TeamService.listTeamsForUser", () => {
       where: { userId: USER_ID },
       include: { team: true },
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// listSources / renameSource: the ingest key is opt-in
+// ---------------------------------------------------------------------------
+
+describe("TeamService source key visibility", () => {
+  let service: TeamService;
+
+  const sourceRow = (overrides: Record<string, unknown> = {}) => ({
+    id: "src-1",
+    teamId: TEAM_A,
+    name: "web",
+    type: "HTTP",
+    config: {},
+    retentionDays: 7,
+    apiKey: "lf_secret",
+    createdAt: new Date("2024-01-15T10:00:00.000Z"),
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    service = new TeamService();
+  });
+
+  it("listSources includes apiKey when includeApiKey is true", async () => {
+    mockLogSourceFindMany.mockResolvedValue([sourceRow()]);
+
+    const sources = await service.listSources(TEAM_A, { includeApiKey: true });
+
+    expect(mockLogSourceFindMany).toHaveBeenCalledExactlyOnceWith({ where: { teamId: TEAM_A } });
+    expect(sources).toEqual([
+      {
+        id: "src-1",
+        teamId: TEAM_A,
+        name: "web",
+        type: "HTTP",
+        config: {},
+        retentionDays: 7,
+        createdAt: "2024-01-15T10:00:00.000Z",
+        apiKey: "lf_secret",
+      },
+    ]);
+  });
+
+  it("listSources omits the apiKey field (absent, not masked) when includeApiKey is false", async () => {
+    mockLogSourceFindMany.mockResolvedValue([sourceRow(), sourceRow({ id: "src-2" })]);
+
+    const sources = await service.listSources(TEAM_A, { includeApiKey: false });
+
+    expect(sources).toHaveLength(2);
+    for (const source of sources) {
+      expect("apiKey" in source).toBe(false);
+    }
+    expect(JSON.stringify(sources)).not.toContain("lf_secret");
+  });
+
+  it("renameSource updates by id and team, and applies the same key rule", async () => {
+    mockLogSourceUpdate.mockResolvedValue(sourceRow({ name: "renamed" }));
+
+    const withKey = await service.renameSource(TEAM_A, "src-1", "renamed", { includeApiKey: true });
+    const withoutKey = await service.renameSource(TEAM_A, "src-1", "renamed", { includeApiKey: false });
+
+    expect(mockLogSourceUpdate).toHaveBeenCalledWith({
+      where: { id: "src-1", teamId: TEAM_A },
+      data: { name: "renamed" },
+    });
+    expect(withKey).toMatchObject({ name: "renamed", apiKey: "lf_secret" });
+    expect("apiKey" in withoutKey).toBe(false);
   });
 });

@@ -189,7 +189,10 @@ export interface LogSource {
   config: Record<string, unknown>;
   retentionDays: number;
   createdAt: string;
-  apiKey: string;
+  // The ingest credential. Present only for roles that may see it (OWNER and
+  // ADMIN in list and rename responses, the creating writer in the create
+  // response); the field is absent, not masked, otherwise.
+  apiKey?: string;
 }
 
 // Mirrors the Prisma AlertCondition enum. ANOMALY_DETECTED is stored by older

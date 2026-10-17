@@ -33,6 +33,34 @@ function sanitizeUser(user: {
   };
 }
 
+// Maps a logSource row to the API shape. The ingest key is added only when the
+// caller's role may see it: the field is omitted rather than masked, so a
+// response for a read-only or ordinary member carries no `apiKey` at all.
+function toLogSource(
+  s: {
+    id: string;
+    teamId: string;
+    name: string;
+    type: string;
+    config: unknown;
+    retentionDays: number;
+    createdAt: Date;
+    apiKey: string;
+  },
+  includeApiKey: boolean,
+): LogSource {
+  return {
+    id: s.id,
+    teamId: s.teamId,
+    name: s.name,
+    type: s.type as LogSource["type"],
+    config: s.config as Record<string, unknown>,
+    retentionDays: s.retentionDays,
+    createdAt: s.createdAt.toISOString(),
+    ...(includeApiKey ? { apiKey: s.apiKey } : {}),
+  };
+}
+
 export class TeamService {
   async register(email: string, password: string, name: string): Promise<RegistrationResult> {
     const normalizedEmail = email.trim().toLowerCase();
@@ -139,36 +167,37 @@ export class TeamService {
     };
   }
 
-  async listSources(teamId: string): Promise<LogSource[]> {
+  async listSources(teamId: string, options: { includeApiKey: boolean }): Promise<LogSource[]> {
     const sources = await prisma.logSource.findMany({ where: { teamId } });
-    return sources.map((s) => ({
-      id: s.id,
-      teamId: s.teamId,
-      name: s.name,
-      type: s.type as LogSource["type"],
-      config: s.config as Record<string, unknown>,
-      retentionDays: s.retentionDays,
-      createdAt: s.createdAt.toISOString(),
-      apiKey: s.apiKey,
-    }));
+    return sources.map((s) => toLogSource(s, options.includeApiKey));
   }
 
+  // Renames a source. The update is scoped by id AND team so a caller can never
+  // reach another team's source through a guessed id; a missing row surfaces as
+  // Prisma's P2025 for the route to map to 404.
+  async renameSource(
+    teamId: string,
+    sourceId: string,
+    name: string,
+    options: { includeApiKey: boolean },
+  ): Promise<LogSource> {
+    const source = await prisma.logSource.update({
+      where: { id: sourceId, teamId },
+      data: { name },
+    });
+    log.info({ sourceId, teamId }, "Source renamed");
+    return toLogSource(source, options.includeApiKey);
+  }
+
+  // The create response is the one place a writer who may not list keys (a
+  // MEMBER) sees the new source's key, once, so it can start sending logs.
   async createSource(teamId: string, name: string, type: LogSource["type"]): Promise<LogSource> {
     const apiKey = `lf_${generateId().replace(/-/g, "").slice(0, 24)}`;
     const source = await prisma.logSource.create({
       data: { teamId, name, type, config: {}, retentionDays: 7, apiKey },
     });
     log.info({ sourceId: source.id, teamId }, "Source created");
-    return {
-      id: source.id,
-      teamId: source.teamId,
-      name: source.name,
-      type: source.type as LogSource["type"],
-      config: source.config as Record<string, unknown>,
-      retentionDays: source.retentionDays,
-      createdAt: source.createdAt.toISOString(),
-      apiKey: source.apiKey,
-    };
+    return toLogSource(source, true);
   }
 
   async findSourceById(sourceId: string) {
