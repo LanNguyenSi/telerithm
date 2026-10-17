@@ -2,6 +2,8 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-17T04:45:00Z, re-verified and re-stamped after `AlertSubscription.rule` gained `onDelete: Cascade`. alert-evaluation-and-incident-lifecycle.md: the rule-delete paragraph states the cascade and keeps the explicit subscription delete as a second layer, and the team-scoping cascade list names rule to subscriptions; new `schema.prisma` citations. api-authz-and-team-scoping.md: re-stamped after the `schema.prisma` edit, claims unchanged. clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md: re-stamped after the `CHANGELOG.md` edit; the sections they cite are untouched.
+
 - 2026-10-16T18:34:41Z, re-stamped api-authz-and-team-scoping.md after `ENGINEERING.md` listed all twelve `writeRoute` routes (it said nine); the doc already says twelve, claims unchanged.
 
 - 2026-10-16T18:28:35Z, re-verified and re-stamped api-authz-and-team-scoping.md after `ENGINEERING.md` (writeRoute paragraph) was aligned with the non-member 404 of the by-id write routes; the doc's claims already state it, no citation moved.

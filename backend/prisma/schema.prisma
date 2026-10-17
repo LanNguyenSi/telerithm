@@ -212,7 +212,7 @@ model AlertSubscription {
   teamId     String
   team       Team                @relation(fields: [teamId], references: [id])
   ruleId     String?
-  rule       AlertRule?          @relation(fields: [ruleId], references: [id])
+  rule       AlertRule?          @relation(fields: [ruleId], references: [id], onDelete: Cascade)
   channel    NotificationChannel
   config     Json
   severities String[]
