@@ -122,6 +122,32 @@ export const openApiSpec = {
           404: { description: "Source not found" },
         },
       },
+      delete: {
+        summary: "Delete a log source",
+        description:
+          "OWNER and ADMIN only; a MEMBER or VIEWER gets 403 and a source of a team the caller is not in answers 404 like an unknown id. Removes the source and invalidates its ingest key at once. Logs already stored for the source are not deleted; they expire with the table-wide retention (30 days).",
+        tags: ["Sources"],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          204: { description: "Source deleted" },
+          403: { description: "Role may not delete sources" },
+          404: { description: "Source not found" },
+        },
+      },
+    },
+    "/sources/{id}/rotate-key": {
+      post: {
+        summary: "Rotate a log source's ingest key",
+        description:
+          "OWNER and ADMIN only; a MEMBER or VIEWER gets 403 and a source of a team the caller is not in answers 404 like an unknown id. The new key replaces the old one in place and the old key is rejected immediately (no grace period). The response carries the new `apiKey`; copy it from there.",
+        tags: ["Sources"],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          200: { description: "Source with its new ingest key" },
+          403: { description: "Role may not rotate keys" },
+          404: { description: "Source not found" },
+        },
+      },
     },
     "/ingest/{sourceId}": {
       post: {

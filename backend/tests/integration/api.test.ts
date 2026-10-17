@@ -89,6 +89,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
       findMany: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
       update: vi.fn(),
+      delete: vi.fn(),
       count: vi.fn().mockResolvedValue(0),
     },
     logView: {
@@ -222,6 +223,7 @@ const mockedPrisma = prisma as typeof prisma & {
     findMany: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
   };
   logView: {
@@ -4016,6 +4018,205 @@ describe("API Routes", () => {
       });
     });
 
+    describe("log sources: delete and ingest key rotation", () => {
+      const asRole = (role: Role) => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership(role));
+      };
+      const KEY_FORMAT = /^lf_[0-9a-f]{24}$/;
+      const clickhouseCalls = () => [
+        ...mockedClickhouse.query.mock.calls,
+        ...(clickhouse.insert as unknown as ReturnType<typeof vi.fn>).mock.calls,
+      ];
+
+      it.each(["OWNER", "ADMIN"] as const)(
+        "DELETE /sources/:id: %s deletes the row scoped by id and team, and no ClickHouse call is made",
+        async (role) => {
+          asRole(role);
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.logSource.delete.mockResolvedValueOnce(makeSourceRow());
+
+          const res = await authed(writeApp.delete("/api/v1/sources/src-1"));
+
+          expect(res.status).toBe(204);
+          expect(mockedPrisma.logSource.delete).toHaveBeenCalledExactlyOnceWith({
+            where: { id: "src-1", teamId: "t1" },
+          });
+          // Stored logs are not purged: the delete touches Postgres only.
+          expect(clickhouseCalls()).toEqual([]);
+        },
+      );
+
+      it.each(["MEMBER", "VIEWER"] as const)("DELETE /sources/:id: %s gets 403 and nothing is deleted", async (role) => {
+        asRole(role);
+        mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+
+        const res = await authed(writeApp.delete("/api/v1/sources/src-1"));
+
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual({ error: "Forbidden" });
+        expect(mockedPrisma.logSource.delete).not.toHaveBeenCalled();
+        expect(clickhouseCalls()).toEqual([]);
+      });
+
+      it("DELETE /sources/:id: maps P2025 to 404 when the source vanishes between the lookup and the delete", async () => {
+        asRole("OWNER");
+        mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+        mockedPrisma.logSource.delete.mockRejectedValueOnce(
+          Object.assign(new Error("Record to delete does not exist."), { code: "P2025" }),
+        );
+
+        const res = await authed(writeApp.delete("/api/v1/sources/src-1"));
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe("Source not found");
+      });
+
+      it.each(["OWNER", "ADMIN"] as const)(
+        "POST /sources/:id/rotate-key: %s gets a fresh key written in place, scoped by id and team",
+        async (role) => {
+          asRole(role);
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.logSource.update.mockImplementationOnce(async (args: { data: { apiKey: string } }) =>
+            makeSourceRow({ apiKey: args.data.apiKey }),
+          );
+
+          const res = await authed(writeApp.post("/api/v1/sources/src-1/rotate-key"));
+
+          expect(res.status).toBe(200);
+          expect(mockedPrisma.logSource.update).toHaveBeenCalledExactlyOnceWith({
+            where: { id: "src-1", teamId: "t1" },
+            data: { apiKey: expect.stringMatching(KEY_FORMAT) },
+          });
+          const written = mockedPrisma.logSource.update.mock.calls[0][0].data.apiKey as string;
+          expect(written).not.toBe("lf_key");
+          expect(res.body.source).toMatchObject({ id: "src-1", teamId: "t1", name: "web" });
+          expect(res.body.source.apiKey).toBe(written);
+          expect(clickhouseCalls()).toEqual([]);
+        },
+      );
+
+      it.each(["MEMBER", "VIEWER"] as const)(
+        "POST /sources/:id/rotate-key: %s gets 403 and the key is not changed",
+        async (role) => {
+          asRole(role);
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+
+          const res = await authed(writeApp.post("/api/v1/sources/src-1/rotate-key"));
+
+          expect(res.status).toBe(403);
+          expect(res.body).toEqual({ error: "Forbidden" });
+          expect(res.text).not.toContain("lf_");
+          expect(mockedPrisma.logSource.update).not.toHaveBeenCalled();
+        },
+      );
+
+      it("POST /sources/:id/rotate-key: maps P2025 to 404 when the source vanishes between the lookup and the update", async () => {
+        asRole("ADMIN");
+        mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+        mockedPrisma.logSource.update.mockRejectedValueOnce(
+          Object.assign(new Error("Record to update not found."), { code: "P2025" }),
+        );
+
+        const res = await authed(writeApp.post("/api/v1/sources/src-1/rotate-key"));
+
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe("Source not found");
+      });
+
+      // The two routes run against one in-memory source table that answers the
+      // lookups the router makes (by id for the team, by apiKey for ingest), so
+      // the ingest key check sees the effect of the delete and the rotation.
+      describe("against a stateful source table", () => {
+        let rows: Array<ReturnType<typeof makeSourceRow>>;
+
+        beforeEach(() => {
+          rows = [makeSourceRow({ apiKey: "lf_oldkey" })];
+          mockedPrisma.logSource.findUnique.mockImplementation(
+            async (args: { where: { id?: string; apiKey?: string } }) =>
+              rows.find((row) =>
+                args.where.id !== undefined ? row.id === args.where.id : row.apiKey === args.where.apiKey,
+              ) ?? null,
+          );
+          mockedPrisma.logSource.findMany.mockImplementation(async () => [...rows]);
+          mockedPrisma.logSource.delete.mockImplementation(async (args: { where: { id: string } }) => {
+            const index = rows.findIndex((row) => row.id === args.where.id);
+            return rows.splice(index, 1)[0];
+          });
+          mockedPrisma.logSource.update.mockImplementation(
+            async (args: { where: { id: string }; data: { apiKey: string } }) => {
+              const row = rows.find((candidate) => candidate.id === args.where.id)!;
+              row.apiKey = args.data.apiKey;
+              return row;
+            },
+          );
+        });
+
+        const ingest = (key: string) =>
+          writeApp.post("/api/v1/ingest/src-1").set("X-API-Key", key).send({ logs: ["hello"] });
+
+        it("ingest works with the key before the delete", async () => {
+          const res = await ingest("lf_oldkey");
+
+          expect(res.status).toBe(202);
+        });
+
+        it("after the delete the row is gone, the list is empty and the old key answers 403 Invalid API key", async () => {
+          asRole("OWNER");
+          const deleted = await authed(writeApp.delete("/api/v1/sources/src-1"));
+          expect(deleted.status).toBe(204);
+
+          asRole("OWNER");
+          const listed = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
+          expect(listed.status).toBe(200);
+          expect(listed.body.sources).toEqual([]);
+
+          const res = await ingest("lf_oldkey");
+          expect(res.status).toBe(403);
+          expect(res.body).toEqual({ error: "Invalid API key" });
+          expect(clickhouseCalls()).toEqual([]);
+        });
+
+        it("after the rotation the old key answers 403, the new key authenticates, and only OWNER and ADMIN can list it", async () => {
+          asRole("ADMIN");
+          const rotated = await authed(writeApp.post("/api/v1/sources/src-1/rotate-key"));
+          expect(rotated.status).toBe(200);
+          const newKey = rotated.body.source.apiKey as string;
+          expect(newKey).toMatch(KEY_FORMAT);
+          expect(newKey).not.toBe("lf_oldkey");
+
+          const oldKeyResponse = await ingest("lf_oldkey");
+          expect(oldKeyResponse.status).toBe(403);
+          expect(oldKeyResponse.body).toEqual({ error: "Invalid API key" });
+
+          const newKeyResponse = await ingest(newKey);
+          expect(newKeyResponse.status).toBe(202);
+
+          for (const role of ["MEMBER", "VIEWER"] as const) {
+            asRole(role);
+            const listed = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
+            expect(listed.status, role).toBe(200);
+            expect(listed.body.sources).toHaveLength(1);
+            expect(listed.body.sources[0], role).not.toHaveProperty("apiKey");
+            expect(listed.text, role).not.toContain(newKey);
+          }
+
+          asRole("OWNER");
+          const ownerList = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
+          expect(ownerList.body.sources[0].apiKey).toBe(newKey);
+        });
+
+        it("a refused rotation (MEMBER) leaves the old key working", async () => {
+          asRole("MEMBER");
+          const refused = await authed(writeApp.post("/api/v1/sources/src-1/rotate-key"));
+          expect(refused.status).toBe(403);
+
+          const res = await ingest("lf_oldkey");
+          expect(res.status).toBe(202);
+        });
+      });
+    });
+
     it("OWNER and ADMIN keep write access (POST /sources)", async () => {
       for (const role of ["OWNER", "ADMIN"] as const) {
         mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
@@ -4063,6 +4264,22 @@ describe("API Routes", () => {
         {
           name: "PUT /sources/:id",
           send: () => authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "renamed" }),
+          found: (teamId) => mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId }),
+          missing: () => mockedPrisma.logSource.findUnique.mockResolvedValueOnce(null),
+          notFoundMessage: "Source not found",
+          mutations: () => [mockedPrisma.logSource.update],
+        },
+        {
+          name: "DELETE /sources/:id",
+          send: () => authed(writeApp.delete("/api/v1/sources/src-1")),
+          found: (teamId) => mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId }),
+          missing: () => mockedPrisma.logSource.findUnique.mockResolvedValueOnce(null),
+          notFoundMessage: "Source not found",
+          mutations: () => [mockedPrisma.logSource.delete],
+        },
+        {
+          name: "POST /sources/:id/rotate-key",
+          send: () => authed(writeApp.post("/api/v1/sources/src-1/rotate-key")),
           found: (teamId) => mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId }),
           missing: () => mockedPrisma.logSource.findUnique.mockResolvedValueOnce(null),
           notFoundMessage: "Source not found",
@@ -4134,11 +4351,13 @@ describe("API Routes", () => {
           [
             "DELETE /alerts/rules/:id",
             "DELETE /maintenance-windows/:id",
+            "DELETE /sources/:id",
             "POST /alerts/incidents/:id/acknowledge",
             "POST /alerts/incidents/:id/reopen",
             "POST /alerts/incidents/:id/resolve",
             "POST /alerts/rules/:id/mute",
             "POST /alerts/rules/:id/unmute",
+            "POST /sources/:id/rotate-key",
             "PUT /alerts/rules/:id",
             "PUT /issues/:id",
             "PUT /sources/:id",

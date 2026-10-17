@@ -25,6 +25,8 @@ const {
   mockTransaction,
   mockLogSourceFindMany,
   mockLogSourceUpdate,
+  mockLogSourceDelete,
+  mockLogSourceCreate,
   configMock,
 } = vi.hoisted(() => ({
   mockTeamInviteCreate: vi.fn(),
@@ -47,6 +49,8 @@ const {
   mockTransaction: vi.fn(),
   mockLogSourceFindMany: vi.fn(),
   mockLogSourceUpdate: vi.fn(),
+  mockLogSourceDelete: vi.fn(),
+  mockLogSourceCreate: vi.fn(),
   configMock: { multiTenant: true, registrationMode: "approval", adminEmail: undefined as string | undefined },
 }));
 
@@ -94,6 +98,8 @@ vi.mock("../../src/repositories/prisma.js", () => ({
     logSource: {
       findMany: mockLogSourceFindMany,
       update: mockLogSourceUpdate,
+      delete: mockLogSourceDelete,
+      create: mockLogSourceCreate,
     },
     $transaction: mockTransaction,
   },
@@ -607,5 +613,62 @@ describe("TeamService source key visibility", () => {
     });
     expect(withKey).toMatchObject({ name: "renamed", apiKey: "lf_secret" });
     expect("apiKey" in withoutKey).toBe(false);
+  });
+
+  it("deleteSource deletes the row scoped by id and team and returns nothing", async () => {
+    mockLogSourceDelete.mockResolvedValue(sourceRow());
+
+    const result = await service.deleteSource(TEAM_A, "src-1");
+
+    expect(mockLogSourceDelete).toHaveBeenCalledExactlyOnceWith({ where: { id: "src-1", teamId: TEAM_A } });
+    expect(result).toBeUndefined();
+  });
+
+  it("deleteSource lets Prisma's not-found error reach the caller", async () => {
+    mockLogSourceDelete.mockRejectedValue(Object.assign(new Error("not found"), { code: "P2025" }));
+
+    await expect(service.deleteSource(TEAM_A, "src-1")).rejects.toMatchObject({ code: "P2025" });
+  });
+
+  it("rotateSourceKey writes a new lf_ key in place scoped by id and team, and returns it", async () => {
+    mockLogSourceUpdate.mockImplementation(async (args: { data: { apiKey: string } }) =>
+      sourceRow({ apiKey: args.data.apiKey }),
+    );
+
+    const rotated = await service.rotateSourceKey(TEAM_A, "src-1");
+
+    expect(mockLogSourceUpdate).toHaveBeenCalledExactlyOnceWith({
+      where: { id: "src-1", teamId: TEAM_A },
+      data: { apiKey: expect.stringMatching(/^lf_[0-9a-f]{24}$/) },
+    });
+    const written = mockLogSourceUpdate.mock.calls[0][0].data.apiKey as string;
+    expect(written).not.toBe("lf_secret");
+    expect(rotated.apiKey).toBe(written);
+  });
+
+  it("rotateSourceKey draws a different key on each call", async () => {
+    mockLogSourceUpdate.mockImplementation(async (args: { data: { apiKey: string } }) =>
+      sourceRow({ apiKey: args.data.apiKey }),
+    );
+
+    const first = await service.rotateSourceKey(TEAM_A, "src-1");
+    const second = await service.rotateSourceKey(TEAM_A, "src-1");
+
+    expect(first.apiKey).not.toBe(second.apiKey);
+  });
+
+  it("createSource and rotateSourceKey draw keys of the same format", async () => {
+    mockLogSourceCreate.mockImplementation(async (args: { data: { apiKey: string } }) =>
+      sourceRow({ apiKey: args.data.apiKey }),
+    );
+    mockLogSourceUpdate.mockImplementation(async (args: { data: { apiKey: string } }) =>
+      sourceRow({ apiKey: args.data.apiKey }),
+    );
+
+    const created = await service.createSource(TEAM_A, "web", "HTTP");
+    const rotated = await service.rotateSourceKey(TEAM_A, "src-1");
+
+    expect(created.apiKey).toMatch(/^lf_[0-9a-f]{24}$/);
+    expect(rotated.apiKey).toMatch(/^lf_[0-9a-f]{24}$/);
   });
 });

@@ -97,7 +97,7 @@ Senders that ship with the repository:
 
 Syslog, Filebeat and CloudWatch need a forwarder you configure yourself that posts batches in the `logs` envelope or as a bare array.
 
-Sources are created per team via the API (`POST /api/v1/sources` with `teamId`, `name` and an uppercase `type`; the response is `{ "source": { "id", "apiKey", ... } }`) or with `scripts/setup-sources.sh`, which calls it for a set of container names. The UI lists sources but has no control to create one. Each source gets a UUID and an API key; the key authenticates the `POST /ingest/:sourceId` calls.
+Sources are created per team via the API (`POST /api/v1/sources` with `teamId`, `name` and an uppercase `type`; the response is `{ "source": { "id", "apiKey", ... } }`) or with `scripts/setup-sources.sh`, which calls it for a set of container names. Each source gets a UUID and an API key; the key authenticates the `POST /ingest/:sourceId` calls. The Settings page lists the sources and lets members with write access create one (the new key is shown once); `OWNER` and `ADMIN` can also rename a source, rotate its key and delete it there or through `PUT /api/v1/sources/:id`, `POST /api/v1/sources/:id/rotate-key` and `DELETE /api/v1/sources/:id`. Rotating replaces the key at once with no grace window, so update the sender first or expect its requests to fail with 403. Deleting a source stops its key from authenticating at once but does not delete the logs already stored for it; they expire with the table-wide 30-day retention.
 
 ## Tenancy modes
 
