@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // ---------------------------------------------------------------------------
@@ -273,11 +274,13 @@ describe("AlertService rule create, update and delete", () => {
     expect(mockSubscriptionDeleteMany).toHaveBeenCalledWith({ where: { ruleId: "rule-1" } });
     expect(mockAlertRuleDelete).toHaveBeenCalledWith({ where: { id: "rule-1", teamId: TEAM_ID } });
     expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(mockTransaction.mock.calls[0][0]).toHaveLength(2);
-    // Order matters: the subscriptions are deleted before the rule.
-    expect(mockSubscriptionDeleteMany.mock.invocationCallOrder[0]).toBeLessThan(
-      mockAlertRuleDelete.mock.invocationCallOrder[0],
-    );
+    // The transaction array holds the two started operations, by position:
+    // the subscriptions first, then the rule (element identity, not the order
+    // in which the mocks happened to be called).
+    const ops = mockTransaction.mock.calls[0][0] as unknown[];
+    expect(ops).toHaveLength(2);
+    expect(ops[0]).toBe(mockSubscriptionDeleteMany.mock.results[0].value);
+    expect(ops[1]).toBe(mockAlertRuleDelete.mock.results[0].value);
   });
 
   it("deleteRule throws NotFoundError when no rule matches the id and team (cross-team id)", async () => {
@@ -291,6 +294,14 @@ describe("AlertService rule create, update and delete", () => {
     mockAlertRuleDelete.mockRejectedValue(boom);
 
     await expect(service.deleteRule("rule-1", TEAM_ID)).rejects.toBe(boom);
+  });
+
+  it("schema: AlertSubscription.rule cascades on rule delete, and ruleId stays optional for team-wide subscriptions", () => {
+    const model = Prisma.dmmf.datamodel.models.find((x) => x.name === "AlertSubscription");
+    const rule = model?.fields.find((f) => f.name === "rule");
+    const ruleId = model?.fields.find((f) => f.name === "ruleId");
+    expect(rule?.relationOnDelete).toBe("Cascade");
+    expect(ruleId?.isRequired).toBe(false);
   });
 });
 
