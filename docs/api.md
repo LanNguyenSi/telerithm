@@ -16,6 +16,8 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `DELETE` | `/invites/:id`                  | Revoke an invite                  |
 | `GET`, `POST` | `/sources`                 | Ingestion sources (list, create); the list includes each source's ingest key only for OWNER and ADMIN, the create response shows it once to the creator |
 | `PUT`  | `/sources/:id`                    | Rename a source (OWNER, ADMIN, MEMBER; VIEWER gets 403) |
+| `DELETE` | `/sources/:id`                  | Delete a source (OWNER, ADMIN; others get 403). Removes the row and invalidates its key at once; stored logs stay until the 30-day retention expires |
+| `POST` | `/sources/:id/rotate-key`         | Replace a source's ingest key (OWNER, ADMIN; others get 403). The old key is rejected at once, no grace window; the response carries the new `apiKey` |
 | `POST` | `/ingest/:sourceId`, `/ingest/:sourceId/raw` | Ingest logs (API key)             |
 | `POST` | `/logs/search`                    | Search logs (also `GET /logs`)    |
 | `GET`  | `/logs/:id`                       | One log entry                     |

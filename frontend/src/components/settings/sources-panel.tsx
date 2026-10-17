@@ -1,20 +1,85 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
-import { createSource } from "@/lib/api/client";
-import { canWriteTeam } from "@/lib/auth/roles";
+import { Dialog } from "@/components/ui/dialog";
+import { createSource, deleteSource, renameSource, rotateSourceKey } from "@/lib/api/client";
+import { canManageSources, canWriteTeam } from "@/lib/auth/roles";
 import { SOURCE_TYPES, type Source, type SourceType, type TeamRole } from "@/types";
 
 const inputClass =
   "mt-1 w-full rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:focus:border-slate-500";
 
+const rowButtonClass =
+  "rounded-lg border border-line px-2.5 py-1 text-xs text-ink transition hover:border-slate-400 disabled:opacity-50";
+
+/** A key shown exactly once, with a copy button. The page does not log or store it. */
+function ShowOnceKey({
+  intro,
+  apiKey,
+  testId,
+  onDone,
+}: {
+  intro: ReactNode;
+  apiKey: string | undefined;
+  testId: string;
+  onDone: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const copyKey = async () => {
+    if (!apiKey) return;
+    try {
+      await navigator.clipboard.writeText(apiKey);
+      setCopied(true);
+    } catch {
+      setError("Copy failed. Select the key and copy it manually.");
+    }
+  };
+
+  return (
+    <div className="mt-4 space-y-3">
+      <p className="text-sm text-muted">{intro}</p>
+      <code
+        data-testid={testId}
+        className="block break-all rounded-lg border border-line bg-slate-900/5 px-3 py-2 font-mono text-xs text-ink dark:bg-white/5"
+      >
+        {apiKey}
+      </code>
+      {error ? (
+        <p role="alert" className="text-sm text-rose-600 dark:text-rose-400">
+          {error}
+        </p>
+      ) : null}
+      <div className="flex items-center justify-end gap-3">
+        <button
+          type="button"
+          onClick={() => void copyKey()}
+          className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink transition hover:border-slate-400"
+        >
+          {copied ? "Copied" : "Copy key"}
+        </button>
+        <button
+          type="button"
+          onClick={onDone}
+          className="rounded-lg bg-slate-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
+        >
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
- * Log source list with a create dialog. The dialog posts to the existing
- * POST /sources and shows the new source's API key once, with a copy button;
- * the key is not logged or stored by the page. The create control is rendered
- * only for roles that may write.
+ * Log source list with a create dialog and, per source, rename, rotate key and
+ * delete. The create dialog posts to the existing POST /sources and shows the
+ * new source's API key once, with a copy button; a key rotation shows the new
+ * key the same way. The key is not logged or stored by the page. The create
+ * control is rendered only for roles that may write; the per-source controls
+ * only for OWNER and ADMIN (the API refuses everyone else with 403 either way).
  */
 export function SourcesPanel({
   sources,
@@ -29,20 +94,25 @@ export function SourcesPanel({
 }) {
   const router = useRouter();
   const writable = canWriteTeam(role);
+  const manageable = canManageSources(role);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [type, setType] = useState<SourceType>("HTTP");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<Source | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [renaming, setRenaming] = useState<Source | null>(null);
+  const [deleting, setDeleting] = useState<Source | null>(null);
+  const [rotating, setRotating] = useState<Source | null>(null);
+  const [rotated, setRotated] = useState<Source | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const openDialog = () => {
     setName("");
     setType("HTTP");
     setError(null);
     setCreated(null);
-    setCopied(false);
     setOpen(true);
   };
 
@@ -70,14 +140,61 @@ export function SourcesPanel({
     }
   };
 
-  const copyKey = async () => {
-    if (!created?.apiKey) return;
-    try {
-      await navigator.clipboard.writeText(created.apiKey);
-      setCopied(true);
-    } catch {
-      setError("Copy failed. Select the key and copy it manually.");
+  const confirmRename = async (value: string) => {
+    const target = renaming;
+    setRenaming(null);
+    if (!target) return;
+    if (value.length < 2) {
+      setActionError("Name must be at least 2 characters.");
+      return;
     }
+    setBusyId(target.id);
+    setActionError(null);
+    try {
+      await renameSource(target.id, token, { name: value });
+      router.refresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Renaming the source failed.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmDelete = async () => {
+    const target = deleting;
+    setDeleting(null);
+    if (!target) return;
+    setBusyId(target.id);
+    setActionError(null);
+    try {
+      await deleteSource(target.id, token);
+      router.refresh();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Deleting the source failed.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirmRotate = async () => {
+    const target = rotating;
+    setRotating(null);
+    if (!target) return;
+    setBusyId(target.id);
+    setActionError(null);
+    try {
+      const { source } = await rotateSourceKey(target.id, token);
+      setRotated(source);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Rotating the key failed.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const closeRotated = () => {
+    setRotated(null);
+    router.refresh();
   };
 
   return (
@@ -94,6 +211,12 @@ export function SourcesPanel({
           </button>
         ) : null}
       </div>
+
+      {actionError ? (
+        <p role="alert" className="mt-3 text-sm text-rose-600 dark:text-rose-400">
+          {actionError}
+        </p>
+      ) : null}
 
       {sources.length === 0 ? (
         <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl border border-dashed border-line bg-white/50 p-8 text-center dark:bg-white/5">
@@ -135,6 +258,37 @@ export function SourcesPanel({
                   </span>
                 ) : null}
               </div>
+              {manageable ? (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={busyId === source.id}
+                    onClick={() => setRenaming(source)}
+                    aria-label={`Rename ${source.name}`}
+                    className={rowButtonClass}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyId === source.id}
+                    onClick={() => setRotating(source)}
+                    aria-label={`Rotate key of ${source.name}`}
+                    className={rowButtonClass}
+                  >
+                    Rotate key
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busyId === source.id}
+                    onClick={() => setDeleting(source)}
+                    aria-label={`Delete ${source.name}`}
+                    className={`${rowButtonClass} text-rose-600 dark:text-rose-400`}
+                  >
+                    Delete
+                  </button>
+                </div>
+              ) : null}
             </article>
           ))}
         </div>
@@ -153,39 +307,17 @@ export function SourcesPanel({
             </h3>
 
             {created ? (
-              <div className="mt-4 space-y-3">
-                <p className="text-sm text-muted">
-                  Copy the API key for <span className="font-medium text-ink">{created.name}</span> now. Send logs
-                  with it as the source credential.
-                </p>
-                <code
-                  data-testid="new-source-api-key"
-                  className="block break-all rounded-lg border border-line bg-slate-900/5 px-3 py-2 font-mono text-xs text-ink dark:bg-white/5"
-                >
-                  {created.apiKey}
-                </code>
-                {error ? (
-                  <p role="alert" className="text-sm text-rose-600 dark:text-rose-400">
-                    {error}
-                  </p>
-                ) : null}
-                <div className="flex items-center justify-end gap-3">
-                  <button
-                    type="button"
-                    onClick={() => void copyKey()}
-                    className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink transition hover:border-slate-400"
-                  >
-                    {copied ? "Copied" : "Copy key"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={closeDialog}
-                    className="rounded-lg bg-slate-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-800 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
-                  >
-                    Done
-                  </button>
-                </div>
-              </div>
+              <ShowOnceKey
+                intro={
+                  <>
+                    Copy the API key for <span className="font-medium text-ink">{created.name}</span> now. Send logs
+                    with it as the source credential.
+                  </>
+                }
+                apiKey={created.apiKey}
+                testId="new-source-api-key"
+                onDone={closeDialog}
+              />
             ) : (
               <>
                 <div className="mt-4 space-y-4">
@@ -244,6 +376,66 @@ export function SourcesPanel({
             )}
           </div>
         </div>
+      ) : null}
+
+      {manageable ? (
+        <>
+          <Dialog
+            open={renaming !== null}
+            variant="prompt"
+            title={`Rename source "${renaming?.name ?? ""}"`}
+            defaultValue={renaming?.name}
+            confirmLabel="Rename"
+            cancelLabel="Cancel"
+            onClose={() => setRenaming(null)}
+            onConfirm={(value) => void confirmRename(value)}
+          />
+          <Dialog
+            open={deleting !== null}
+            variant="confirm"
+            title={`Delete source "${deleting?.name ?? ""}"?`}
+            description="The source and its API key are removed and senders using the key are rejected at once. Logs already stored are not deleted; they stay until the 30-day retention expires."
+            confirmLabel="Delete"
+            cancelLabel="Cancel"
+            onClose={() => setDeleting(null)}
+            onConfirm={() => void confirmDelete()}
+          />
+          <Dialog
+            open={rotating !== null}
+            variant="confirm"
+            title={`Rotate the key of "${rotating?.name ?? ""}"?`}
+            description="The current key stops working at once. Update every sender with the new key, which is shown only once."
+            confirmLabel="Rotate key"
+            cancelLabel="Cancel"
+            onClose={() => setRotating(null)}
+            onConfirm={() => void confirmRotate()}
+          />
+          {rotated ? (
+            <div className="fixed inset-0 z-300 flex items-center justify-center bg-slate-950/40 px-4">
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="rotated-source-title"
+                className="w-full max-w-md rounded-2xl border border-line bg-white p-6 shadow-panel dark:bg-slate-900"
+              >
+                <h3 id="rotated-source-title" className="text-lg font-semibold text-ink">
+                  Key rotated
+                </h3>
+                <ShowOnceKey
+                  intro={
+                    <>
+                      Copy the new API key for <span className="font-medium text-ink">{rotated.name}</span> now. The
+                      old key no longer works, and this key is not shown again.
+                    </>
+                  }
+                  apiKey={rotated.apiKey}
+                  testId="rotated-source-api-key"
+                  onDone={closeRotated}
+                />
+              </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </Card>
   );

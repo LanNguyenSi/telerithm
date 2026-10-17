@@ -136,6 +136,26 @@ export async function createSource(token: string, payload: { teamId: string; nam
   });
 }
 
+export async function renameSource(id: string, token: string, payload: { name: string }) {
+  return authedRequest<{ source: Source }>(`/sources/${encodeURIComponent(id)}`, token, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteSource(id: string, token: string) {
+  return authedRequest<void>(`/sources/${encodeURIComponent(id)}`, token, { method: "DELETE" });
+}
+
+// Hard cutover: the response carries the new key, the only time it is shown to
+// the caller besides the OWNER/ADMIN source list; the old key stops working at
+// once.
+export async function rotateSourceKey(id: string, token: string) {
+  return authedRequest<{ source: Source }>(`/sources/${encodeURIComponent(id)}/rotate-key`, token, {
+    method: "POST",
+  });
+}
+
 export interface LogQueryContext {
   currentTimeRange?: { startTime: string; endTime: string };
   currentFilters?: Record<string, string>;

@@ -8,3 +8,12 @@ import type { TeamRole } from "@/types";
 export function canWriteTeam(role: TeamRole): boolean {
   return role === "OWNER" || role === "ADMIN" || role === "MEMBER";
 }
+
+/**
+ * Mirrors the backend rule for deleting a log source and rotating its ingest
+ * key (canManageSources in the REST router): OWNER and ADMIN only. The UI uses
+ * it to hide rename, delete and rotate; the API enforces the rule regardless.
+ */
+export function canManageSources(role: TeamRole): boolean {
+  return role === "OWNER" || role === "ADMIN";
+}

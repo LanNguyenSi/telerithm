@@ -61,6 +61,10 @@ function toLogSource(
   };
 }
 
+function generateSourceApiKey(): string {
+  return `lf_${generateId().replace(/-/g, "").slice(0, 24)}`;
+}
+
 export class TeamService {
   async register(email: string, password: string, name: string): Promise<RegistrationResult> {
     const normalizedEmail = email.trim().toLowerCase();
@@ -192,11 +196,34 @@ export class TeamService {
   // The create response is the one place a writer who may not list keys (a
   // MEMBER) sees the new source's key, once, so it can start sending logs.
   async createSource(teamId: string, name: string, type: LogSource["type"]): Promise<LogSource> {
-    const apiKey = `lf_${generateId().replace(/-/g, "").slice(0, 24)}`;
+    const apiKey = generateSourceApiKey();
     const source = await prisma.logSource.create({
       data: { teamId, name, type, config: {}, retentionDays: 7, apiKey },
     });
     log.info({ sourceId: source.id, teamId }, "Source created");
+    return toLogSource(source, true);
+  }
+
+  // Deletes the source row and nothing else. Ingest authenticates by looking
+  // the key up on this table, so the key stops working at once. Logs already
+  // stored in ClickHouse are not touched; they age out with the table TTL. The
+  // delete is scoped by id AND team (a missing row surfaces as Prisma's P2025
+  // for the route to map to 404).
+  async deleteSource(teamId: string, sourceId: string): Promise<void> {
+    await prisma.logSource.delete({ where: { id: sourceId, teamId } });
+    log.info({ sourceId, teamId }, "Source deleted");
+  }
+
+  // Replaces the source's ingest key in place (hard cutover: the old key is
+  // rejected by the next ingest request, no grace window). The returned source
+  // carries the new key; the route sends it once and no list returns it to a
+  // role without key visibility.
+  async rotateSourceKey(teamId: string, sourceId: string): Promise<LogSource> {
+    const source = await prisma.logSource.update({
+      where: { id: sourceId, teamId },
+      data: { apiKey: generateSourceApiKey() },
+    });
+    log.info({ sourceId, teamId }, "Source key rotated");
     return toLogSource(source, true);
   }
 

@@ -404,6 +404,55 @@ writeRoute(
   },
 );
 
+// Delete and key rotation are narrower than rename: OWNER and ADMIN only, the
+// same rule as seeing the keys (canManageSources). writeRoute has already
+// refused a VIEWER and a non-member by then; a MEMBER passes the write gate, so
+// the handler answers 403 before any service call.
+//
+// Delete removes the LogSource row only. Ingest looks the key up on that table
+// (authenticateApiKey), so the key is rejected at once; stored logs stay in
+// ClickHouse until the table TTL and no ClickHouse call is made here.
+writeRoute(
+  "delete",
+  "/sources/:id",
+  teamFromResource(loadSourceTeamId, "Source not found"),
+  async ({ req, res, teamId, role }) => {
+    if (!canManageSources(role)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    try {
+      await teamService.deleteSource(teamId, String(req.params.id));
+      res.status(204).end();
+    } catch (error) {
+      if (handlePrismaError(error, res, { notFound: "Source not found" })) return;
+      throw error;
+    }
+  },
+);
+
+// Hard cutover: the new key replaces the old one in place, so the next ingest
+// request with the old key is a 403. The response is the only place the new
+// key is returned to this caller besides the owner/admin list.
+writeRoute(
+  "post",
+  "/sources/:id/rotate-key",
+  teamFromResource(loadSourceTeamId, "Source not found"),
+  async ({ req, res, teamId, role }) => {
+    if (!canManageSources(role)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    try {
+      const source = await teamService.rotateSourceKey(teamId, String(req.params.id));
+      res.json({ source });
+    } catch (error) {
+      if (handlePrismaError(error, res, { notFound: "Source not found" })) return;
+      throw error;
+    }
+  },
+);
+
 // 2.5 — Ingest with API-Key auth + rate limit + sanitization
 apiRouter.post(
   "/ingest/:sourceId",
@@ -1172,6 +1221,14 @@ export function canWrite(role: TeamRoleName): boolean {
 // here. A MEMBER who creates a source still gets the key once in the create
 // response, because a new source is unusable without it.
 export function canSeeSourceKeys(role: TeamRoleName): boolean {
+  return role === "OWNER" || role === "ADMIN";
+}
+
+// Who may delete a source or rotate its ingest key: OWNER and ADMIN only, the
+// same allow list as canSeeSourceKeys (rotating hands out a new credential,
+// deleting is irreversible). Kept as its own predicate so the two rules can
+// diverge without touching each other.
+export function canManageSources(role: TeamRoleName): boolean {
   return role === "OWNER" || role === "ADMIN";
 }
 
