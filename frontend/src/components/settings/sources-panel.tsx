@@ -246,7 +246,10 @@ export function SourcesPanel({
       ) : (
         <div className="mt-4 space-y-3">
           {sources.map((source) => (
-            <article key={source.id} className="rounded-xl border border-line bg-white/70 p-3 dark:bg-white/5">
+            <article
+              key={source.id}
+              className="rounded-xl border border-line bg-white/70 p-3 dark:bg-white/5"
+            >
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-medium text-ink">{source.name}</p>
@@ -310,8 +313,8 @@ export function SourcesPanel({
               <ShowOnceKey
                 intro={
                   <>
-                    Copy the API key for <span className="font-medium text-ink">{created.name}</span> now. Send logs
-                    with it as the source credential.
+                    Copy the API key for <span className="font-medium text-ink">{created.name}</span> now.
+                    Send logs with it as the source credential.
                   </>
                 }
                 apiKey={created.apiKey}
@@ -424,8 +427,9 @@ export function SourcesPanel({
                 <ShowOnceKey
                   intro={
                     <>
-                      Copy the new API key for <span className="font-medium text-ink">{rotated.name}</span> now. The
-                      old key no longer works, and this key is not shown again.
+                      Copy the new API key for <span className="font-medium text-ink">{rotated.name}</span>{" "}
+                      now. The old key no longer works. After you close this dialog the key is visible only to
+                      owners and admins in the source list.
                     </>
                   }
                   apiKey={rotated.apiKey}
