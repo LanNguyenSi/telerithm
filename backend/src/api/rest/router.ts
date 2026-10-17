@@ -1629,7 +1629,7 @@ apiRouter.delete(
       return;
     }
     // A non-member gets the same 404 as for an unknown id; a member without
-    // the manage role already sees the invite list and keeps the 403.
+    // the manage role keeps the 403, which reveals nothing about other teams.
     const role = await requireTeamRole(userId, invite.teamId, res, "Invite not found");
     if (role === null) return;
     if (!canManageInvites(role)) {
