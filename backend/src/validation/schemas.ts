@@ -28,6 +28,10 @@ export const createSourceSchema = z.object({
   type: z.enum(["HTTP", "SYSLOG_UDP", "SYSLOG_TCP", "FILEBEAT", "DOCKER", "CLOUDWATCH"]),
 });
 
+export const renameSourceSchema = z.object({
+  name: z.string().min(2),
+});
+
 // Alert rules are authored through the API with the four conditions the
 // evaluation worker implements. ANOMALY_DETECTED is not accepted (the worker
 // skips it), and neither is a queryType other than the default: `query` is

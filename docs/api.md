@@ -14,7 +14,8 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `POST`, `GET` | `/teams/:id/invites`       | Create and list team invites      |
 | `POST` | `/invites/:token/accept`          | Accept an invite (logged-in user) |
 | `DELETE` | `/invites/:id`                  | Revoke an invite                  |
-| `GET`, `POST` | `/sources`                 | Ingestion sources (list, create)  |
+| `GET`, `POST` | `/sources`                 | Ingestion sources (list, create); the list includes each source's ingest key only for OWNER and ADMIN, the create response shows it once to the creator |
+| `PUT`  | `/sources/:id`                    | Rename a source (OWNER, ADMIN, MEMBER; VIEWER gets 403) |
 | `POST` | `/ingest/:sourceId`, `/ingest/:sourceId/raw` | Ingest logs (API key)             |
 | `POST` | `/logs/search`                    | Search logs (also `GET /logs`)    |
 | `GET`  | `/logs/:id`                       | One log entry                     |

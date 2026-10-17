@@ -71,7 +71,7 @@ export function SourcesPanel({
   };
 
   const copyKey = async () => {
-    if (!created) return;
+    if (!created?.apiKey) return;
     try {
       await navigator.clipboard.writeText(created.apiKey);
       setCopied(true);
@@ -129,9 +129,11 @@ export function SourcesPanel({
                   <p className="text-sm font-medium text-ink">{source.name}</p>
                   <p className="mt-0.5 text-xs text-muted">{source.type}</p>
                 </div>
-                <span className="self-start rounded-full bg-cyan-100 px-3 py-1 font-mono text-xs text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300 sm:self-auto">
-                  {source.apiKey}
-                </span>
+                {source.apiKey ? (
+                  <span className="self-start rounded-full bg-cyan-100 px-3 py-1 font-mono text-xs text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300 sm:self-auto">
+                    {source.apiKey}
+                  </span>
+                ) : null}
               </div>
             </article>
           ))}

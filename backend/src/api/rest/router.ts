@@ -31,6 +31,7 @@ import {
   loginSchema,
   naturalQuerySchema,
   registerSchema,
+  renameSourceSchema,
   searchSchema,
   contextSchema,
   facetsSchema,
@@ -366,8 +367,9 @@ apiRouter.get(
       res.status(400).json({ error: "teamId is required" });
       return;
     }
-    if ((await requireTeamRole(userId, teamId, res)) === null) return;
-    const sources = await teamService.listSources(teamId);
+    const role = await requireTeamRole(userId, teamId, res);
+    if (role === null) return;
+    const sources = await teamService.listSources(teamId, { includeApiKey: canSeeSourceKeys(role) });
     res.json({ sources });
   }),
 );
@@ -376,6 +378,31 @@ writeRoute("post", "/sources", teamFromBody(createSourceSchema), async ({ res, i
   const source = await teamService.createSource(input.teamId, input.name, input.type);
   res.status(201).json({ source });
 });
+
+// Resolve a source's team; writeRoute then requires write-capable membership on
+// it (VIEWER 403, a non-member the same 404 as an unknown id). The loader only
+// reads (see teamFromResource in write-route.ts).
+const loadSourceTeamId = (sourceId: string) =>
+  prisma.logSource
+    .findUnique({ where: { id: sourceId }, select: { teamId: true } })
+    .then((source) => source?.teamId ?? null);
+
+writeRoute(
+  "put",
+  "/sources/:id",
+  teamFromResource(loadSourceTeamId, "Source not found", renameSourceSchema),
+  async ({ req, res, teamId, role, input }) => {
+    try {
+      const source = await teamService.renameSource(teamId, String(req.params.id), input.name, {
+        includeApiKey: canSeeSourceKeys(role),
+      });
+      res.json({ source });
+    } catch (error) {
+      if (handlePrismaError(error, res, { notFound: "Source not found" })) return;
+      throw error;
+    }
+  },
+);
 
 // 2.5 — Ingest with API-Key auth + rate limit + sanitization
 apiRouter.post(
@@ -1137,6 +1164,15 @@ async function requireTeamRole(
 // table.
 export function canWrite(role: TeamRoleName): boolean {
   return role === "OWNER" || role === "ADMIN" || role === "MEMBER";
+}
+
+// Who may read a source's ingest key (the credential senders authenticate
+// with): OWNER and ADMIN only, in list and rename responses. Written as an
+// allow list so a role added later cannot see keys until someone opts it in
+// here. A MEMBER who creates a source still gets the key once in the create
+// response, because a new source is unusable without it.
+export function canSeeSourceKeys(role: TeamRoleName): boolean {
+  return role === "OWNER" || role === "ADMIN";
 }
 
 // Write-gate counterpart of requireTeamRole: the caller must be a member of
