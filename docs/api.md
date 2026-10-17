@@ -73,6 +73,8 @@ An incident is `OPEN`, `ACKNOWLEDGED` or `RESOLVED`. The actions only apply from
 
 Any other combination answers `409` with a message such as `Cannot acknowledge an incident that is RESOLVED; acknowledge applies to OPEN incidents`, and writes nothing (no status change, no timeline event). `409` is also the answer when another request changed the status between the check and the write. An unknown id answers `404`, and so does an incident of a team the caller does not belong to (same body), so the answer does not reveal whether an id exists. A member of the incident's team without write access (`VIEWER`) gets `403`.
 
+The by-id read routes follow the same rule: `GET /issues/:id`, `GET /alerts/incidents/:id/timeline` and `GET /query/jobs/:id` answer a caller who is not a member of the owning team with the `404` and the body they give for an unknown id (`Issue not found`, `Incident not found`, `Job not found`), and so does `DELETE /invites/:id` (`Invite not found`). A member of the invite's team who may not manage invites gets `403`. If the membership lookup itself fails, the route answers `500`, never `403` or `404`.
+
 ### Subscription channels
 
 `channel` is `WEBHOOK`, `SLACK` or `MSTEAMS`. `POST /subscriptions` and `PUT /subscriptions/:id` answer `400` for `EMAIL` (`EMAIL subscriptions are not supported yet because no email transport is configured; ...`) because the backend has no mail transport. Existing `EMAIL` subscriptions are not migrated: they stay listed and can be updated (leave `channel` out of the body), tested and deleted, and delivery for them only writes a log line.

@@ -1079,7 +1079,10 @@ describe("API Routes", () => {
       // the same user id: per decision, the limiter keys on the user, not
       // the session, so logging in again must not grant a fresh budget.
       mockedPrisma.session.findUnique.mockImplementation(async (args: { where: { token: string } }) => {
-        if (args.where.token === "sess_rate_limit_probe_deviceA" || args.where.token === "sess_rate_limit_probe_deviceB") {
+        if (
+          args.where.token === "sess_rate_limit_probe_deviceA" ||
+          args.where.token === "sess_rate_limit_probe_deviceB"
+        ) {
           return makeSession({ userId: "rl-user-shared", token: args.where.token });
         }
         return null;
@@ -1095,14 +1098,20 @@ describe("API Routes", () => {
         const res = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceA);
         expect(res.status).toBe(404);
       }
-      const thirdViaDeviceB = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceB);
+      const thirdViaDeviceB = await app
+        .post("/api/v1/subscriptions/sub-rl/test")
+        .set("Authorization", deviceB);
       expect(thirdViaDeviceB.status).toBe(404);
 
       // The user's budget is now exhausted regardless of which session's
       // token is used for the next request.
-      const blockedViaDeviceA = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceA);
+      const blockedViaDeviceA = await app
+        .post("/api/v1/subscriptions/sub-rl/test")
+        .set("Authorization", deviceA);
       expect(blockedViaDeviceA.status).toBe(429);
-      const blockedViaDeviceB = await app.post("/api/v1/subscriptions/sub-rl/test").set("Authorization", deviceB);
+      const blockedViaDeviceB = await app
+        .post("/api/v1/subscriptions/sub-rl/test")
+        .set("Authorization", deviceB);
       expect(blockedViaDeviceB.status).toBe(429);
     });
 
@@ -1646,7 +1655,7 @@ describe("API Routes", () => {
       return started.body.requestId as string;
     }
 
-    it("rejects a non-member polling another team's job (403) and leaks no data", async () => {
+    it("answers a non-member polling another team's job like an unknown job (404) and leaks no data", async () => {
       const requestId = await startFacetsJobForTeamT1();
 
       // Outsider: authenticated, but not a member of t1.
@@ -1655,7 +1664,8 @@ describe("API Routes", () => {
 
       const res = await app.get(`/api/v1/query/jobs/${requestId}`).set("Authorization", "Bearer sess_admin");
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: "Job not found" });
       expect(res.body.data).toBeUndefined();
       expect(mockedPrisma.teamMember.findUnique).toHaveBeenLastCalledWith({
         where: { teamId_userId: { teamId: "t1", userId: "outsider-1" } },
@@ -3019,14 +3029,15 @@ describe("API Routes", () => {
         expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
       });
 
-      it("rejects a caller who is not a member of the invite's team with 403 and never deletes (cross-tenant revoke IDOR)", async () => {
+      it("answers a caller who is not a member of the invite's team like an unknown invite (404) and never deletes (cross-tenant revoke IDOR)", async () => {
         mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "outsider-1" }));
         mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeTeamInvite({ teamId: "t1" }));
         mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
 
         const res = await app.delete("/api/v1/invites/inv-1").set("Authorization", "Bearer sess_admin");
 
-        expect(res.status).toBe(403);
+        expect(res.status).toBe(404);
+        expect(res.body).toEqual({ error: "Invite not found" });
         expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
       });
 
@@ -3168,7 +3179,7 @@ describe("API Routes", () => {
       expect(mockedPrisma.alertIncident.update).not.toHaveBeenCalled();
     });
 
-    it("timeline: 403 for a non-member, events never queried (cross-tenant disclosure)", async () => {
+    it("timeline: a non-member gets the unknown-incident 404, events never queried (cross-tenant disclosure)", async () => {
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       seedIncident("t1");
       mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
@@ -3177,7 +3188,8 @@ describe("API Routes", () => {
         .get("/api/v1/alerts/incidents/inc-1/timeline")
         .set("Authorization", "Bearer sess_admin");
 
-      expect(res.status).toBe(403);
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: "Incident not found" });
       expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
     });
 
@@ -3996,6 +4008,219 @@ describe("API Routes", () => {
           }
         });
       }
+    });
+
+    // The by-id read routes and DELETE /invites/:id follow the same rule as the
+    // write routes above: a resource of a team the caller is not in answers
+    // exactly like a nonexistent id. The own-team answer stays what it was.
+    describe("by-id read routes and invite revoke: another team's resource answers like a nonexistent one", () => {
+      interface ReadCase {
+        name: string;
+        send: () => supertest.Test;
+        // Makes the resource lookup find a resource owned by `teamId`.
+        found: (teamId: string) => unknown;
+        // Makes the resource lookup find nothing.
+        missing: () => unknown;
+        notFoundMessage: string;
+        // The caller is a member of the owning team: status and the role used.
+        own: { role: Role; status: number; arrange?: () => void };
+        // Must stay untouched when the caller is not a member.
+        untouched: () => Array<ReturnType<typeof vi.fn>>;
+      }
+
+      // The job registry is real in this suite, so a job is started through the
+      // facets endpoint; the poll then targets the id that start returned.
+      let jobId = "unknown-job";
+      const startJob = async (teamId: string) => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership("MEMBER"));
+        mockedClickhouse.query.mockResolvedValueOnce(
+          makeClickhouseResult([{ field: "level", value: "error", count: 3 }]),
+        );
+        const started = await authed(writeApp.post("/api/v1/logs/facets")).send({
+          teamId,
+          async: true,
+          fields: ["level"],
+        });
+        expect(started.status).toBe(202);
+        jobId = started.body.requestId as string;
+      };
+
+      const readCases: ReadCase[] = [
+        {
+          name: "GET /alerts/incidents/:id/timeline",
+          send: () => authed(writeApp.get("/api/v1/alerts/incidents/inc-1/timeline")),
+          found: (teamId) =>
+            mockedPrisma.alertIncident.findUnique.mockResolvedValueOnce({ rule: { teamId } }),
+          missing: () => mockedPrisma.alertIncident.findUnique.mockResolvedValueOnce(null),
+          notFoundMessage: "Incident not found",
+          own: {
+            role: "VIEWER",
+            status: 200,
+            arrange: () => mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce([]),
+          },
+          untouched: () => [mockedPrisma.incidentEvent.findMany],
+        },
+        {
+          name: "GET /issues/:id",
+          send: () => authed(writeApp.get("/api/v1/issues/issue-1")),
+          found: (teamId) => mockedPrisma.issue.findUnique.mockResolvedValueOnce({ id: "issue-1", teamId }),
+          missing: () => mockedPrisma.issue.findUnique.mockResolvedValueOnce(null),
+          notFoundMessage: "Issue not found",
+          own: { role: "VIEWER", status: 200 },
+          untouched: () => [],
+        },
+        {
+          name: "GET /query/jobs/:id",
+          send: () => authed(writeApp.get(`/api/v1/query/jobs/${jobId}`)),
+          found: (teamId) => startJob(teamId),
+          missing: () => {
+            jobId = "unknown-job";
+          },
+          notFoundMessage: "Job not found",
+          own: { role: "VIEWER", status: 200 },
+          untouched: () => [],
+        },
+        {
+          name: "DELETE /invites/:id",
+          send: () => authed(writeApp.delete("/api/v1/invites/inv-1")),
+          found: (teamId) =>
+            mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce({
+              id: "inv-1",
+              teamId,
+              email: null,
+              token: "inv_abcdef0123456789abcdef01",
+              role: "MEMBER",
+              createdBy: "admin-1",
+              expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+              usedAt: null,
+              createdAt: new Date("2026-03-23T00:00:00.000Z"),
+            }),
+          missing: () => mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(null),
+          notFoundMessage: "Invite not found",
+          own: {
+            role: "ADMIN",
+            status: 204,
+            arrange: () => mockedPrisma.teamInvite.deleteMany.mockResolvedValueOnce({ count: 1 }),
+          },
+          untouched: () => [mockedPrisma.teamInvite.deleteMany],
+        },
+      ];
+
+      it("covers the by-id read routes and the invite revoke", () => {
+        expect(readCases.map((c) => c.name).sort()).toEqual([
+          "DELETE /invites/:id",
+          "GET /alerts/incidents/:id/timeline",
+          "GET /issues/:id",
+          "GET /query/jobs/:id",
+        ]);
+      });
+
+      for (const c of readCases) {
+        it(`${c.name}: a resource of another team and a nonexistent id answer with the same status and body`, async () => {
+          await c.found("other-team");
+          mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+          mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+          const foreign = await c.send();
+
+          await c.missing();
+          mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+          const nonexistent = await c.send();
+
+          expect(nonexistent.status).toBe(404);
+          expect(foreign.status).toBe(nonexistent.status);
+          // Byte for byte, not only the parsed JSON.
+          expect(foreign.text).toBe(nonexistent.text);
+          expect(JSON.parse(foreign.text)).toEqual({ error: c.notFoundMessage });
+          for (const mock of c.untouched()) {
+            expect(mock).not.toHaveBeenCalled();
+          }
+        });
+
+        it(`${c.name}: a member of the resource's own team keeps the unchanged answer`, async () => {
+          await c.found("t1");
+          mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+          mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership(c.own.role));
+          c.own.arrange?.();
+
+          const res = await c.send();
+
+          expect(res.status).toBe(c.own.status);
+          expect(mockedPrisma.teamMember.findUnique).toHaveBeenLastCalledWith({
+            where: { teamId_userId: { teamId: "t1", userId: "user-1" } },
+          });
+        });
+      }
+
+      it("DELETE /invites/:id: a member of the invite's team without the manage role still gets 403", async () => {
+        await readCases[3].found("t1");
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership("MEMBER"));
+
+        const res = await readCases[3].send();
+
+        expect(res.status).toBe(403);
+        expect(res.body).toEqual({ error: "Forbidden" });
+        expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
+      });
+    });
+
+    // Only the resolver's not-a-member outcome may become a 403 or a 404. A
+    // failing membership lookup says nothing about membership, so it must reach
+    // the caller as a 500, not tell an own-team caller their resource is gone.
+    describe("a failing membership lookup is a 500, not a not-found or forbidden answer", () => {
+      const lookupFails = () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockRejectedValueOnce(new Error("connection reset"));
+      };
+
+      it.each([
+        [
+          "PUT /alerts/rules/:id (not-found branch)",
+          () => {
+            mockedPrisma.alertRule.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+            return authed(writeApp.put("/api/v1/alerts/rules/rule-1")).send({ enabled: false });
+          },
+        ],
+        [
+          "PUT /issues/:id (not-found branch)",
+          () => {
+            mockedPrisma.issue.findUnique.mockResolvedValueOnce({ id: "issue-1", teamId: "t1" });
+            return authed(writeApp.put("/api/v1/issues/issue-1")).send({ status: "RESOLVED" });
+          },
+        ],
+        [
+          "GET /alerts/incidents/:id/timeline (not-found branch)",
+          () => {
+            mockedPrisma.alertIncident.findUnique.mockResolvedValueOnce({ rule: { teamId: "t1" } });
+            return authed(writeApp.get("/api/v1/alerts/incidents/inc-1/timeline"));
+          },
+        ],
+        [
+          "DELETE /invites/:id (not-found branch)",
+          () => {
+            mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce({ id: "inv-1", teamId: "t1" });
+            return authed(writeApp.delete("/api/v1/invites/inv-1"));
+          },
+        ],
+        ["GET /sources (403 branch)", () => authed(writeApp.get("/api/v1/sources?teamId=t1"))],
+        [
+          "POST /sources (write gate, 403 branch)",
+          () => authed(writeApp.post("/api/v1/sources")).send({ teamId: "t1", name: "web", type: "HTTP" }),
+        ],
+      ] as const)("%s", async (_name, arrange) => {
+        lookupFails();
+        const req = arrange();
+
+        const res = await req;
+
+        expect(res.status).toBe(500);
+        expect(res.body).toEqual({ error: "Internal server error" });
+        expect(mockedPrisma.alertRule.update).not.toHaveBeenCalled();
+        expect(mockedPrisma.issue.update).not.toHaveBeenCalled();
+        expect(mockedPrisma.logSource.create).not.toHaveBeenCalled();
+        expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
+      });
     });
 
     it("a non-member still gets 403 on a write route (membership check unchanged)", async () => {
