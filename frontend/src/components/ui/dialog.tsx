@@ -20,6 +20,8 @@ type DialogProps = {
   | {
       variant: "prompt";
       defaultValue?: string;
+      /** Cap for the text input, mirrored on the backend validation limit. */
+      maxLength?: number;
       onConfirm: (value: string) => void;
     }
   | {
@@ -102,6 +104,7 @@ export function Dialog(props: DialogProps) {
             ref={inputRef}
             type="text"
             value={inputValue}
+            maxLength={props.maxLength}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") handleConfirm(); }}
             className="mt-3 w-full rounded-lg border border-line bg-transparent px-3 py-2 text-sm text-ink outline-hidden focus:border-slate-400 dark:focus:border-slate-500"

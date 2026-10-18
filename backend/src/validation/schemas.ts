@@ -24,12 +24,12 @@ export const createTeamSchema = z.object({
 
 export const createSourceSchema = z.object({
   teamId: z.string().min(1),
-  name: z.string().min(2),
+  name: z.string().trim().min(2).max(100),
   type: z.enum(["HTTP", "SYSLOG_UDP", "SYSLOG_TCP", "FILEBEAT", "DOCKER", "CLOUDWATCH"]),
 });
 
 export const renameSourceSchema = z.object({
-  name: z.string().min(2),
+  name: z.string().trim().min(2).max(100),
 });
 
 // Alert rules are authored through the API with the four conditions the

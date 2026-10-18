@@ -3,7 +3,7 @@ type: invariant
 title: ClickHouse tenant row-scoping — a second, independent tenancy layer below router.ts
 description: team_id is the first WHERE predicate in every ClickHouse logs read, independently of router.ts authz, via LogRepository.buildScopedWhere in the 4 aggregation/search methods (search, getFacets, getHistogram, getPatterns), inline in findById/getContext/getStats, and inline in AlertEvaluationWorker.queryLogCount, the one logs reader outside LogRepository; the dynamic `fields['<key>']` map-key allow-list sanitiser is what keeps a crafted filter field from breaking out of that literal and neutralising the team_id scope. queryType "sql" is a legacy misnomer for tokenized ILIKE free-text search; there is no user-reachable raw-SQL surface.
 tags: [clickhouse, tenant-scoping, sqli, log-repository, security]
-timestamp: 2026-10-17T09:24:37Z
+timestamp: 2026-10-18T07:30:00Z
 sources:
   - backend/src/repositories/log-repository.ts
   - backend/src/validation/schemas.ts

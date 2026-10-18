@@ -331,6 +331,7 @@ export function SourcesPanel({
                     <input
                       id="source-name"
                       value={name}
+                      maxLength={100}
                       onChange={(e) => setName(e.target.value)}
                       className={inputClass}
                     />
@@ -388,6 +389,7 @@ export function SourcesPanel({
             variant="prompt"
             title={`Rename source "${renaming?.name ?? ""}"`}
             defaultValue={renaming?.name}
+            maxLength={100}
             confirmLabel="Rename"
             cancelLabel="Cancel"
             onClose={() => setRenaming(null)}

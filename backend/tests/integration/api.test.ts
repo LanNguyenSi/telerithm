@@ -3985,6 +3985,28 @@ describe("API Routes", () => {
         expect(mockedPrisma.logSource.update).not.toHaveBeenCalled();
       });
 
+      it("PUT /sources/:id: a whitespace-only name is 400 and nothing is written", async () => {
+        asRole("OWNER");
+
+        const res = await authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "   " });
+
+        expect(res.status).toBe(400);
+        expect(mockedPrisma.logSource.update).not.toHaveBeenCalled();
+      });
+
+      it("POST /sources: a name of 101 characters is 400 and nothing is written", async () => {
+        asRole("OWNER");
+
+        const res = await authed(writeApp.post("/api/v1/sources")).send({
+          teamId: "t1",
+          name: "n".repeat(101),
+          type: "HTTP",
+        });
+
+        expect(res.status).toBe(400);
+        expect(mockedPrisma.logSource.create).not.toHaveBeenCalled();
+      });
+
       it("PUT /sources/:id: maps P2025 to 404 when the source vanishes between the lookup and the update", async () => {
         asRole("ADMIN");
         mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
