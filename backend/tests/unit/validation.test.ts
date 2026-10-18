@@ -6,6 +6,7 @@ import {
   ingestSchema,
   createTeamSchema,
   createSourceSchema,
+  renameSourceSchema,
   createAlertRuleSchema,
   updateAlertRuleSchema,
   createSubscriptionSchema,
@@ -130,6 +131,56 @@ describe("Validation Schemas", () => {
         type: "INVALID",
       });
       expect(result.success).toBe(false);
+    });
+
+    it("rejects a whitespace-only name", () => {
+      const result = createSourceSchema.safeParse({ teamId: "t1", name: "   ", type: "HTTP" });
+      expect(result.success).toBe(false);
+    });
+
+    it("rejects a name that is one character after trimming", () => {
+      const result = createSourceSchema.safeParse({ teamId: "t1", name: "  a  ", type: "HTTP" });
+      expect(result.success).toBe(false);
+    });
+
+    it("accepts a name of exactly 100 characters", () => {
+      const result = createSourceSchema.safeParse({ teamId: "t1", name: "n".repeat(100), type: "HTTP" });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejects a name of 101 characters", () => {
+      const result = createSourceSchema.safeParse({ teamId: "t1", name: "n".repeat(101), type: "HTTP" });
+      expect(result.success).toBe(false);
+    });
+
+    it("trims a padded name before the bounds apply and stores the trimmed value", () => {
+      const result = createSourceSchema.safeParse({ teamId: "t1", name: "  prod  ", type: "HTTP" });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.name).toBe("prod");
+    });
+  });
+
+  describe("renameSourceSchema", () => {
+    it("rejects a whitespace-only name", () => {
+      expect(renameSourceSchema.safeParse({ name: "   " }).success).toBe(false);
+    });
+
+    it("rejects a name that is one character after trimming", () => {
+      expect(renameSourceSchema.safeParse({ name: "  a  " }).success).toBe(false);
+    });
+
+    it("accepts a name of exactly 100 characters", () => {
+      expect(renameSourceSchema.safeParse({ name: "n".repeat(100) }).success).toBe(true);
+    });
+
+    it("rejects a name of 101 characters", () => {
+      expect(renameSourceSchema.safeParse({ name: "n".repeat(101) }).success).toBe(false);
+    });
+
+    it("trims a padded name before the bounds apply and stores the trimmed value", () => {
+      const result = renameSourceSchema.safeParse({ name: "  prod  " });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.name).toBe("prod");
     });
   });
 
