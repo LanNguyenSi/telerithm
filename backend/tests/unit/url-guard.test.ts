@@ -33,6 +33,7 @@ vi.mock("../../src/logger.js", () => ({
 
 import { lookup } from "node:dns/promises";
 import { assertSafeUrl } from "../../src/services/notification/url-guard.js";
+import { ChannelConfigError } from "../../src/services/notification/channels/errors.js";
 
 const mockLookup = vi.mocked(lookup);
 
@@ -767,5 +768,19 @@ describe("assertSafeUrl — NAT64 well-known-prefix anchor lock (near-miss addre
   it("accepts 164:ff9b::1 (contains '64:ff9b::' as a substring starting at index 1, not index 0; ^-anchor must not over-match)", async () => {
     mockLookup.mockResolvedValueOnce([{ address: "164:ff9b::1", family: 6 }] as never);
     await expect(assertSafeUrl("https://nat64-nearmiss-2.example.com/hook")).resolves.toBeUndefined();
+  });
+});
+
+describe("assertSafeUrl: refusals are configuration errors", () => {
+  // The subscription test route shows a ChannelConfigError's message to the
+  // caller and hides every other failure, so each refusal must use that class.
+  it.each([
+    ["an invalid URL", "not a url", () => undefined],
+    ["an unsupported scheme", "ftp://hooks.example.com/x", () => undefined],
+    ["a blocked literal address", "https://127.0.0.1/hook", () => undefined],
+    ["an unresolvable host", "https://hooks.example.invalid/x", mockDnsFail],
+  ])("throws ChannelConfigError for %s", async (_case, url, arrange) => {
+    arrange();
+    await expect(assertSafeUrl(url)).rejects.toBeInstanceOf(ChannelConfigError);
   });
 });

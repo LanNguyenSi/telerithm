@@ -1,6 +1,7 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 import { createChildLogger } from "../../logger.js";
+import { ChannelConfigError } from "./channels/errors.js";
 
 const log = createChildLogger("notify-url-guard");
 
@@ -270,21 +271,21 @@ export async function assertSafeUrl(rawUrl: string): Promise<void> {
   try {
     parsed = new URL(rawUrl);
   } catch {
-    throw new Error("Invalid webhook URL");
+    throw new ChannelConfigError("Invalid webhook URL");
   }
 
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error(`Unsupported webhook scheme: ${parsed.protocol}`);
+    throw new ChannelConfigError(`Unsupported webhook scheme: ${parsed.protocol}`);
   }
 
   const host = parsed.hostname.toLowerCase();
   if (host.length === 0) {
-    throw new Error("Webhook URL has no host");
+    throw new ChannelConfigError("Webhook URL has no host");
   }
 
   const allowlist = envAllowlist();
   if (allowlist.length > 0 && !allowlist.includes(host)) {
-    throw new Error("Webhook host is not in the allow-list");
+    throw new ChannelConfigError("Webhook host is not in the allow-list");
   }
 
   // WHATWG URL keeps the brackets on IPv6 literal hostnames ("[::1]"), which
@@ -298,7 +299,7 @@ export async function assertSafeUrl(rawUrl: string): Promise<void> {
   // bypass where one A record is public and another is private).
   if (isIP(bareHost) !== 0) {
     if (isBlockedAddress(bareHost)) {
-      throw new Error("Webhook host resolves to a blocked address range");
+      throw new ChannelConfigError("Webhook host resolves to a blocked address range");
     }
     return;
   }
@@ -307,17 +308,17 @@ export async function assertSafeUrl(rawUrl: string): Promise<void> {
   try {
     addresses = await lookup(bareHost, { all: true });
   } catch {
-    throw new Error("Webhook host could not be resolved");
+    throw new ChannelConfigError("Webhook host could not be resolved");
   }
 
   if (addresses.length === 0) {
-    throw new Error("Webhook host could not be resolved");
+    throw new ChannelConfigError("Webhook host could not be resolved");
   }
 
   for (const { address } of addresses) {
     if (isBlockedAddress(address)) {
       log.warn({ host, address }, "Blocked webhook target in private/metadata range");
-      throw new Error("Webhook host resolves to a blocked address range");
+      throw new ChannelConfigError("Webhook host resolves to a blocked address range");
     }
   }
 }

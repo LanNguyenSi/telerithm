@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ChannelHttpError } from "../../src/services/notification/channels/errors.js";
+import { ChannelConfigError, ChannelHttpError } from "../../src/services/notification/channels/errors.js";
 
 // vi.hoisted lets these be referenced safely inside vi.mock() factory functions
 // (vi.mock() calls are hoisted above imports; vi.hoisted() runs before them).
@@ -507,6 +507,16 @@ describe("NotificationDispatcher.dispatchToSubscription", () => {
 
     expect(err).toBeInstanceOf(ChannelHttpError);
     expect(err).toMatchObject({ status: 404, statusText: "Not Found" });
+  });
+
+  it("throws a ChannelConfigError when the subscription has no URL configured", async () => {
+    const sent = dispatcher.dispatchToSubscription(makeWebhookSubscriber({ config: {} }), INCIDENT);
+    const caught = sent.catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    const err = await caught;
+
+    expect(err).toBeInstanceOf(ChannelConfigError);
+    expect(err).toMatchObject({ message: "Webhook URL not configured" });
   });
 
   it("keeps the SSRF guard on the single-subscription path", async () => {

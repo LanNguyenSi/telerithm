@@ -3,7 +3,7 @@ import { sendWebhook } from "./channels/webhook.js";
 import { sendEmail } from "./channels/email.js";
 import { sendMsTeamsMessage } from "./channels/msteams.js";
 import { assertSafeUrl } from "./url-guard.js";
-import { ChannelHttpError } from "./channels/errors.js";
+import { ChannelConfigError, ChannelHttpError } from "./channels/errors.js";
 import { createChildLogger } from "../../logger.js";
 
 const log = createChildLogger("notification-dispatcher");
@@ -88,7 +88,7 @@ export class NotificationDispatcher {
         switch (subscription.channel) {
           case "WEBHOOK": {
             const url = config.url;
-            if (!url) throw new Error("Webhook URL not configured");
+            if (!url) throw new ChannelConfigError("Webhook URL not configured");
             await sendWebhook(
               url,
               {
@@ -119,13 +119,13 @@ export class NotificationDispatcher {
           }
           case "SLACK": {
             const webhookUrl = config.webhook_url;
-            if (!webhookUrl) throw new Error("Slack webhook URL not configured");
+            if (!webhookUrl) throw new ChannelConfigError("Slack webhook URL not configured");
             await sendSlackMessage(webhookUrl, incident);
             break;
           }
           case "MSTEAMS": {
             const teamsUrl = config.webhook_url;
-            if (!teamsUrl) throw new Error("MS Teams webhook URL not configured");
+            if (!teamsUrl) throw new ChannelConfigError("MS Teams webhook URL not configured");
             await sendMsTeamsMessage(teamsUrl, {
               incidentId: incident.id,
               ruleId: incident.ruleId,

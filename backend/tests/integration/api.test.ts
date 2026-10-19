@@ -1,13 +1,15 @@
 import type { Server } from "node:http";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import supertest from "supertest";
-import { ChannelHttpError } from "../../src/services/notification/channels/errors.js";
+import { ChannelConfigError, ChannelHttpError } from "../../src/services/notification/channels/errors.js";
 
 // Hoisted so the vi.mock factory below (itself hoisted above imports) can
 // close over it; reset/re-seeded like every other mock in beforeEach.
-const { mockDispatch, mockDispatchToSubscription } = vi.hoisted(() => ({
+const { mockDispatch, mockDispatchToSubscription, childLog } = vi.hoisted(() => ({
   mockDispatch: vi.fn(),
   mockDispatchToSubscription: vi.fn(),
+  // One shared child logger, so a test can assert what a route logged.
+  childLog: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
 // Mock external dependencies before importing app
@@ -50,12 +52,7 @@ vi.mock("../../src/config/index.js", () => ({
 
 vi.mock("../../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), fatal: vi.fn() },
-  createChildLogger: () => ({
-    info: vi.fn(),
-    warn: vi.fn(),
-    error: vi.fn(),
-    debug: vi.fn(),
-  }),
+  createChildLogger: () => childLog,
 }));
 
 vi.mock("../../src/repositories/prisma.js", () => {
@@ -4157,19 +4154,46 @@ describe("API Routes", () => {
         expect(res.text).not.toContain("502");
         expect(res.text).not.toContain("Bad Gateway");
         expect(res.text).not.toContain("hooks.example.com");
+        expect(childLog.warn).toHaveBeenCalledWith(
+          { subscriptionId: "sub-1", channel: "WEBHOOK", status: 502, statusText: "Bad Gateway" },
+          "Test notification rejected by the channel",
+        );
       });
 
       it("returns 500 with the error message for a guard refusal or missing URL (the user's own config)", async () => {
         mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "single-send-user-4" }));
         mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce(webhookSubscription);
         mockDispatchToSubscription.mockRejectedValueOnce(
-          new Error("Webhook host resolves to a blocked address range"),
+          new ChannelConfigError("Webhook host resolves to a blocked address range"),
         );
 
         const res = await authed(writeApp.post("/api/v1/subscriptions/sub-1/test"));
 
         expect(res.status).toBe(500);
         expect(res.body).toEqual({ error: "Webhook host resolves to a blocked address range" });
+      });
+
+      it.each([
+        ["a refused connection", Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } })],
+        ["a timeout", new DOMException("The operation was aborted due to timeout", "TimeoutError")],
+        ["any other error", new Error("Webhook host resolves to a blocked address range")],
+      ])("returns 500 with a generic message for %s, so the route is no reachability probe", async (_case, err) => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: `single-send-user-5-${_case}` }));
+        mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce(webhookSubscription);
+        mockDispatchToSubscription.mockRejectedValueOnce(err);
+
+        const res = await authed(writeApp.post("/api/v1/subscriptions/sub-1/test"));
+
+        expect(res.status).toBe(500);
+        expect(res.body).toEqual({ error: "The channel could not be reached" });
+        expect(childLog.warn).toHaveBeenCalledWith(
+          {
+            subscriptionId: "sub-1",
+            channel: "WEBHOOK",
+            error: `${(err as Error).name}: ${(err as Error).message}`,
+          },
+          "Test notification could not reach the channel",
+        );
       });
     });
 
