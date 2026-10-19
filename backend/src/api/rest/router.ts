@@ -1536,7 +1536,9 @@ apiRouter.post(
     const { NotificationDispatcher } = await import("../../services/notification/notification-dispatcher.js");
     const dispatcher = new NotificationDispatcher();
     try {
-      await dispatcher.dispatch({
+      // Only the caller's own loaded subscription is notified: dispatch()
+      // would fan out to every enabled subscriber of the rule/team.
+      await dispatcher.dispatchToSubscription(subscription, {
         id: "test-incident-000",
         ruleId: subscription.ruleId ?? "test-rule",
         teamId: subscription.teamId,

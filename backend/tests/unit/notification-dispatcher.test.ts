@@ -444,3 +444,54 @@ describe("NotificationDispatcher.dispatch — retry logic", () => {
     expect(mockSendWebhook).toHaveBeenCalledTimes(3);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Single-subscription send (channel test)
+// ---------------------------------------------------------------------------
+describe("NotificationDispatcher.dispatchToSubscription", () => {
+  let dispatcher: NotificationDispatcher;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    dispatcher = new NotificationDispatcher();
+    globalThis.fetch = mockFetch;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sends to the given subscription without looking up other subscribers", async () => {
+    mockFindForIncident.mockResolvedValue([makeEmailSubscriber()]);
+    mockSendWebhook.mockResolvedValue(undefined);
+
+    await dispatcher.dispatchToSubscription(makeWebhookSubscriber(), INCIDENT);
+
+    expect(mockFindForIncident).not.toHaveBeenCalled();
+    expect(mockSendWebhook).toHaveBeenCalledOnce();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it("rethrows the channel error after the last retry instead of swallowing it", async () => {
+    mockSendWebhook.mockRejectedValue(new Error("channel down"));
+
+    const sent = dispatcher.dispatchToSubscription(makeWebhookSubscriber(), INCIDENT);
+    const assertion = expect(sent).rejects.toThrow("channel down");
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    expect(mockSendWebhook).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the SSRF guard on the single-subscription path", async () => {
+    mockAssertSafeUrl.mockRejectedValue(new Error("Host resolves to blocked range"));
+
+    const sent = dispatcher.dispatchToSubscription(makeSlackSubscriber(), INCIDENT);
+    const assertion = expect(sent).rejects.toThrow("Host resolves to blocked range");
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+});

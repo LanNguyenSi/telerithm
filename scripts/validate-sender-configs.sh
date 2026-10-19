@@ -15,7 +15,16 @@ FLUENTD_IMAGE="${FLUENTD_IMAGE:-fluent/fluentd:v1.17-debian-1@sha256:d6114e87fb4
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Fails with its own message when the parent directory is missing; without
+# the check the bare cd error would surface instead. Under set -e the failed
+# command substitution below aborts the script with status 2.
 abspath() {
+  local parent
+  parent="$(dirname "$1")"
+  if [[ ! -d "$parent" ]]; then
+    echo "parent directory does not exist: $parent (for $1)" >&2
+    return 2
+  fi
   printf '%s/%s\n' "$(cd "$(dirname "$1")" && pwd)" "$(basename "$1")"
 }
 
@@ -35,7 +44,7 @@ telerithm_env=(
 
 echo "== vector validate --skip-healthchecks $vector_config"
 docker run --rm "${telerithm_env[@]}" \
-  -v "$vector_config:/etc/vector/vector.toml:ro" \
+  --mount "type=bind,source=$vector_config,target=/etc/vector/vector.toml,readonly" \
   "$VECTOR_IMAGE" validate --skip-healthchecks /etc/vector/vector.toml
 
 # fluentd substitutes an empty string for an unset #{ENV[...]} variable and
@@ -71,7 +80,7 @@ echo "== fluentd --dry-run -c $fluentd_config"
 # dry run's own exit code (a pipe to tee would hide it behind tee's status).
 fluentd_status=0
 fluentd_out="$(docker run --rm "${telerithm_env[@]}" \
-  -v "$fluentd_config:/fluentd/etc/fluent.conf:ro" \
+  --mount "type=bind,source=$fluentd_config,target=/fluentd/etc/fluent.conf,readonly" \
   "$FLUENTD_IMAGE" fluentd --dry-run -c /fluentd/etc/fluent.conf 2>&1)" ||
   fluentd_status=$?
 printf '%s\n' "$fluentd_out"

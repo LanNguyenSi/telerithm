@@ -4,15 +4,19 @@ import supertest from "supertest";
 
 // Hoisted so the vi.mock factory below (itself hoisted above imports) can
 // close over it; reset/re-seeded like every other mock in beforeEach.
-const { mockDispatch } = vi.hoisted(() => ({ mockDispatch: vi.fn() }));
+const { mockDispatch, mockDispatchToSubscription } = vi.hoisted(() => ({
+  mockDispatch: vi.fn(),
+  mockDispatchToSubscription: vi.fn(),
+}));
 
 // Mock external dependencies before importing app
 vi.mock("../../src/services/notification/notification-dispatcher.js", () => ({
-  NotificationDispatcher: vi.fn().mockImplementation(function NotificationDispatcher(this: {
-    dispatch: typeof mockDispatch;
-  }) {
-    this.dispatch = mockDispatch;
-  }),
+  // Class form so vi.resetAllMocks() in beforeEach (which strips vi.fn()
+  // implementations) cannot drop the instance bindings.
+  NotificationDispatcher: class {
+    dispatch = mockDispatch;
+    dispatchToSubscription = mockDispatchToSubscription;
+  },
 }));
 vi.mock("../../src/config/index.js", () => ({
   config: {
@@ -442,6 +446,7 @@ beforeEach(() => {
   mockedPrisma.alertSubscription.findFirst.mockResolvedValue(null);
   mockedPrisma.alertSubscription.deleteMany.mockResolvedValue({ count: 0 });
   mockDispatch.mockResolvedValue(undefined);
+  mockDispatchToSubscription.mockResolvedValue(undefined);
 });
 
 describe("API Routes", () => {
@@ -939,6 +944,8 @@ describe("API Routes", () => {
   });
 
   describe("POST /api/v1/subscriptions/:id/test", () => {
+    // Each test resolves to its own user id: the test limiter (mocked to 3
+    // per 200ms window) is keyed per user and shared across the file.
     // Pins the documented behavior (docs/architecture.md, "Alerting"
     // section): this route is an operator-facing channel test and
     // dispatches unconditionally, unlike AlertEvaluationWorker's real
@@ -946,7 +953,7 @@ describe("API Routes", () => {
     // caller must be able to verify a notification channel is wired up
     // even while a maintenance window is active for the team.
     it("dispatches the test notification even while a maintenance window is active for the team", async () => {
-      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "test-route-user-1" }));
       mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce({
         id: "sub-1",
         userId: "user-1",
@@ -973,9 +980,10 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ ok: true, message: "Test notification sent" });
-      // Observes dispatch itself, not just the HTTP response, so removing
-      // the dispatcher.dispatch() call from the route would fail this test.
-      expect(mockDispatch).toHaveBeenCalledWith(
+      // Observes the send itself, not just the HTTP response, so removing
+      // the dispatcher call from the route would fail this test.
+      expect(mockDispatchToSubscription).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "sub-1" }),
         expect.objectContaining({
           ruleId: "rule-1",
           teamId: "t1",
@@ -988,7 +996,7 @@ describe("API Routes", () => {
     });
 
     it("returns 404 when the subscription does not belong to the caller", async () => {
-      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "test-route-user-5" }));
       mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce(null);
 
       const res = await app
@@ -997,6 +1005,8 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Subscription not found");
+      expect(mockDispatchToSubscription).not.toHaveBeenCalled();
+      expect(mockDispatch).not.toHaveBeenCalled();
     });
   });
 
@@ -1010,14 +1020,9 @@ describe("API Routes", () => {
     // the config mock above.
     //
     // These probes use a subscription id the findFirst mock resolves to
-    // null (404 "Subscription not found") rather than one that reaches
-    // NotificationDispatcher: a 404 still proves the request cleared the
-    // limiter and reached the route handler (all this test needs), and
-    // the shared NotificationDispatcher constructor mock above only
-    // supports one real dispatch per test-file run before resetAllMocks
-    // in beforeEach strips its `this.dispatch = mockDispatch` binding, a
-    // pre-existing test-infra gap (already exercised exactly once by
-    // "dispatches the test notification..." above), out of scope here.
+    // null (404 "Subscription not found"): a 404 proves the request cleared
+    // the limiter and reached the route handler, which is all this test
+    // needs, without involving the dispatcher.
     it("passes requests under the limit, 429s with Retry-After + retryAfter once exceeded, then resets after the window", async () => {
       const auth = "Bearer sess_rate_limit_probe";
       mockedPrisma.session.findUnique.mockResolvedValue(makeSession({ userId: "rl-user" }));
@@ -4007,6 +4012,36 @@ describe("API Routes", () => {
         expect(mockedPrisma.logSource.create).not.toHaveBeenCalled();
       });
 
+      it("POST /sources: stores the trimmed name", async () => {
+        asRole("OWNER");
+        mockedPrisma.logSource.create.mockResolvedValueOnce(makeSourceRow({ name: "prod" }));
+
+        const res = await authed(writeApp.post("/api/v1/sources")).send({
+          teamId: "t1",
+          name: "  prod  ",
+          type: "HTTP",
+        });
+
+        expect(res.status).toBe(201);
+        expect(mockedPrisma.logSource.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({ teamId: "t1", name: "prod" }),
+        });
+      });
+
+      it("PUT /sources/:id: stores the trimmed name", async () => {
+        asRole("OWNER");
+        mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+        mockedPrisma.logSource.update.mockResolvedValueOnce(makeSourceRow({ name: "prod" }));
+
+        const res = await authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "  prod  " });
+
+        expect(res.status).toBe(200);
+        expect(mockedPrisma.logSource.update).toHaveBeenCalledWith({
+          where: { id: "src-1", teamId: "t1" },
+          data: { name: "prod" },
+        });
+      });
+
       it("PUT /sources/:id: maps P2025 to 404 when the source vanishes between the lookup and the update", async () => {
         asRole("ADMIN");
         mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
@@ -4037,6 +4072,76 @@ describe("API Routes", () => {
         expect(listed.status).toBe(200);
         expect(listed.body.sources[0]).not.toHaveProperty("apiKey");
         expect(listed.text).not.toContain("lf_key");
+      });
+    });
+
+    describe("subscription test route: single-subscription send", () => {
+      // Runs on the dedicated app instance (fresh general limiter), and each
+      // test resolves to its own user id because the test limiter (mocked to
+      // 3 per 200ms window) is keyed per user.
+      it("notifies only the caller's subscription, never the rule/team fan-out", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "single-send-user-1" }));
+        const own = {
+          id: "sub-1",
+          userId: "user-1",
+          teamId: "t1",
+          ruleId: "rule-1",
+          channel: "EMAIL",
+          config: {},
+          user: { id: "user-1", email: "user@test.com", name: "Test User" },
+        };
+        mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce(own);
+
+        const res = await authed(writeApp.post("/api/v1/subscriptions/sub-1/test"));
+
+        expect(res.status).toBe(200);
+        // A teammate's matching subscription receives nothing: the fan-out
+        // entry point (which looks up every subscriber) is never used.
+        expect(mockDispatch).not.toHaveBeenCalled();
+        expect(mockDispatchToSubscription).toHaveBeenCalledTimes(1);
+        expect(mockDispatchToSubscription.mock.calls[0][0]).toBe(own);
+      });
+
+      it("sends to the caller's subscription even when it is disabled and its severities exclude LOW", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "single-send-user-2" }));
+        mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce({
+          id: "sub-1",
+          userId: "user-1",
+          teamId: "t1",
+          ruleId: "rule-1",
+          channel: "WEBHOOK",
+          config: { url: "https://hooks.example.com/x" },
+          enabled: false,
+          severities: ["CRITICAL"],
+          user: { id: "user-1", email: "user@test.com", name: "Test User" },
+        });
+
+        const res = await authed(writeApp.post("/api/v1/subscriptions/sub-1/test"));
+
+        expect(res.status).toBe(200);
+        expect(mockDispatchToSubscription).toHaveBeenCalledWith(
+          expect.objectContaining({ id: "sub-1", enabled: false }),
+          expect.objectContaining({ severity: "LOW" }),
+        );
+      });
+
+      it("returns 500 with the error message when the channel fails after retries", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "single-send-user-3" }));
+        mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce({
+          id: "sub-1",
+          userId: "user-1",
+          teamId: "t1",
+          ruleId: "rule-1",
+          channel: "WEBHOOK",
+          config: { url: "https://hooks.example.com/x" },
+          user: { id: "user-1", email: "user@test.com", name: "Test User" },
+        });
+        mockDispatchToSubscription.mockRejectedValueOnce(new Error("Webhook failed: 502"));
+
+        const res = await authed(writeApp.post("/api/v1/subscriptions/sub-1/test"));
+
+        expect(res.status).toBe(500);
+        expect(res.body).toEqual({ error: "Webhook failed: 502" });
       });
     });
 

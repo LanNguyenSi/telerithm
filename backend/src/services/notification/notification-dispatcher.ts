@@ -8,6 +8,13 @@ import { createChildLogger } from "../../logger.js";
 const log = createChildLogger("notification-dispatcher");
 const MAX_RETRIES = 3;
 
+interface SubscriberInfo {
+  id: string;
+  channel: string;
+  config: unknown;
+  user: { id: string; email: string; name: string };
+}
+
 interface IncidentInfo {
   id: string;
   ruleId: string;
@@ -51,6 +58,17 @@ export class NotificationDispatcher {
     );
 
     await Promise.allSettled(tasks);
+  }
+
+  /**
+   * Sends to exactly one already-loaded subscription, bypassing subscriber
+   * lookup and the enabled/severity filters (used for the caller-initiated
+   * channel test). Retries like dispatch, but a failure after the last retry
+   * is rethrown instead of swallowed so the caller can report it. The same
+   * per-channel safety checks (URL guard, signing) apply as for dispatch.
+   */
+  async dispatchToSubscription(subscription: SubscriberInfo, incident: IncidentInfo): Promise<void> {
+    await this.sendWithRetry(subscription, incident);
   }
 
   private async sendWithRetry(
