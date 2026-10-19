@@ -519,6 +519,19 @@ describe("NotificationDispatcher.dispatchToSubscription", () => {
     expect(err).toMatchObject({ message: "Webhook URL not configured" });
   });
 
+  it.each([
+    ["SLACK", makeSlackSubscriber({ config: {} }), "Slack webhook URL not configured"],
+    ["MSTEAMS", makeMsTeamsSubscriber({ config: {} }), "MS Teams webhook URL not configured"],
+  ])("throws a ChannelConfigError for a %s subscription with no webhook URL", async (_channel, sub, message) => {
+    const sent = dispatcher.dispatchToSubscription(sub, INCIDENT);
+    const caught = sent.catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    const err = await caught;
+
+    expect(err).toBeInstanceOf(ChannelConfigError);
+    expect(err).toMatchObject({ message });
+  });
+
   it("keeps the SSRF guard on the single-subscription path", async () => {
     mockAssertSafeUrl.mockRejectedValue(new Error("Host resolves to blocked range"));
 

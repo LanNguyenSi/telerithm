@@ -1556,9 +1556,9 @@ apiRouter.post(
         return;
       }
       // Every other failure describes the remote host or the network path to
-      // it (a non-2xx answer, a refused connection, a timeout). The details
-      // stay in the server log: the test route must not work as a status or
-      // reachability probe for a caller-chosen URL.
+      // it (a non-2xx answer, a refused connection, a timeout). The status,
+      // status text and error text stay in the server log; the caller only
+      // learns "rejected" or "not reached".
       if (error instanceof ChannelHttpError) {
         log.warn(
           {

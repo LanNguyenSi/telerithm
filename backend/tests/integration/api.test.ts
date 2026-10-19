@@ -4177,7 +4177,7 @@ describe("API Routes", () => {
         ["a refused connection", Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } })],
         ["a timeout", new DOMException("The operation was aborted due to timeout", "TimeoutError")],
         ["any other error", new Error("Webhook host resolves to a blocked address range")],
-      ])("returns 500 with a generic message for %s, so the route is no reachability probe", async (_case, err) => {
+      ])("returns 500 with a generic message for %s, without the network error text", async (_case, err) => {
         mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: `single-send-user-5-${_case}` }));
         mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce(webhookSubscription);
         mockDispatchToSubscription.mockRejectedValueOnce(err);

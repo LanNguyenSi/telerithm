@@ -779,8 +779,23 @@ describe("assertSafeUrl: refusals are configuration errors", () => {
     ["an unsupported scheme", "ftp://hooks.example.com/x", () => undefined],
     ["a blocked literal address", "https://127.0.0.1/hook", () => undefined],
     ["an unresolvable host", "https://hooks.example.invalid/x", mockDnsFail],
+    ["an empty resolution", "https://hooks.example.com/x", () => mockLookup.mockResolvedValueOnce([] as never)],
+    [
+      "a name resolving to a blocked address",
+      "https://internal.example.com/x",
+      () => mockLookup.mockResolvedValueOnce([{ address: "10.0.0.5", family: 4 }] as never),
+    ],
   ])("throws ChannelConfigError for %s", async (_case, url, arrange) => {
     arrange();
     await expect(assertSafeUrl(url)).rejects.toBeInstanceOf(ChannelConfigError);
+  });
+
+  it("throws ChannelConfigError for a host outside the allow-list", async () => {
+    process.env.WEBHOOK_HOST_ALLOWLIST = "hooks.allowed.example";
+    try {
+      await expect(assertSafeUrl("https://hooks.example.com/x")).rejects.toBeInstanceOf(ChannelConfigError);
+    } finally {
+      delete process.env.WEBHOOK_HOST_ALLOWLIST;
+    }
   });
 });
