@@ -473,6 +473,17 @@ describe("NotificationDispatcher.dispatchToSubscription", () => {
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
+  it("sends even when the subscription is disabled and its severities exclude the incident's", async () => {
+    mockSendWebhook.mockResolvedValue(undefined);
+
+    await dispatcher.dispatchToSubscription(
+      makeWebhookSubscriber({ enabled: false, severities: ["CRITICAL"] }),
+      { ...INCIDENT, severity: "LOW" },
+    );
+
+    expect(mockSendWebhook).toHaveBeenCalledOnce();
+  });
+
   it("rethrows the channel error after the last retry instead of swallowing it", async () => {
     mockSendWebhook.mockRejectedValue(new Error("channel down"));
 
