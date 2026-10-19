@@ -3,6 +3,7 @@ import { sendWebhook } from "./channels/webhook.js";
 import { sendEmail } from "./channels/email.js";
 import { sendMsTeamsMessage } from "./channels/msteams.js";
 import { assertSafeUrl } from "./url-guard.js";
+import { ChannelHttpError } from "./channels/errors.js";
 import { createChildLogger } from "../../logger.js";
 
 const log = createChildLogger("notification-dispatcher");
@@ -195,6 +196,6 @@ async function sendSlackMessage(webhookUrl: string, incident: IncidentInfo): Pro
   });
 
   if (!res.ok) {
-    throw new Error(`Slack webhook failed: ${res.status}`);
+    throw new ChannelHttpError(`Slack webhook failed: ${res.status}`, res.status, res.statusText);
   }
 }

@@ -1,6 +1,7 @@
 import type { Server } from "node:http";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import supertest from "supertest";
+import { ChannelHttpError } from "../../src/services/notification/channels/errors.js";
 
 // Hoisted so the vi.mock factory below (itself hoisted above imports) can
 // close over it; reset/re-seeded like every other mock in beforeEach.
@@ -1005,6 +1006,10 @@ describe("API Routes", () => {
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBe("Subscription not found");
+      // The lookup is scoped to the caller: a foreign id must not match.
+      expect(mockedPrisma.alertSubscription.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "missing-sub", userId: "test-route-user-5" } }),
+      );
       expect(mockDispatchToSubscription).not.toHaveBeenCalled();
       expect(mockDispatch).not.toHaveBeenCalled();
     });
@@ -4097,6 +4102,9 @@ describe("API Routes", () => {
         expect(res.status).toBe(200);
         // A teammate's matching subscription receives nothing: the fan-out
         // entry point (which looks up every subscriber) is never used.
+        expect(mockedPrisma.alertSubscription.findFirst).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: "sub-1", userId: "single-send-user-1" } }),
+        );
         expect(mockDispatch).not.toHaveBeenCalled();
         expect(mockDispatchToSubscription).toHaveBeenCalledTimes(1);
         expect(mockDispatchToSubscription.mock.calls[0][0]).toBe(own);
@@ -4125,23 +4133,43 @@ describe("API Routes", () => {
         );
       });
 
-      it("returns 500 with the error message when the channel fails after retries", async () => {
+      const webhookSubscription = {
+        id: "sub-1",
+        userId: "user-1",
+        teamId: "t1",
+        ruleId: "rule-1",
+        channel: "WEBHOOK",
+        config: { url: "https://hooks.example.com/x" },
+        user: { id: "user-1", email: "user@test.com", name: "Test User" },
+      };
+
+      it("returns 500 with a generic message, without the target's status, when the channel answers non-2xx after retries", async () => {
         mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "single-send-user-3" }));
-        mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce({
-          id: "sub-1",
-          userId: "user-1",
-          teamId: "t1",
-          ruleId: "rule-1",
-          channel: "WEBHOOK",
-          config: { url: "https://hooks.example.com/x" },
-          user: { id: "user-1", email: "user@test.com", name: "Test User" },
-        });
-        mockDispatchToSubscription.mockRejectedValueOnce(new Error("Webhook failed: 502"));
+        mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce(webhookSubscription);
+        mockDispatchToSubscription.mockRejectedValueOnce(
+          new ChannelHttpError("Webhook failed: 502 Bad Gateway", 502, "Bad Gateway"),
+        );
 
         const res = await authed(writeApp.post("/api/v1/subscriptions/sub-1/test"));
 
         expect(res.status).toBe(500);
-        expect(res.body).toEqual({ error: "Webhook failed: 502" });
+        expect(res.body).toEqual({ error: "The channel rejected the test notification" });
+        expect(res.text).not.toContain("502");
+        expect(res.text).not.toContain("Bad Gateway");
+        expect(res.text).not.toContain("hooks.example.com");
+      });
+
+      it("returns 500 with the error message for a guard refusal or missing URL (the user's own config)", async () => {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "single-send-user-4" }));
+        mockedPrisma.alertSubscription.findFirst.mockResolvedValueOnce(webhookSubscription);
+        mockDispatchToSubscription.mockRejectedValueOnce(
+          new Error("Webhook host resolves to a blocked address range"),
+        );
+
+        const res = await authed(writeApp.post("/api/v1/subscriptions/sub-1/test"));
+
+        expect(res.status).toBe(500);
+        expect(res.body).toEqual({ error: "Webhook host resolves to a blocked address range" });
       });
     });
 

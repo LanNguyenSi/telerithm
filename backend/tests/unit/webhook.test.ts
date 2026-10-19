@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ChannelHttpError } from "../../src/services/notification/channels/errors.js";
 import { createHmac } from "node:crypto";
 
 // vi.mock calls are hoisted to the top of the file by vitest —
@@ -204,6 +205,13 @@ describe("sendWebhook — error handling", () => {
   it("throws when the server responds with 404", async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 404, statusText: "Not Found" } as Response);
     await expect(sendWebhook(TARGET_URL, SAMPLE_PAYLOAD)).rejects.toThrow("Webhook failed: 404");
+  });
+
+  it("throws a ChannelHttpError carrying the status and status text on a non-ok response", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 502, statusText: "Bad Gateway" } as Response);
+    const err = await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ChannelHttpError);
+    expect(err).toMatchObject({ status: 502, statusText: "Bad Gateway" });
   });
 
   it("propagates network errors from fetch", async () => {

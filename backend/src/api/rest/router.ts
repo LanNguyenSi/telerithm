@@ -11,6 +11,7 @@ import { StreamingService } from "../../services/streaming/streaming-service.js"
 import { IssueService } from "../../services/issue/issue-service.js";
 import { SubscriptionService } from "../../services/subscription/subscription-service.js";
 import { assertSafeUrl } from "../../services/notification/url-guard.js";
+import { ChannelHttpError } from "../../services/notification/channels/errors.js";
 import { TeamService } from "../../services/team/team-service.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../errors.js";
 import { createWriteRoute, teamFromBody, teamFromResource, type TeamRoleName } from "./write-route.js";
@@ -1549,6 +1550,21 @@ apiRouter.post(
       });
       res.json({ ok: true, message: "Test notification sent" });
     } catch (error) {
+      if (error instanceof ChannelHttpError) {
+        // The remote host's status and status text stay in the server log: the
+        // test route must not work as a status probe for a caller-chosen URL.
+        log.warn(
+          {
+            subscriptionId: subscription.id,
+            channel: subscription.channel,
+            status: error.status,
+            statusText: error.statusText,
+          },
+          "Test notification rejected by the channel",
+        );
+        res.status(500).json({ error: "The channel rejected the test notification" });
+        return;
+      }
       res.status(500).json({ error: error instanceof Error ? error.message : "Failed to send test" });
     }
   }),

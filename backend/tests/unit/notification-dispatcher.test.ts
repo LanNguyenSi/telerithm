@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ChannelHttpError } from "../../src/services/notification/channels/errors.js";
 
 // vi.hoisted lets these be referenced safely inside vi.mock() factory functions
 // (vi.mock() calls are hoisted above imports; vi.hoisted() runs before them).
@@ -493,6 +494,19 @@ describe("NotificationDispatcher.dispatchToSubscription", () => {
     await assertion;
 
     expect(mockSendWebhook).toHaveBeenCalledTimes(3);
+  });
+
+  it("throws a ChannelHttpError for a non-ok Slack response after the last retry", async () => {
+    mockAssertSafeUrl.mockResolvedValue(undefined);
+    mockFetch.mockResolvedValue({ ok: false, status: 404, statusText: "Not Found" } as Response);
+
+    const sent = dispatcher.dispatchToSubscription(makeSlackSubscriber(), INCIDENT);
+    const caught = sent.catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    const err = await caught;
+
+    expect(err).toBeInstanceOf(ChannelHttpError);
+    expect(err).toMatchObject({ status: 404, statusText: "Not Found" });
   });
 
   it("keeps the SSRF guard on the single-subscription path", async () => {
