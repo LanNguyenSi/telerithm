@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ChannelConfigError, ChannelHttpError } from "../../src/services/notification/channels/errors.js";
 
 // vi.hoisted lets these be referenced safely inside vi.mock() factory functions
 // (vi.mock() calls are hoisted above imports; vi.hoisted() runs before them).
@@ -442,5 +443,103 @@ describe("NotificationDispatcher.dispatch — retry logic", () => {
     await vi.advanceTimersByTimeAsync(1500);
     await dispatchPromise;
     expect(mockSendWebhook).toHaveBeenCalledTimes(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Single-subscription send (channel test)
+// ---------------------------------------------------------------------------
+describe("NotificationDispatcher.dispatchToSubscription", () => {
+  let dispatcher: NotificationDispatcher;
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    vi.useFakeTimers();
+    dispatcher = new NotificationDispatcher();
+    globalThis.fetch = mockFetch;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sends to the given subscription without looking up other subscribers", async () => {
+    mockFindForIncident.mockResolvedValue([makeEmailSubscriber()]);
+    mockSendWebhook.mockResolvedValue(undefined);
+
+    await dispatcher.dispatchToSubscription(makeWebhookSubscriber(), INCIDENT);
+
+    expect(mockFindForIncident).not.toHaveBeenCalled();
+    expect(mockSendWebhook).toHaveBeenCalledOnce();
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
+
+  it("sends even when the subscription is disabled and its severities exclude the incident's", async () => {
+    mockSendWebhook.mockResolvedValue(undefined);
+
+    await dispatcher.dispatchToSubscription(
+      makeWebhookSubscriber({ enabled: false, severities: ["CRITICAL"] }),
+      { ...INCIDENT, severity: "LOW" },
+    );
+
+    expect(mockSendWebhook).toHaveBeenCalledOnce();
+  });
+
+  it("rethrows the channel error after the last retry instead of swallowing it", async () => {
+    mockSendWebhook.mockRejectedValue(new Error("channel down"));
+
+    const sent = dispatcher.dispatchToSubscription(makeWebhookSubscriber(), INCIDENT);
+    const assertion = expect(sent).rejects.toThrow("channel down");
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    expect(mockSendWebhook).toHaveBeenCalledTimes(3);
+  });
+
+  it("throws a ChannelHttpError for a non-ok Slack response after the last retry", async () => {
+    mockAssertSafeUrl.mockResolvedValue(undefined);
+    mockFetch.mockResolvedValue({ ok: false, status: 404, statusText: "Not Found" } as Response);
+
+    const sent = dispatcher.dispatchToSubscription(makeSlackSubscriber(), INCIDENT);
+    const caught = sent.catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    const err = await caught;
+
+    expect(err).toBeInstanceOf(ChannelHttpError);
+    expect(err).toMatchObject({ status: 404, statusText: "Not Found" });
+  });
+
+  it("throws a ChannelConfigError when the subscription has no URL configured", async () => {
+    const sent = dispatcher.dispatchToSubscription(makeWebhookSubscriber({ config: {} }), INCIDENT);
+    const caught = sent.catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    const err = await caught;
+
+    expect(err).toBeInstanceOf(ChannelConfigError);
+    expect(err).toMatchObject({ message: "Webhook URL not configured" });
+  });
+
+  it.each([
+    ["SLACK", makeSlackSubscriber({ config: {} }), "Slack webhook URL not configured"],
+    ["MSTEAMS", makeMsTeamsSubscriber({ config: {} }), "MS Teams webhook URL not configured"],
+  ])("throws a ChannelConfigError for a %s subscription with no webhook URL", async (_channel, sub, message) => {
+    const sent = dispatcher.dispatchToSubscription(sub, INCIDENT);
+    const caught = sent.catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    const err = await caught;
+
+    expect(err).toBeInstanceOf(ChannelConfigError);
+    expect(err).toMatchObject({ message });
+  });
+
+  it("keeps the SSRF guard on the single-subscription path", async () => {
+    mockAssertSafeUrl.mockRejectedValue(new Error("Host resolves to blocked range"));
+
+    const sent = dispatcher.dispatchToSubscription(makeSlackSubscriber(), INCIDENT);
+    const assertion = expect(sent).rejects.toThrow("Host resolves to blocked range");
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 });

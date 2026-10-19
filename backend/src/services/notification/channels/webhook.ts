@@ -1,6 +1,7 @@
 import { createHmac } from "node:crypto";
 import { createChildLogger } from "../../../logger.js";
 import { assertSafeUrl } from "../url-guard.js";
+import { ChannelHttpError } from "./errors.js";
 
 const log = createChildLogger("notify-webhook");
 
@@ -43,7 +44,7 @@ export async function sendWebhook(
   });
 
   if (!res.ok) {
-    throw new Error(`Webhook failed: ${res.status} ${res.statusText}`);
+    throw new ChannelHttpError(`Webhook failed: ${res.status} ${res.statusText}`, res.status, res.statusText);
   }
 
   log.debug({ url, status: res.status }, "Webhook delivered");

@@ -11,6 +11,7 @@ import { StreamingService } from "../../services/streaming/streaming-service.js"
 import { IssueService } from "../../services/issue/issue-service.js";
 import { SubscriptionService } from "../../services/subscription/subscription-service.js";
 import { assertSafeUrl } from "../../services/notification/url-guard.js";
+import { ChannelConfigError, ChannelHttpError } from "../../services/notification/channels/errors.js";
 import { TeamService } from "../../services/team/team-service.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../errors.js";
 import { createWriteRoute, teamFromBody, teamFromResource, type TeamRoleName } from "./write-route.js";
@@ -1536,7 +1537,9 @@ apiRouter.post(
     const { NotificationDispatcher } = await import("../../services/notification/notification-dispatcher.js");
     const dispatcher = new NotificationDispatcher();
     try {
-      await dispatcher.dispatch({
+      // Only the caller's own loaded subscription is notified: dispatch()
+      // would fan out to every enabled subscriber of the rule/team.
+      await dispatcher.dispatchToSubscription(subscription, {
         id: "test-incident-000",
         ruleId: subscription.ruleId ?? "test-rule",
         teamId: subscription.teamId,
@@ -1547,7 +1550,37 @@ apiRouter.post(
       });
       res.json({ ok: true, message: "Test notification sent" });
     } catch (error) {
-      res.status(500).json({ error: error instanceof Error ? error.message : "Failed to send test" });
+      if (error instanceof ChannelConfigError) {
+        // A guard refusal or a missing URL describes the caller's own config.
+        res.status(500).json({ error: error.message });
+        return;
+      }
+      // Every other failure describes the remote host or the network path to
+      // it (a non-2xx answer, a refused connection, a timeout). The status,
+      // status text and error text stay in the server log; the caller only
+      // learns "rejected" or "not reached".
+      if (error instanceof ChannelHttpError) {
+        log.warn(
+          {
+            subscriptionId: subscription.id,
+            channel: subscription.channel,
+            status: error.status,
+            statusText: error.statusText,
+          },
+          "Test notification rejected by the channel",
+        );
+        res.status(500).json({ error: "The channel rejected the test notification" });
+        return;
+      }
+      log.warn(
+        {
+          subscriptionId: subscription.id,
+          channel: subscription.channel,
+          error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+        },
+        "Test notification could not reach the channel",
+      );
+      res.status(500).json({ error: "The channel could not be reached" });
     }
   }),
 );

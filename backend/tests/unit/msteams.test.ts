@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ChannelHttpError } from "../../src/services/notification/channels/errors.js";
 
 // vi.mock calls are hoisted above imports by vitest
 vi.mock("../../src/services/notification/url-guard.js", () => ({
@@ -171,6 +172,13 @@ describe("sendMsTeamsMessage — error handling", () => {
     await expect(sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT)).rejects.toThrow(
       "MS Teams webhook failed: 400",
     );
+  });
+
+  it("throws a ChannelHttpError carrying the status and status text on a non-ok response", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503, statusText: "Service Unavailable" } as Response);
+    const err = await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ChannelHttpError);
+    expect(err).toMatchObject({ status: 503, statusText: "Service Unavailable" });
   });
 
   it("propagates network errors from fetch", async () => {

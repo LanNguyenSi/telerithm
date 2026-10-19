@@ -3,10 +3,18 @@ import { sendWebhook } from "./channels/webhook.js";
 import { sendEmail } from "./channels/email.js";
 import { sendMsTeamsMessage } from "./channels/msteams.js";
 import { assertSafeUrl } from "./url-guard.js";
+import { ChannelConfigError, ChannelHttpError } from "./channels/errors.js";
 import { createChildLogger } from "../../logger.js";
 
 const log = createChildLogger("notification-dispatcher");
 const MAX_RETRIES = 3;
+
+interface SubscriberInfo {
+  id: string;
+  channel: string;
+  config: unknown;
+  user: { id: string; email: string; name: string };
+}
 
 interface IncidentInfo {
   id: string;
@@ -53,6 +61,17 @@ export class NotificationDispatcher {
     await Promise.allSettled(tasks);
   }
 
+  /**
+   * Sends to exactly one already-loaded subscription, bypassing subscriber
+   * lookup and the enabled/severity filters (used for the caller-initiated
+   * channel test). Retries like dispatch, but a failure after the last retry
+   * is rethrown instead of swallowed so the caller can report it. The same
+   * per-channel safety checks (URL guard, signing) apply as for dispatch.
+   */
+  async dispatchToSubscription(subscription: SubscriberInfo, incident: IncidentInfo): Promise<void> {
+    await this.sendWithRetry(subscription, incident);
+  }
+
   private async sendWithRetry(
     subscription: {
       id: string;
@@ -69,7 +88,7 @@ export class NotificationDispatcher {
         switch (subscription.channel) {
           case "WEBHOOK": {
             const url = config.url;
-            if (!url) throw new Error("Webhook URL not configured");
+            if (!url) throw new ChannelConfigError("Webhook URL not configured");
             await sendWebhook(
               url,
               {
@@ -100,13 +119,13 @@ export class NotificationDispatcher {
           }
           case "SLACK": {
             const webhookUrl = config.webhook_url;
-            if (!webhookUrl) throw new Error("Slack webhook URL not configured");
+            if (!webhookUrl) throw new ChannelConfigError("Slack webhook URL not configured");
             await sendSlackMessage(webhookUrl, incident);
             break;
           }
           case "MSTEAMS": {
             const teamsUrl = config.webhook_url;
-            if (!teamsUrl) throw new Error("MS Teams webhook URL not configured");
+            if (!teamsUrl) throw new ChannelConfigError("MS Teams webhook URL not configured");
             await sendMsTeamsMessage(teamsUrl, {
               incidentId: incident.id,
               ruleId: incident.ruleId,
@@ -177,6 +196,6 @@ async function sendSlackMessage(webhookUrl: string, incident: IncidentInfo): Pro
   });
 
   if (!res.ok) {
-    throw new Error(`Slack webhook failed: ${res.status}`);
+    throw new ChannelHttpError(`Slack webhook failed: ${res.status}`, res.status, res.statusText);
   }
 }

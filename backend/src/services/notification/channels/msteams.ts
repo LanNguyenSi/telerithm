@@ -1,5 +1,6 @@
 import { createChildLogger } from "../../../logger.js";
 import { assertSafeUrl } from "../url-guard.js";
+import { ChannelHttpError } from "./errors.js";
 
 const log = createChildLogger("notify-msteams");
 
@@ -69,7 +70,7 @@ export async function sendMsTeamsMessage(webhookUrl: string, incident: IncidentP
   });
 
   if (!res.ok) {
-    throw new Error(`MS Teams webhook failed: ${res.status}`);
+    throw new ChannelHttpError(`MS Teams webhook failed: ${res.status}`, res.status, res.statusText);
   }
 
   log.debug({ webhookUrl, status: res.status }, "MS Teams message delivered");
