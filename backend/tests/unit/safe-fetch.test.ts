@@ -13,7 +13,11 @@ vi.mock("../../src/logger.js", () => ({
   createChildLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() }),
 }));
 
-import { pinnedLookup, safeFetch, type SafeFetchInternals } from "../../src/services/notification/safe-fetch.js";
+import {
+  pinnedLookup,
+  safeFetch,
+  type SafeFetchInternals,
+} from "../../src/services/notification/safe-fetch.js";
 
 // The name never resolves in real DNS (RFC 2606), so a connection that is not
 // pinned to the vetted address cannot reach the observer server by accident.
@@ -39,6 +43,7 @@ interface Seen {
   headers: http.IncomingHttpHeaders;
   body: string;
   remoteAddress?: string;
+  remotePort?: number;
 }
 
 async function startServer(
@@ -58,6 +63,7 @@ async function startServer(
         headers: req.headers,
         body: Buffer.concat(chunks).toString("utf8"),
         remoteAddress: req.socket.remoteAddress,
+        remotePort: req.socket.remotePort,
       });
       respond(req, res);
     });
@@ -116,9 +122,9 @@ describe("safeFetch: connects to the address the guard vetted", () => {
     const { seen, port } = await observer();
     const { lookup, internals } = guardWith([[PRIVATE_SECOND], [PUBLIC_FIRST]]);
 
-    await expect(safeFetch(`http://${NAME}:${port}/`, { method: "POST", body: "{}" }, internals)).rejects.toBeInstanceOf(
-      ChannelConfigError,
-    );
+    await expect(
+      safeFetch(`http://${NAME}:${port}/`, { method: "POST", body: "{}" }, internals),
+    ).rejects.toBeInstanceOf(ChannelConfigError);
 
     expect(lookup).toHaveBeenCalledTimes(1);
     expect(seen).toHaveLength(0);
@@ -128,9 +134,9 @@ describe("safeFetch: connects to the address the guard vetted", () => {
     const { seen, port } = await observer();
     const { internals } = guardWith([[PUBLIC_FIRST, PRIVATE_SECOND]]);
 
-    await expect(safeFetch(`http://${NAME}:${port}/`, { method: "POST", body: "{}" }, internals)).rejects.toThrow(
-      "blocked address range",
-    );
+    await expect(
+      safeFetch(`http://${NAME}:${port}/`, { method: "POST", body: "{}" }, internals),
+    ).rejects.toThrow("blocked address range");
     expect(seen).toHaveLength(0);
   });
 
@@ -149,9 +155,9 @@ describe("safeFetch: connects to the address the guard vetted", () => {
   it("applies the real range check when no seam is given (loopback literal refused, nothing sent)", async () => {
     const { seen, port } = await observer();
 
-    await expect(safeFetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "{}" })).rejects.toBeInstanceOf(
-      ChannelConfigError,
-    );
+    await expect(
+      safeFetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "{}" }),
+    ).rejects.toBeInstanceOf(ChannelConfigError);
     expect(seen).toHaveLength(0);
   });
 
@@ -219,6 +225,76 @@ describe("safeFetch: redirects and timeouts", () => {
   });
 });
 
+describe("safeFetch: connection hygiene", () => {
+  it("opens a fresh connection for every request (no pooled socket is shared)", async () => {
+    const { server, seen, port } = await observer();
+    const sockets = new Set<unknown>();
+    server.on("connection", (socket) => sockets.add(socket));
+    const { internals } = guardWith([[PUBLIC_FIRST]]);
+
+    await safeFetch(`http://${NAME}:${port}/a`, { method: "POST", body: "{}" }, internals);
+    await safeFetch(`http://${NAME}:${port}/b`, { method: "POST", body: "{}" }, internals);
+
+    expect(seen).toHaveLength(2);
+    expect(sockets.size).toBe(2);
+    expect(seen[0].remotePort).not.toBe(seen[1].remotePort);
+    // A private agent does not keep connections alive; the shared global agent
+    // would announce keep-alive and offer the socket for reuse.
+    expect(seen[0].headers.connection).toBe("close");
+    expect(seen[1].headers.connection).toBe("close");
+  });
+
+  it("drops the response body so the socket closes soon after the status is known", async () => {
+    let closed: Promise<void> = Promise.resolve();
+    const { port } = await observer((_req, res) => {
+      res.statusCode = 200;
+      res.write("start");
+      const timer = setInterval(() => res.write("x".repeat(1024)), 10);
+      closed = new Promise<void>((resolve) =>
+        res.on("close", () => {
+          clearInterval(timer);
+          resolve();
+        }),
+      );
+    });
+    const { internals } = guardWith([[PUBLIC_FIRST]]);
+
+    const res = await safeFetch(
+      `http://${NAME}:${port}/`,
+      { method: "POST", body: "{}", timeoutMs: 20_000 },
+      internals,
+    );
+    expect(res.ok).toBe(true);
+
+    // The endless body must not keep the connection open: the server sees the
+    // close well inside this bound (the request timeout is 20 s).
+    let timer: NodeJS.Timeout | undefined;
+    const outcome = await Promise.race([
+      closed.then(() => "closed"),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve("still open"), 2_000);
+      }),
+    ]);
+    clearTimeout(timer);
+    expect(outcome).toBe("closed");
+  });
+
+  it("delivers a URL with userinfo without sending credentials", async () => {
+    const { seen, port } = await observer();
+    const { internals } = guardWith([[PUBLIC_FIRST]]);
+
+    const res = await safeFetch(
+      `http://user:pass@${NAME}:${port}/u`,
+      { method: "POST", body: "{}" },
+      internals,
+    );
+
+    expect(res.ok).toBe(true);
+    expect(seen[0].url).toBe("/u");
+    expect(seen[0].headers.authorization).toBeUndefined();
+  });
+});
+
 describe("pinnedLookup", () => {
   const lookupOnce = (fn: ReturnType<typeof pinnedLookup>, options: Record<string, unknown>) =>
     new Promise<{ err: NodeJS.ErrnoException | null; address: unknown; family: unknown }>((resolve) => {
@@ -239,7 +315,11 @@ describe("pinnedLookup", () => {
 
   it("honours a requested family without leaving the vetted set", async () => {
     const fn = pinnedLookup(["192.0.2.1", "2001:db8::1"]);
-    expect(await lookupOnce(fn, { family: 6 })).toMatchObject({ err: null, address: "2001:db8::1", family: 6 });
+    expect(await lookupOnce(fn, { family: 6 })).toMatchObject({
+      err: null,
+      address: "2001:db8::1",
+      family: 6,
+    });
     expect(await lookupOnce(fn, { family: 4, all: true })).toMatchObject({
       address: [{ address: "192.0.2.1", family: 4 }],
     });
@@ -290,7 +370,9 @@ describe("safeFetch: TLS validates against the original host name", () => {
       res.statusCode = 200;
       res.end("ok");
     });
-    server.on("secureConnection", (socket) => sni.push((socket as unknown as { servername?: string }).servername));
+    server.on("secureConnection", (socket) =>
+      sni.push((socket as unknown as { servername?: string }).servername),
+    );
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     servers.push(server);
     return { port: (server.address() as AddressInfo).port, sni, seen };
