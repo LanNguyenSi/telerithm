@@ -45,11 +45,11 @@ their areas; these docs deliberately do not duplicate them.
   must stay mirrored between the two production variants, and the PR
   #59/#60/#110 drift precedent.
 - [Notification delivery trust boundary](notification-delivery-trust-boundary.md),
-  `assertSafeUrl` right before each of the three outbound `fetch` calls
-  (webhook, Slack, Teams) with `redirect: "manual"`, why that delivery-time
-  check is the binding one (the router's input check does not run on every
-  write), who can set a target, what leaves the system, and the
-  test route.
+  every sender (webhook, Slack, Teams) hands its URL to `safeFetch`, which
+  vets it with the SSRF guard, resolves the name once and connects only to the
+  vetted addresses, never following a redirect; why that delivery-time check
+  is the binding one (the router's input check does not run on every write),
+  who can set a target, what leaves the system, and the test route.
 
 ## Runbooks
 

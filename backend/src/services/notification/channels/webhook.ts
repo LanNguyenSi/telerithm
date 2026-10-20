@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { createChildLogger } from "../../../logger.js";
-import { assertSafeUrl } from "../url-guard.js";
+import { safeFetch } from "../safe-fetch.js";
 import { ChannelHttpError } from "./errors.js";
 
 const log = createChildLogger("notify-webhook");
@@ -31,17 +31,10 @@ export async function sendWebhook(
     reqHeaders["X-Telerithm-Signature"] = `sha256=${signature}`;
   }
 
-  // SSRF guard: re-validate at delivery time (DNS may have rebound since the
-  // subscription was persisted) and block redirect-based bypass.
-  await assertSafeUrl(url);
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: reqHeaders,
-    body,
-    redirect: "manual",
-    signal: AbortSignal.timeout(10_000),
-  });
+  // SSRF guard: safeFetch re-validates at delivery time (DNS may have rebound
+  // since the subscription was persisted), connects to the address it vetted
+  // and never follows a redirect.
+  const res = await safeFetch(url, { method: "POST", headers: reqHeaders, body });
 
   if (!res.ok) {
     throw new ChannelHttpError(`Webhook failed: ${res.status} ${res.statusText}`, res.status, res.statusText);

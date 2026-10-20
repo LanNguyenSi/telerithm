@@ -20,9 +20,12 @@ const log = createChildLogger("notify-url-guard");
  *     prefixes (see WEBHOOK_NAT64_ADDITIONAL_PREFIXES / envNat64Prefixes).
  *
  * It must be called BOTH at the input boundary (subscription create/update)
- * and again immediately before each fetch (defense in depth, since DNS can be
- * rebound between persistence and delivery). Callers should additionally use
- * `redirect: "manual"` on the fetch so a 3xx cannot bounce to a blocked host.
+ * and again at delivery time (defense in depth, since DNS can be rebound
+ * between persistence and delivery). The delivery-time check is not a bare
+ * `assertSafeUrl` before a `fetch`: `resolveSafeTarget` hands back the vetted
+ * addresses and `safeFetch` (safe-fetch.ts) connects to exactly those, so a
+ * second DNS answer can never steer the request. Senders must not call
+ * `fetch` on a user URL themselves.
  */
 
 function envAllowlist(): string[] {
@@ -262,11 +265,39 @@ function isBlockedAddress(ip: string): boolean {
   return false;
 }
 
+/** The part of the guard that touches the outside world, injectable for tests. */
+export interface GuardDeps {
+  lookup: (hostname: string) => Promise<{ address: string }[]>;
+  isBlockedAddress: (ip: string) => boolean;
+}
+
+const defaultDeps: GuardDeps = {
+  lookup: (hostname) => lookup(hostname, { all: true }),
+  isBlockedAddress,
+};
+
+/** A URL that passed the guard, with the addresses a connection may use. */
+export interface SafeTarget {
+  url: URL;
+  /** Host name or IP literal without IPv6 brackets. */
+  hostname: string;
+  /**
+   * The vetted address set: the IP literal itself, or every address the one
+   * DNS lookup returned (all of them passed the range check). A request for
+   * this target must connect to one of these and to nothing else.
+   */
+  addresses: string[];
+}
+
 /**
- * Validate that `rawUrl` is a safe outbound webhook target. Throws on any
- * violation so callers fail closed.
+ * Validate that `rawUrl` is a safe outbound webhook target and return the
+ * addresses that were vetted, so the caller can connect to exactly those
+ * instead of resolving the name a second time. Throws on any violation so
+ * callers fail closed.
+ *
+ * `deps` exists for tests only; production callers pass nothing.
  */
-export async function assertSafeUrl(rawUrl: string): Promise<void> {
+export async function resolveSafeTarget(rawUrl: string, deps: GuardDeps = defaultDeps): Promise<SafeTarget> {
   let parsed: URL;
   try {
     parsed = new URL(rawUrl);
@@ -298,27 +329,43 @@ export async function assertSafeUrl(rawUrl: string): Promise<void> {
   // addresses and reject if ANY of them is blocked (avoids a partial-block
   // bypass where one A record is public and another is private).
   if (isIP(bareHost) !== 0) {
-    if (isBlockedAddress(bareHost)) {
+    if (deps.isBlockedAddress(bareHost)) {
       throw new ChannelConfigError("Webhook host resolves to a blocked address range");
     }
-    return;
+    return { url: parsed, hostname: bareHost, addresses: [bareHost] };
   }
 
-  let addresses: { address: string }[];
+  let resolved: { address: string }[];
   try {
-    addresses = await lookup(bareHost, { all: true });
+    resolved = await deps.lookup(bareHost);
   } catch {
     throw new ChannelConfigError("Webhook host could not be resolved");
   }
 
-  if (addresses.length === 0) {
+  if (resolved.length === 0) {
     throw new ChannelConfigError("Webhook host could not be resolved");
   }
 
-  for (const { address } of addresses) {
-    if (isBlockedAddress(address)) {
+  for (const { address } of resolved) {
+    if (deps.isBlockedAddress(address)) {
       log.warn({ host, address }, "Blocked webhook target in private/metadata range");
       throw new ChannelConfigError("Webhook host resolves to a blocked address range");
     }
   }
+
+  return {
+    url: parsed,
+    hostname: bareHost,
+    addresses: [...new Set(resolved.map((r) => r.address))],
+  };
+}
+
+/**
+ * Validate that `rawUrl` is a safe outbound webhook target. Throws on any
+ * violation so callers fail closed. Use this for validation only (the input
+ * boundary); a request must go through `safeFetch`, which pins the vetted
+ * addresses.
+ */
+export async function assertSafeUrl(rawUrl: string): Promise<void> {
+  await resolveSafeTarget(rawUrl);
 }

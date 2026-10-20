@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ChannelHttpError } from "../../src/services/notification/channels/errors.js";
+import { ChannelConfigError, ChannelHttpError } from "../../src/services/notification/channels/errors.js";
 
 // vi.mock calls are hoisted above imports by vitest
-vi.mock("../../src/services/notification/url-guard.js", () => ({
-  assertSafeUrl: vi.fn(),
+vi.mock("../../src/services/notification/safe-fetch.js", () => ({
+  safeFetch: vi.fn(),
 }));
 
 vi.mock("../../src/logger.js", () => ({
@@ -16,11 +16,14 @@ vi.mock("../../src/logger.js", () => ({
   }),
 }));
 
-import { assertSafeUrl } from "../../src/services/notification/url-guard.js";
+import { safeFetch, type SafeFetchInit } from "../../src/services/notification/safe-fetch.js";
 import { sendMsTeamsMessage } from "../../src/services/notification/channels/msteams.js";
 
-const mockAssertSafeUrl = vi.mocked(assertSafeUrl);
-const mockFetch = vi.fn();
+const mockSafeFetch = vi.mocked(safeFetch);
+
+// The global fetch must never be used for a user URL: delivery goes through
+// safeFetch, which pins the vetted address. Any call here is a regression.
+const plainFetch = vi.fn();
 
 const TEAMS_URL = "https://teams.webhook.office.com/webhookb2/abc123";
 
@@ -33,98 +36,66 @@ const SAMPLE_INCIDENT = {
   createdAt: "2024-01-15T10:00:00.000Z",
 };
 
-describe("sendMsTeamsMessage — assertSafeUrl call-order (SSRF guard)", () => {
-  const callOrder: string[] = [];
-
+describe("sendMsTeamsMessage: delivery goes through safeFetch (SSRF guard)", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    callOrder.length = 0;
-
-    mockAssertSafeUrl.mockImplementation(async () => {
-      callOrder.push("assertSafeUrl");
-    });
-
-    mockFetch.mockImplementation(async () => {
-      callOrder.push("fetch");
-      return { ok: true, status: 200, statusText: "OK" } as Response;
-    });
-    globalThis.fetch = mockFetch;
+    mockSafeFetch.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
-  it("calls assertSafeUrl before fetch", async () => {
+  it("sends through safeFetch with the exact webhook URL, once per delivery", async () => {
     await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    expect(callOrder).toEqual(["assertSafeUrl", "fetch"]);
+    expect(mockSafeFetch).toHaveBeenCalledOnce();
+    expect(mockSafeFetch.mock.calls[0][0]).toBe(TEAMS_URL);
   });
 
-  it("calls assertSafeUrl with the exact webhook URL", async () => {
+  it("never calls the global fetch for the user URL", async () => {
     await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    expect(mockAssertSafeUrl).toHaveBeenCalledWith(TEAMS_URL);
+    expect(plainFetch).not.toHaveBeenCalled();
   });
 
-  it("calls assertSafeUrl exactly once per delivery", async () => {
-    await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    expect(mockAssertSafeUrl).toHaveBeenCalledOnce();
-  });
-
-  it("does NOT call fetch when assertSafeUrl rejects (SSRF guard blocks delivery)", async () => {
-    mockAssertSafeUrl.mockRejectedValueOnce(
-      new Error("MS Teams host resolves to a blocked address range"),
-    );
-    await expect(sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT)).rejects.toThrow(
-      "blocked address range",
-    );
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
-
-  it("propagates the exact error thrown by assertSafeUrl", async () => {
-    mockAssertSafeUrl.mockRejectedValueOnce(new Error("Host is on the deny list"));
-    await expect(sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT)).rejects.toThrow(
-      "Host is on the deny list",
-    );
+  it("propagates a guard refusal from safeFetch unchanged", async () => {
+    const refusal = new ChannelConfigError("Webhook host resolves to a blocked address range");
+    mockSafeFetch.mockRejectedValueOnce(refusal);
+    await expect(sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT)).rejects.toBe(refusal);
+    expect(plainFetch).not.toHaveBeenCalled();
   });
 });
 
 describe("sendMsTeamsMessage — HTTP request properties", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mockAssertSafeUrl.mockResolvedValue(undefined);
-    mockFetch.mockResolvedValue({ ok: true, status: 200, statusText: "OK" } as Response);
-    globalThis.fetch = mockFetch;
+    mockSafeFetch.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   it("sends POST method", async () => {
     await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit];
     expect(init.method).toBe("POST");
   });
 
   it("sets Content-Type: application/json", async () => {
     await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { headers: Record<string, string> }];
     expect(init.headers["Content-Type"]).toBe("application/json");
   });
 
-  it("sets redirect: manual to prevent redirect-based SSRF bypass", async () => {
+  it("passes the webhook URL as the first safeFetch argument", async () => {
     await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(init.redirect).toBe("manual");
-  });
-
-  it("sets AbortSignal timeout on the request", async () => {
-    await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(init.signal).toBeInstanceOf(AbortSignal);
-  });
-
-  it("passes the webhook URL as the first fetch argument", async () => {
-    await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    const [url] = mockFetch.mock.calls[0] as [string];
+    const [url] = mockSafeFetch.mock.calls[0];
     expect(url).toBe(TEAMS_URL);
+  });
+
+  it("hands safeFetch the URL string unchanged, with no normalisation", async () => {
+    const odd = "https://Teams.Example.com:8443/a%20b/../c?x=1&y=%2F";
+    await sendMsTeamsMessage(odd, SAMPLE_INCIDENT);
+    expect(mockSafeFetch.mock.calls[0][0]).toBe(odd);
   });
 
   it("sends a body that includes the incident message", async () => {
     await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { body: string }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { body: string }];
     const body = JSON.parse(init.body);
     // Adaptive card wraps content in attachments
     expect(JSON.stringify(body)).toContain(SAMPLE_INCIDENT.message);
@@ -132,14 +103,14 @@ describe("sendMsTeamsMessage — HTTP request properties", () => {
 
   it("includes the incident ID in the body", async () => {
     await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { body: string }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { body: string }];
     const body = JSON.stringify(JSON.parse(init.body));
     expect(body).toContain(SAMPLE_INCIDENT.incidentId);
   });
 
   it("uses the MS Teams adaptive card message type", async () => {
     await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { body: string }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { body: string }];
     const body = JSON.parse(init.body) as { type: string };
     expect(body.type).toBe("message");
   });
@@ -148,46 +119,65 @@ describe("sendMsTeamsMessage — HTTP request properties", () => {
 describe("sendMsTeamsMessage — error handling", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mockAssertSafeUrl.mockResolvedValue(undefined);
-    globalThis.fetch = mockFetch;
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   it("throws when the server responds with a non-ok status", async () => {
-    mockFetch.mockResolvedValueOnce({
+    mockSafeFetch.mockResolvedValueOnce({
       ok: false,
       status: 500,
       statusText: "Internal Server Error",
-    } as Response);
+    });
     await expect(sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT)).rejects.toThrow(
       "MS Teams webhook failed: 500",
     );
   });
 
   it("throws when the server responds with 400", async () => {
-    mockFetch.mockResolvedValueOnce({
+    mockSafeFetch.mockResolvedValueOnce({
       ok: false,
       status: 400,
       statusText: "Bad Request",
-    } as Response);
+    });
     await expect(sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT)).rejects.toThrow(
       "MS Teams webhook failed: 400",
     );
   });
 
   it("throws a ChannelHttpError carrying the status and status text on a non-ok response", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 503, statusText: "Service Unavailable" } as Response);
+    mockSafeFetch.mockResolvedValueOnce({ ok: false, status: 503, statusText: "Service Unavailable" });
     const err = await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ChannelHttpError);
     expect(err).toMatchObject({ status: 503, statusText: "Service Unavailable" });
   });
 
-  it("propagates network errors from fetch", async () => {
-    mockFetch.mockRejectedValueOnce(new Error("network timeout"));
+  it("treats a 3xx answer as a failed delivery and reports its status", async () => {
+    mockSafeFetch.mockResolvedValueOnce({ ok: false, status: 302, statusText: "Found" });
+    const err = await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ChannelHttpError);
+    expect(err).toMatchObject({ status: 302, statusText: "Found" });
+  });
+
+  it("does not wrap a network failure in a ChannelHttpError", async () => {
+    mockSafeFetch.mockRejectedValueOnce(new TypeError("fetch failed"));
+    const err = await sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err).not.toBeInstanceOf(ChannelHttpError);
+  });
+
+  it("makes a single safeFetch request for a non-ok answer (retries belong to the dispatcher)", async () => {
+    mockSafeFetch.mockResolvedValueOnce({ ok: false, status: 500, statusText: "Internal Server Error" });
+    await expect(sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT)).rejects.toBeInstanceOf(ChannelHttpError);
+    expect(mockSafeFetch).toHaveBeenCalledOnce();
+  });
+
+  it("propagates network errors from safeFetch", async () => {
+    mockSafeFetch.mockRejectedValueOnce(new Error("network timeout"));
     await expect(sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT)).rejects.toThrow("network timeout");
   });
 
   it("does not throw when response is ok", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, statusText: "OK" } as Response);
+    mockSafeFetch.mockResolvedValueOnce({ ok: true, status: 200, statusText: "OK" });
     await expect(sendMsTeamsMessage(TEAMS_URL, SAMPLE_INCIDENT)).resolves.toBeUndefined();
   });
 });

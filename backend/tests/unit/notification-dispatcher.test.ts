@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChannelConfigError, ChannelHttpError } from "../../src/services/notification/channels/errors.js";
+import type { SafeFetchInit } from "../../src/services/notification/safe-fetch.js";
 
 // vi.hoisted lets these be referenced safely inside vi.mock() factory functions
 // (vi.mock() calls are hoisted above imports; vi.hoisted() runs before them).
@@ -8,13 +9,13 @@ const {
   mockSendWebhook,
   mockSendEmail,
   mockSendMsTeamsMessage,
-  mockAssertSafeUrl,
+  mockSafeFetch,
 } = vi.hoisted(() => ({
   mockFindForIncident: vi.fn(),
   mockSendWebhook: vi.fn(),
   mockSendEmail: vi.fn(),
   mockSendMsTeamsMessage: vi.fn(),
-  mockAssertSafeUrl: vi.fn(),
+  mockSafeFetch: vi.fn(),
 }));
 
 // Use a class-form mock so that vi.resetAllMocks() does not clear the SubscriptionService
@@ -38,8 +39,8 @@ vi.mock("../../src/services/notification/channels/msteams.js", () => ({
   sendMsTeamsMessage: mockSendMsTeamsMessage,
 }));
 
-vi.mock("../../src/services/notification/url-guard.js", () => ({
-  assertSafeUrl: mockAssertSafeUrl,
+vi.mock("../../src/services/notification/safe-fetch.js", () => ({
+  safeFetch: mockSafeFetch,
 }));
 
 vi.mock("../../src/logger.js", () => ({
@@ -108,7 +109,9 @@ function makeSlackSubscriber(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const mockFetch = vi.fn();
+// The global fetch must never be used for a user URL: delivery goes through
+// safeFetch, which pins the vetted address. Any call here is a regression.
+const plainFetch = vi.fn();
 
 // ---------------------------------------------------------------------------
 // Channel routing
@@ -120,7 +123,7 @@ describe("NotificationDispatcher.dispatch — channel routing", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     dispatcher = new NotificationDispatcher();
-    globalThis.fetch = mockFetch;
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   it("routes WEBHOOK channel to sendWebhook", async () => {
@@ -175,15 +178,14 @@ describe("NotificationDispatcher.dispatch — channel routing", () => {
     );
   });
 
-  it("routes SLACK channel to the internal sendSlackMessage (which calls fetch)", async () => {
-    mockAssertSafeUrl.mockResolvedValue(undefined);
-    mockFetch.mockResolvedValue({ ok: true, status: 200 } as Response);
+  it("routes SLACK channel to the internal sendSlackMessage (which calls safeFetch)", async () => {
+    mockSafeFetch.mockResolvedValue({ ok: true, status: 200 });
     mockFindForIncident.mockResolvedValue([makeSlackSubscriber()]);
 
     await dispatcher.dispatch(INCIDENT);
 
-    expect(mockFetch).toHaveBeenCalledOnce();
-    expect(mockFetch).toHaveBeenCalledWith(
+    expect(mockSafeFetch).toHaveBeenCalledOnce();
+    expect(mockSafeFetch).toHaveBeenCalledWith(
       "https://hooks.slack.com/services/abc/def",
       expect.objectContaining({ method: "POST" }),
     );
@@ -200,56 +202,46 @@ describe("NotificationDispatcher.dispatch — channel routing", () => {
 });
 
 // ---------------------------------------------------------------------------
-// SLACK SSRF guard (call-order)
+// SLACK delivery goes through safeFetch (SSRF guard)
 // ---------------------------------------------------------------------------
 
 describe("NotificationDispatcher.dispatch — SLACK SSRF guard", () => {
   let dispatcher: NotificationDispatcher;
-  const callOrder: string[] = [];
 
   beforeEach(() => {
     vi.resetAllMocks();
     // Fake timers so the SSRF-reject path's retry backoff does not sleep on the
     // real clock; the success-path tests resolve on the first attempt (no timer).
     vi.useFakeTimers();
-    callOrder.length = 0;
     dispatcher = new NotificationDispatcher();
 
-    mockAssertSafeUrl.mockImplementation(async () => {
-      callOrder.push("assertSafeUrl");
-    });
-
-    mockFetch.mockImplementation(async () => {
-      callOrder.push("fetch");
-      return { ok: true, status: 200 } as Response;
-    });
-    globalThis.fetch = mockFetch;
+    mockSafeFetch.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it("calls assertSafeUrl before fetch for SLACK channel", async () => {
+  it("sends through safeFetch with the Slack webhook URL, once", async () => {
     mockFindForIncident.mockResolvedValue([makeSlackSubscriber()]);
 
     await dispatcher.dispatch(INCIDENT);
 
-    expect(callOrder).toEqual(["assertSafeUrl", "fetch"]);
+    expect(mockSafeFetch).toHaveBeenCalledOnce();
+    expect(mockSafeFetch.mock.calls[0][0]).toBe("https://hooks.slack.com/services/abc/def");
   });
 
-  it("calls assertSafeUrl with the Slack webhook URL", async () => {
+  it("never calls the global fetch for the Slack URL", async () => {
     mockFindForIncident.mockResolvedValue([makeSlackSubscriber()]);
 
     await dispatcher.dispatch(INCIDENT);
 
-    expect(mockAssertSafeUrl).toHaveBeenCalledWith(
-      "https://hooks.slack.com/services/abc/def",
-    );
+    expect(plainFetch).not.toHaveBeenCalled();
   });
 
-  it("prevents fetch when assertSafeUrl rejects for SLACK (SSRF block)", async () => {
-    mockAssertSafeUrl.mockRejectedValue(new Error("Host resolves to blocked range"));
+  it("does not deliver when safeFetch refuses the target (SSRF block)", async () => {
+    mockSafeFetch.mockRejectedValue(new ChannelConfigError("Webhook host resolves to a blocked address range"));
     mockFindForIncident.mockResolvedValue([makeSlackSubscriber()]);
 
     // dispatch() swallows per-channel errors; it resolves even though the channel failed
@@ -257,9 +249,9 @@ describe("NotificationDispatcher.dispatch — SLACK SSRF guard", () => {
     await vi.runAllTimersAsync();
     await dispatchPromise;
 
-    // assertSafeUrl was called but fetch was never reached
-    expect(mockAssertSafeUrl).toHaveBeenCalled();
-    expect(mockFetch).not.toHaveBeenCalled();
+    // Every attempt went through the guarded helper; none reached a plain fetch
+    expect(mockSafeFetch).toHaveBeenCalledTimes(3);
+    expect(plainFetch).not.toHaveBeenCalled();
   });
 
   it("SLACK request uses POST method", async () => {
@@ -267,17 +259,18 @@ describe("NotificationDispatcher.dispatch — SLACK SSRF guard", () => {
 
     await dispatcher.dispatch(INCIDENT);
 
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit];
     expect(init.method).toBe("POST");
   });
 
-  it("SLACK request uses redirect: manual", async () => {
+  it("SLACK request sends the Block Kit payload as JSON", async () => {
     mockFindForIncident.mockResolvedValue([makeSlackSubscriber()]);
 
     await dispatcher.dispatch(INCIDENT);
 
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(init.redirect).toBe("manual");
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit];
+    expect(init.headers).toEqual({ "Content-Type": "application/json" });
+    expect(JSON.stringify(JSON.parse(init.body as string))).toContain(INCIDENT.message);
   });
 });
 
@@ -291,7 +284,7 @@ describe("NotificationDispatcher.dispatch — empty subscribers", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     dispatcher = new NotificationDispatcher();
-    globalThis.fetch = mockFetch;
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   it("returns early without calling any channel when subscriber list is empty", async () => {
@@ -302,7 +295,8 @@ describe("NotificationDispatcher.dispatch — empty subscribers", () => {
     expect(mockSendWebhook).not.toHaveBeenCalled();
     expect(mockSendEmail).not.toHaveBeenCalled();
     expect(mockSendMsTeamsMessage).not.toHaveBeenCalled();
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockSafeFetch).not.toHaveBeenCalled();
+    expect(plainFetch).not.toHaveBeenCalled();
   });
 
   it("resolves without throwing when subscribers list is empty", async () => {
@@ -325,7 +319,7 @@ describe("NotificationDispatcher.dispatch — per-channel error swallowing", () 
     // on the real clock (the failing-webhook paths exhaust all 3 attempts).
     vi.useFakeTimers();
     dispatcher = new NotificationDispatcher();
-    globalThis.fetch = mockFetch;
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   afterEach(() => {
@@ -370,7 +364,7 @@ describe("NotificationDispatcher.dispatch — retry logic", () => {
     vi.resetAllMocks();
     vi.useFakeTimers();
     dispatcher = new NotificationDispatcher();
-    globalThis.fetch = mockFetch;
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   afterEach(() => {
@@ -456,7 +450,7 @@ describe("NotificationDispatcher.dispatchToSubscription", () => {
     vi.resetAllMocks();
     vi.useFakeTimers();
     dispatcher = new NotificationDispatcher();
-    globalThis.fetch = mockFetch;
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   afterEach(() => {
@@ -497,8 +491,7 @@ describe("NotificationDispatcher.dispatchToSubscription", () => {
   });
 
   it("throws a ChannelHttpError for a non-ok Slack response after the last retry", async () => {
-    mockAssertSafeUrl.mockResolvedValue(undefined);
-    mockFetch.mockResolvedValue({ ok: false, status: 404, statusText: "Not Found" } as Response);
+    mockSafeFetch.mockResolvedValue({ ok: false, status: 404, statusText: "Not Found" });
 
     const sent = dispatcher.dispatchToSubscription(makeSlackSubscriber(), INCIDENT);
     const caught = sent.catch((e: unknown) => e);
@@ -533,13 +526,14 @@ describe("NotificationDispatcher.dispatchToSubscription", () => {
   });
 
   it("keeps the SSRF guard on the single-subscription path", async () => {
-    mockAssertSafeUrl.mockRejectedValue(new Error("Host resolves to blocked range"));
+    mockSafeFetch.mockRejectedValue(new ChannelConfigError("Host resolves to blocked range"));
 
     const sent = dispatcher.dispatchToSubscription(makeSlackSubscriber(), INCIDENT);
     const assertion = expect(sent).rejects.toThrow("Host resolves to blocked range");
     await vi.runAllTimersAsync();
     await assertion;
 
-    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockSafeFetch).toHaveBeenCalledTimes(3);
+    expect(plainFetch).not.toHaveBeenCalled();
   });
 });
