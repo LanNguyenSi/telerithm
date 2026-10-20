@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ChannelHttpError } from "../../src/services/notification/channels/errors.js";
+import { ChannelConfigError, ChannelHttpError } from "../../src/services/notification/channels/errors.js";
 import { createHmac } from "node:crypto";
 
 // vi.mock calls are hoisted to the top of the file by vitest —
 // they must appear before any imports that reference the mocked modules.
-vi.mock("../../src/services/notification/url-guard.js", () => ({
-  assertSafeUrl: vi.fn(),
+vi.mock("../../src/services/notification/safe-fetch.js", () => ({
+  safeFetch: vi.fn(),
 }));
 
 vi.mock("../../src/logger.js", () => ({
@@ -18,13 +18,14 @@ vi.mock("../../src/logger.js", () => ({
   }),
 }));
 
-import { assertSafeUrl } from "../../src/services/notification/url-guard.js";
+import { safeFetch, type SafeFetchInit } from "../../src/services/notification/safe-fetch.js";
 import { sendWebhook, type WebhookPayload } from "../../src/services/notification/channels/webhook.js";
 
-const mockAssertSafeUrl = vi.mocked(assertSafeUrl);
+const mockSafeFetch = vi.mocked(safeFetch);
 
-// Shared mock for global fetch
-const mockFetch = vi.fn();
+// The global fetch must never be used for a user URL: delivery goes through
+// safeFetch, which pins the vetted address. Any call here is a regression.
+const plainFetch = vi.fn();
 
 const SAMPLE_PAYLOAD: WebhookPayload = {
   incidentId: "inc-001",
@@ -42,21 +43,20 @@ describe("sendWebhook — HMAC signature", () => {
     vi.resetAllMocks();
 
     // After resetAllMocks, restore default implementations
-    mockAssertSafeUrl.mockResolvedValue(undefined);
 
-    mockFetch.mockResolvedValue({
+    mockSafeFetch.mockResolvedValue({
       ok: true,
       status: 200,
       statusText: "OK",
-    } as Response);
-    globalThis.fetch = mockFetch;
+    });
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   it("adds X-Telerithm-Signature header with correct HMAC-SHA256 when secret is provided", async () => {
     const secret = "webhook-signing-secret";
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD, { secret });
 
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { headers: Record<string, string> }];
     const body = JSON.stringify(SAMPLE_PAYLOAD);
     const expectedSig = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
 
@@ -67,7 +67,7 @@ describe("sendWebhook — HMAC signature", () => {
     const secret = "s3cr3t";
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD, { secret });
 
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { body: string; headers: Record<string, string> }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { body: string; headers: Record<string, string> }];
     // The body actually sent and the HMAC input must match
     const body = init.body as string;
     const expectedSig = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
@@ -78,111 +78,86 @@ describe("sendWebhook — HMAC signature", () => {
   it("omits X-Telerithm-Signature when no secret is provided", async () => {
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD);
 
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { headers: Record<string, string> }];
     expect(init.headers["X-Telerithm-Signature"]).toBeUndefined();
   });
 
   it("omits X-Telerithm-Signature when options object is provided but has no secret", async () => {
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD, { headers: { "X-Custom": "val" } });
 
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { headers: Record<string, string> }];
     expect(init.headers["X-Telerithm-Signature"]).toBeUndefined();
   });
 });
 
-describe("sendWebhook — assertSafeUrl invocation (SSRF guard)", () => {
-  // Track call order to assert assertSafeUrl is called BEFORE fetch
-  const callOrder: string[] = [];
-
+describe("sendWebhook: delivery goes through safeFetch (SSRF guard)", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    callOrder.length = 0;
-
-    mockAssertSafeUrl.mockImplementation(async () => {
-      callOrder.push("assertSafeUrl");
-    });
-
-    mockFetch.mockImplementation(async () => {
-      callOrder.push("fetch");
-      return { ok: true, status: 200, statusText: "OK" } as Response;
-    });
-    globalThis.fetch = mockFetch;
+    mockSafeFetch.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
-  it("calls assertSafeUrl before fetch", async () => {
+  it("sends through safeFetch with the exact target URL, once per delivery", async () => {
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD);
-    expect(callOrder).toEqual(["assertSafeUrl", "fetch"]);
+    expect(mockSafeFetch).toHaveBeenCalledOnce();
+    expect(mockSafeFetch.mock.calls[0][0]).toBe(TARGET_URL);
   });
 
-  it("calls assertSafeUrl with the exact target URL", async () => {
+  it("never calls the global fetch for the user URL", async () => {
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD);
-    expect(mockAssertSafeUrl).toHaveBeenCalledWith(TARGET_URL);
+    expect(plainFetch).not.toHaveBeenCalled();
   });
 
-  it("calls assertSafeUrl exactly once per delivery", async () => {
-    await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD);
-    expect(mockAssertSafeUrl).toHaveBeenCalledOnce();
-  });
-
-  it("does NOT call fetch when assertSafeUrl rejects (SSRF guard blocks delivery)", async () => {
-    mockAssertSafeUrl.mockRejectedValueOnce(
-      new Error("Webhook host resolves to a blocked address range"),
-    );
-    await expect(sendWebhook(TARGET_URL, SAMPLE_PAYLOAD)).rejects.toThrow("blocked address range");
-    expect(mockFetch).not.toHaveBeenCalled();
-  });
-
-  it("propagates the exact error thrown by assertSafeUrl", async () => {
-    mockAssertSafeUrl.mockRejectedValueOnce(new Error("Webhook host is not in the allow-list"));
-    await expect(sendWebhook(TARGET_URL, SAMPLE_PAYLOAD)).rejects.toThrow(
-      "Webhook host is not in the allow-list",
-    );
+  it("propagates a guard refusal from safeFetch unchanged", async () => {
+    const refusal = new ChannelConfigError("Webhook host resolves to a blocked address range");
+    mockSafeFetch.mockRejectedValueOnce(refusal);
+    await expect(sendWebhook(TARGET_URL, SAMPLE_PAYLOAD)).rejects.toBe(refusal);
+    expect(plainFetch).not.toHaveBeenCalled();
   });
 });
 
 describe("sendWebhook — HTTP request properties", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mockAssertSafeUrl.mockResolvedValue(undefined);
-    mockFetch.mockResolvedValue({ ok: true, status: 200, statusText: "OK" } as Response);
-    globalThis.fetch = mockFetch;
+    mockSafeFetch.mockResolvedValue({ ok: true, status: 200, statusText: "OK" });
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   it("sends POST method", async () => {
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit];
     expect(init.method).toBe("POST");
   });
 
   it("sends the payload serialized as JSON body", async () => {
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { body: string }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { body: string }];
     expect(JSON.parse(init.body)).toEqual(SAMPLE_PAYLOAD);
   });
 
   it("sets Content-Type: application/json", async () => {
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { headers: Record<string, string> }];
     expect(init.headers["Content-Type"]).toBe("application/json");
   });
 
-  it("sets redirect: manual to prevent redirect-based SSRF bypass", async () => {
+  it("passes the target URL as the first safeFetch argument", async () => {
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD);
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(init.redirect).toBe("manual");
+    const [url] = mockSafeFetch.mock.calls[0];
+    expect(url).toBe(TARGET_URL);
   });
 
-  it("passes the target URL as the first fetch argument", async () => {
-    await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD);
-    const [url] = mockFetch.mock.calls[0] as [string];
-    expect(url).toBe(TARGET_URL);
+  it("hands safeFetch the URL string unchanged, with no normalisation", async () => {
+    const odd = "https://Hooks.Example.com:8443/a%20b/../c?x=1&y=%2F";
+    await sendWebhook(odd, SAMPLE_PAYLOAD);
+    expect(mockSafeFetch.mock.calls[0][0]).toBe(odd);
   });
 
   it("merges caller-supplied extra headers into the request", async () => {
     await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD, {
       headers: { "X-Source": "test-runner", "Authorization": "Bearer tok" },
     });
-    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit & { headers: Record<string, string> }];
+    const [, init] = mockSafeFetch.mock.calls[0] as [string, SafeFetchInit & { headers: Record<string, string> }];
     expect(init.headers["X-Source"]).toBe("test-runner");
     expect(init.headers["Authorization"]).toBe("Bearer tok");
     // Built-in header must still be present
@@ -193,29 +168,48 @@ describe("sendWebhook — HTTP request properties", () => {
 describe("sendWebhook — error handling", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mockAssertSafeUrl.mockResolvedValue(undefined);
-    globalThis.fetch = mockFetch;
+    globalThis.fetch = plainFetch as unknown as typeof fetch;
   });
 
   it("throws when the server responds with a non-ok status", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 500, statusText: "Internal Server Error" } as Response);
+    mockSafeFetch.mockResolvedValueOnce({ ok: false, status: 500, statusText: "Internal Server Error" });
     await expect(sendWebhook(TARGET_URL, SAMPLE_PAYLOAD)).rejects.toThrow("Webhook failed: 500");
   });
 
   it("throws when the server responds with 404", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 404, statusText: "Not Found" } as Response);
+    mockSafeFetch.mockResolvedValueOnce({ ok: false, status: 404, statusText: "Not Found" });
     await expect(sendWebhook(TARGET_URL, SAMPLE_PAYLOAD)).rejects.toThrow("Webhook failed: 404");
   });
 
   it("throws a ChannelHttpError carrying the status and status text on a non-ok response", async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 502, statusText: "Bad Gateway" } as Response);
+    mockSafeFetch.mockResolvedValueOnce({ ok: false, status: 502, statusText: "Bad Gateway" });
     const err = await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ChannelHttpError);
     expect(err).toMatchObject({ status: 502, statusText: "Bad Gateway" });
   });
 
-  it("propagates network errors from fetch", async () => {
-    mockFetch.mockRejectedValueOnce(new Error("network timeout"));
+  it("treats a 3xx answer as a failed delivery and reports its status", async () => {
+    mockSafeFetch.mockResolvedValueOnce({ ok: false, status: 302, statusText: "Found" });
+    const err = await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ChannelHttpError);
+    expect(err).toMatchObject({ status: 302, statusText: "Found" });
+  });
+
+  it("does not wrap a network failure in a ChannelHttpError", async () => {
+    mockSafeFetch.mockRejectedValueOnce(new TypeError("fetch failed"));
+    const err = await sendWebhook(TARGET_URL, SAMPLE_PAYLOAD).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(TypeError);
+    expect(err).not.toBeInstanceOf(ChannelHttpError);
+  });
+
+  it("makes a single safeFetch request for a non-ok answer (retries belong to the dispatcher)", async () => {
+    mockSafeFetch.mockResolvedValueOnce({ ok: false, status: 500, statusText: "Internal Server Error" });
+    await expect(sendWebhook(TARGET_URL, SAMPLE_PAYLOAD)).rejects.toBeInstanceOf(ChannelHttpError);
+    expect(mockSafeFetch).toHaveBeenCalledOnce();
+  });
+
+  it("propagates network errors from safeFetch", async () => {
+    mockSafeFetch.mockRejectedValueOnce(new Error("network timeout"));
     await expect(sendWebhook(TARGET_URL, SAMPLE_PAYLOAD)).rejects.toThrow("network timeout");
   });
 });

@@ -32,7 +32,7 @@ vi.mock("../../src/logger.js", () => ({
 }));
 
 import { lookup } from "node:dns/promises";
-import { assertSafeUrl } from "../../src/services/notification/url-guard.js";
+import { assertSafeUrl, resolveSafeTarget } from "../../src/services/notification/url-guard.js";
 import { ChannelConfigError } from "../../src/services/notification/channels/errors.js";
 
 const mockLookup = vi.mocked(lookup);
@@ -779,7 +779,11 @@ describe("assertSafeUrl: refusals are configuration errors", () => {
     ["an unsupported scheme", "ftp://hooks.example.com/x", () => undefined],
     ["a blocked literal address", "https://127.0.0.1/hook", () => undefined],
     ["an unresolvable host", "https://hooks.example.invalid/x", mockDnsFail],
-    ["an empty resolution", "https://hooks.example.com/x", () => mockLookup.mockResolvedValueOnce([] as never)],
+    [
+      "an empty resolution",
+      "https://hooks.example.com/x",
+      () => mockLookup.mockResolvedValueOnce([] as never),
+    ],
     [
       "a name resolving to a blocked address",
       "https://internal.example.com/x",
@@ -797,5 +801,52 @@ describe("assertSafeUrl: refusals are configuration errors", () => {
     } finally {
       delete process.env.WEBHOOK_HOST_ALLOWLIST;
     }
+  });
+});
+
+describe("resolveSafeTarget: the vetted address set", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it("returns the addresses of the single lookup, de-duplicated, in answer order", async () => {
+    mockLookup.mockResolvedValueOnce([
+      { address: "93.184.216.34", family: 4 },
+      { address: "2606:2800:220:1:248:1893:25c8:1946", family: 6 },
+      { address: "93.184.216.34", family: 4 },
+    ] as never);
+
+    const target = await resolveSafeTarget("https://hooks.example.com:8443/x?y=1");
+
+    expect(target.addresses).toEqual(["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"]);
+    expect(target.hostname).toBe("hooks.example.com");
+    expect(target.url.href).toBe("https://hooks.example.com:8443/x?y=1");
+    expect(mockLookup).toHaveBeenCalledOnce();
+    expect(mockLookup).toHaveBeenCalledWith("hooks.example.com", { all: true });
+  });
+
+  it("returns an IP literal as its own single vetted address without a lookup", async () => {
+    const target = await resolveSafeTarget("https://93.184.216.34/x");
+
+    expect(target).toMatchObject({ hostname: "93.184.216.34", addresses: ["93.184.216.34"] });
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it("strips the brackets of an IPv6 literal in hostname and address", async () => {
+    const target = await resolveSafeTarget("https://[2606:2800:220:1:248:1893:25c8:1946]/x");
+
+    expect(target.hostname).toBe("2606:2800:220:1:248:1893:25c8:1946");
+    expect(target.addresses).toEqual(["2606:2800:220:1:248:1893:25c8:1946"]);
+  });
+
+  it("uses the injected resolver and range predicate instead of DNS", async () => {
+    const lookupSeam = vi.fn(async () => [{ address: "198.51.100.7" }]);
+    const target = await resolveSafeTarget("https://hooks.example.com/x", {
+      lookup: lookupSeam,
+      isBlockedAddress: () => false,
+    });
+
+    expect(target.addresses).toEqual(["198.51.100.7"]);
+    expect(mockLookup).not.toHaveBeenCalled();
   });
 });
