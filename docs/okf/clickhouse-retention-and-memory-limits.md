@@ -3,7 +3,7 @@ type: runbook
 title: ClickHouse retention, memory limits, and the config.d mount contract
 description: system-logs.xml disables text_log outright and gives every other ClickHouse system log table a 7-day TTL, with the caveat that a TTL change only applies to newly-created tables (existing ones get renamed *_N on restart); limits.xml's max_server_memory_usage_to_ram_ratio must never be 0 (means 0% of RAM, not disabled, the historical PR #60 footgun); init.sql only runs via docker-entrypoint-initdb.d on an empty ClickHouse datadir; the logs table it creates has a fixed 30-day TTL, and the per-source retentionDays value is stored but never enforced; the anomalies table it creates has zero code references and is provisioned-but-unwired for the still-Planned anomaly feature; and the operational lesson that a broken host bind-mount can silently turn a mounted config FILE into an empty directory, so a mount must be verified, not assumed.
 tags: [clickhouse, retention, memory, runbook, ops, config-mount]
-timestamp: 2026-10-23T05:14:32Z
+timestamp: 2026-10-23T05:22:23Z
 sources:
   - backend/clickhouse/system-logs.xml
   - backend/clickhouse/limits.xml
@@ -29,7 +29,7 @@ ClickHouse's internal `system.text_log` duplicates the server's stderr into a Me
 
 ## init.sql — only runs on an empty datadir
 
-`init.sql` is mounted read-only at `/docker-entrypoint-initdb.d/init.sql` in every compose file (dev and both prod variants). This path is ClickHouse's own convention: scripts under `docker-entrypoint-initdb.d/` run **only on first container start against an empty ClickHouse data directory** — not on every restart, and not idempotently against existing data. `DEPLOYMENT.md` only says step 4 will "Initialize ClickHouse schema automatically"; [../architecture.md](../architecture.md)'s "Storage" section states the run-once behaviour together with the logs TTL (next section). It is standard behaviour of the upstream image's entrypoint, not something telerithm's own code enforces, so a schema change to `init.sql` will not reach an already-initialized volume: that needs a manual `ALTER`/migration against the running container, the same way Postgres schema changes go through `prisma db push` rather than re-running `init.sql`'s equivalent.
+`init.sql` is mounted read-only at `/docker-entrypoint-initdb.d/init.sql` in every compose file (dev and both prod variants). This path is ClickHouse's own convention: scripts under `docker-entrypoint-initdb.d/` run **only on first container start against an empty ClickHouse data directory** — not on every restart, and not idempotently against existing data. `DEPLOYMENT.md` says in step 4 that the schema is initialized "on the first start only" and has a "ClickHouse schema changes" section under Updating that tells the operator to apply a change by hand with `ALTER TABLE`; [../architecture.md](../architecture.md)'s "Storage" section states the run-once behaviour together with the logs TTL (next section). It is standard behaviour of the upstream image's entrypoint, not something telerithm's own code enforces, so a schema change to `init.sql` will not reach an already-initialized volume: that needs a manual `ALTER`/migration against the running container, the same way Postgres schema changes go through `prisma db push` rather than re-running `init.sql`'s equivalent.
 
 ## The logs table TTL: one fixed window, per-source retention not enforced
 
