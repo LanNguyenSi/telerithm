@@ -41,6 +41,7 @@ cat > "${STUB_DIR}/git" <<STUB
 #!/usr/bin/env bash
 case "\${1:-}" in
   pull|stash) echo "git \$*" >> "\${CALL_LOG}"; exit 0 ;;
+  status) [ -z "\${STUB_GIT_STATUS_FAIL:-}" ] || exit 1 ;;
 esac
 exec "${REAL_GIT}" "\$@"
 STUB
@@ -184,6 +185,18 @@ RC=$?
 if [ "${RC}" -ne 0 ] && grep -q "cannot read the git status" <<< "${OUT}" && [ ! -s "${CALL_LOG}" ]; then
   ok "deploy: unreadable git status is refused"
 else bad "deploy: no repo rc=${RC} out=${OUT}"; fi
+
+# inside a repository, a `git status` that itself fails is refused too (the
+# repository is readable, so the earlier checks pass and only this one trips)
+for target in deploy deploy-backend deploy-frontend; do
+  reset_repo
+  : > "${CALL_LOG}"
+  OUT="$(cd "${REPO}" && STUB_GIT_STATUS_FAIL=1 make "${target}" 2>&1)"
+  RC=$?
+  if [ "${RC}" -ne 0 ] && grep -q "cannot read the git status" <<< "${OUT}" && [ ! -s "${CALL_LOG}" ]; then
+    ok "${target}: failing git status is refused, nothing pulled"
+  else bad "${target}: failing git status rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+done
 
 # the Makefile must not stash at all
 if ! grep -n "git stash" "${MAKEFILE}" | grep -v '^[0-9]*:#' | grep -q .; then
