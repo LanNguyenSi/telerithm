@@ -29,6 +29,7 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 - **next 15.5.28** (GHSA-2464-fhr4-w9xw, GHSA-p3m5-59mp-jv5r) in `frontend/`: the lockfile resolves 15.5.28 with its matching `@next/env` and `@next/swc-*` packages and the `next` dependency floor is now `^15.5.28`, superseding the 15.5.27 entry above.
 - **Tailwind CSS 4** (GHSA-rj75-hqrm-r3gf) in `frontend/`: the frontend is migrated from Tailwind CSS 3.4 to 4, which drops `postcss-selector-parser` 6.x (quadratic selector parsing, no fix on the 6.x line) from the lockfile. The theme moves into `src/app/globals.css` (`@theme`), `tailwind.config.ts` is removed (and no longer copied by `frontend/Dockerfile`), and PostCSS uses `@tailwindcss/postcss`. Opacity modifiers on the custom colours (for example `bg-panel/85`, `bg-danger/10`, `border-line/70`) were silently dropped by Tailwind 3 and are now rendered, so cards, error icons, table rules and the sidebar avatar look slightly different, as intended. No API change.
 - **sharp 0.35.5** (GHSA-wq5f-xc86-pv6w, task aff72e2b), in `frontend/`, installed through `next`: the lockfile resolves 0.35.5 with matching `@img/*` binaries and the `sharp` override floor is now `^0.35.5`.
+- **ip-address 10.7.4** (GHSA-rxp7-6hxx-x8q5) in `backend/`: the lockfile resolves 10.7.4, which fixes quadratic-time matching of a zone identifier in `Address6`, so a long input string can no longer stall a process. It is installed through `express-rate-limit`.
 
 ### Added
 
