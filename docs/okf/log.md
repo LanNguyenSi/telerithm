@@ -2,6 +2,7 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-23T05:14:32Z, clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md re-stamped after the ip-address bullet was added under `[Unreleased]` in `CHANGELOG.md`. Both docs cite the `[0.1.1]` section, which is untouched; claims unchanged.
 - 2026-10-23T04:59:17Z, clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md re-stamped after `CHANGELOG.md` gained an `[Unreleased]` bullet about `next` 15.5.28. The `[0.1.1]` entries they cite are untouched and no citation line moved.
 - 2026-10-20T04:56:34Z, re-verified and re-stamped after the changelog entry for the pinned notification deliveries gained a sentence on URLs with embedded credentials and the knowledge bundle index entry for the trust boundary doc was reworded around `safeFetch`. clickhouse-retention-and-memory-limits.md and compose-file-topology-and-drift.md: re-stamped only, they cite the `[0.1.1]` entries of `CHANGELOG.md`, which are untouched, and no citation line moved. notification-delivery-trust-boundary.md: unchanged, its claims already describe `safeFetch` and the index line now matches them. `okf-kit@0.18.0 check --json --require-anchors docs/okf`: 2 findings (staleness) after the changelog edit, none after this re-stamp.
 
