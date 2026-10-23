@@ -1,3 +1,10 @@
+# Local development stack. The project name is fixed and differs from the
+# production stack's (telerithm), so running `docker compose up` on a machine
+# that also hosts the production stack cannot replace its containers. The
+# datastore ports are published on the loopback interface only (no credentials
+# beyond the defaults below).
+name: telerithm-dev
+
 services:
   postgres:
     image: postgres:15
@@ -6,7 +13,7 @@ services:
       POSTGRES_PASSWORD: telerithm
       POSTGRES_DB: telerithm
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U telerithm"]
       interval: 5s
@@ -16,8 +23,8 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:24
     ports:
-      - "8123:8123"
-      - "9000:9000"
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
     volumes:
       - ./backend/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
@@ -29,7 +36,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s

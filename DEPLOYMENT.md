@@ -58,6 +58,10 @@ sed -i 's/demo.telerithm.cloud/yourdomain.example/g' docker-compose.traefik.yml
 
 The backend `CORS_ORIGINS` value also lists a secondary `play.telerithm.cloud` origin; edit it to match your domain(s).
 
+This edit changes a tracked file, and `make deploy`, `make deploy-backend` and `make deploy-frontend` refuse to run while a tracked file has local changes (they never stash or discard them). Commit the edit on the server checkout (`git commit -am "Set production domain"`); the deploy targets then run `git pull --rebase origin master`, which replays that commit on top of the new upstream commits. If the rebase hits a conflict in the lines you edited, it stops and the deploy does not continue: resolve it with git, then deploy again.
+
+`docker-compose.prod.yml` is the non-Traefik reference variant and is not what `make deploy` or the steps below use. It takes its public URLs from two variables in `.env.production` instead of from edits to the file: `PUBLIC_API_URL` (the public API base, for example `https://telerithm.example.com/api/v1`, baked into the frontend image at build time, so rebuild the frontend after changing it) and `CORS_ORIGINS` (the browser origins the backend accepts, comma separated). Without them that file builds the frontend against `http://localhost:4000/api/v1` and accepts only `http://localhost:3000`. `docker-compose.traefik.yml` ignores both variables; it has the domain and origins written into the file, as described above.
+
 ### 4. Build & Start Services
 
 ```bash
@@ -69,7 +73,7 @@ This will:
 - Create PostgreSQL, ClickHouse, Redis containers (internal network)
 - Build backend & frontend with production configs
 - Connect to Traefik for SSL/routing
-- Initialize ClickHouse schema automatically
+- Initialize the ClickHouse schema from `backend/clickhouse/init.sql`, on the first start only (see [Updating](#updating))
 
 ### 5. Initialize Database
 
@@ -93,6 +97,8 @@ docker compose -f docker-compose.traefik.yml ps
 curl https://yourdomain.example/api/v1/health
 curl https://yourdomain.example
 ```
+
+Compose project names are fixed in the files: `docker-compose.traefik.yml` sets `name: telerithm`, which is the name the stack already had when it was cloned into a directory called `telerithm` as in step 1, so the containers, the `telerithm-internal` network and the `telerithm_pgdata`, `telerithm_chdata` and `telerithm_redisdata` volumes keep their names. If your checkout directory has another name, your volumes carry that prefix instead; run `docker volume ls` before the first deploy of a version that sets the name, and move the data or keep the old name with `COMPOSE_PROJECT_NAME` in the environment of the compose command, which overrides the file. The local `docker-compose.yml` uses `name: telerithm-dev`, so it can run on the same machine without replacing the production containers.
 
 ## Architecture
 
@@ -129,7 +135,7 @@ flowchart TD
 - **Stored secrets.** Source API keys are stored in clear text in Postgres, so treat database backups as secrets.
 - **CORS.** `CORS_ORIGINS` applies only when `NODE_ENV` is not `development`; in development the backend accepts any origin with credentials.
 - **Unauthenticated endpoints.** `/metrics`, `/docs` and `/openapi.json` need no authentication. Traefik does not route them (only `/api` reaches the backend), but in this setup any container on the shared `traefik` network can reach them on the backend container's port 4000.
-- **Local compose file.** `docker-compose.yml` is for local machines only: it publishes Postgres, ClickHouse and Redis on host ports with default or no credentials.
+- **Local compose file.** `docker-compose.yml` is for local machines only: it publishes Postgres, ClickHouse and Redis on the loopback interface (`127.0.0.1`) with default or no credentials. Its project name (`telerithm-dev`) differs from the production stack's, so starting it on the server does not replace production containers, but do not run it on a host you do not trust with those ports.
 
 ## Resource Usage
 
@@ -146,6 +152,10 @@ Expected memory usage (8GB VPS):
 
 ## Updating
 
+`make deploy` does the whole update below in one command (pull, rebuild without cache, recreate), `make deploy-backend` and `make deploy-frontend` do it for one service. All three stop before doing anything if a tracked file has local changes, and none of them stashes or discards a change.
+
+By hand:
+
 ```bash
 cd /root/git/telerithm
 git pull origin master
@@ -157,6 +167,39 @@ docker compose -f docker-compose.traefik.yml --env-file .env.production up -d
 # Apply schema changes (prisma db push)
 docker compose -f docker-compose.traefik.yml exec backend npx prisma db push
 ```
+
+### ClickHouse schema changes
+
+`backend/clickhouse/init.sql` runs only when the ClickHouse data directory is empty, that is on the first start of a new `chdata` volume. A deploy that changes the file does not change the running tables and does not report anything: the old schema stays in place. Apply the change by hand with an `ALTER TABLE` and keep `init.sql` in step so a fresh install gets the same schema. For example, to shorten the retention of the `logs` table to 14 days (the same statement as in [docs/architecture.md](docs/architecture.md), see the ClickHouse [ALTER TABLE reference](https://clickhouse.com/docs/sql-reference/statements/alter) for other changes):
+
+```bash
+docker compose -f docker-compose.traefik.yml exec clickhouse \
+  clickhouse-client --query "ALTER TABLE logs MODIFY TTL toDateTime(timestamp) + INTERVAL 14 DAY"
+```
+
+### Rotating the PostgreSQL password
+
+`POSTGRES_PASSWORD` only sets the password when Postgres creates a new data volume. Changing it in `.env.production` alone does not change the database role, so the backend cannot sign in after its next restart, and the backend health check can stay green while queries fail. Change the role first, then the file:
+
+```bash
+# 1. Change the role's password. Use a password that is safe inside a URL
+#    (letters and digits, for example the output of `openssl rand -hex 24`):
+#    docker-compose.traefik.yml inserts it unescaped into DATABASE_URL.
+docker compose -f docker-compose.traefik.yml exec postgres \
+  psql -U telerithm -c "ALTER USER telerithm PASSWORD 'NEW_PASSWORD'"
+
+# 2. Set POSTGRES_PASSWORD=NEW_PASSWORD in .env.production.
+
+# 3. Recreate the backend so it connects with the new password.
+docker compose -f docker-compose.traefik.yml --env-file .env.production \
+  up -d --no-deps --force-recreate backend
+
+# 4. Check the logs for authentication errors and sign in to the web UI;
+#    do not rely on the health check alone.
+docker compose -f docker-compose.traefik.yml logs --tail=50 backend
+```
+
+Connections that are already open keep working after step 1, so there is no outage between step 1 and step 3. Store the new password where your backups of `.env.production` live.
 
 ## Monitoring
 
@@ -186,6 +229,37 @@ To scrape it, run Prometheus on a Docker network shared with the backend contain
 It publishes default Node process metrics plus Telerithm series for HTTP requests (`telerithm_http_requests_total`, `telerithm_http_request_duration_ms`), ingestion (`telerithm_ingest_batches_total`, `telerithm_ingest_logs_total`), alerting (`telerithm_alert_evaluations_total`, `telerithm_alert_incidents_created_total`), SSE (`telerithm_active_sse_connections`), and NLQ (`telerithm_nlq_llm_duration_seconds`, `telerithm_nlq_llm_errors_total`, `telerithm_nlq_llm_fallback_total`, `telerithm_nlq_filter_pruned_total` for AI-generated filters dropped, by field and reason, and `telerithm_nlq_relaxed_fallback_used_total` for searches retried without AI filters after zero results).
 
 ## Backup
+
+`scripts/backup.sh` dumps both datastores of the stack this guide deploys (`docker-compose.traefik.yml`, with `.env.production` when it exists). It exits non-zero without writing anything when that compose file is missing or its `postgres` or `clickhouse` service is not running, so a scheduled run cannot report success for a stack that is not the production one.
+
+```bash
+# Manual run
+./scripts/backup.sh /backups/telerithm
+
+# Daily at 02:00 (cron)
+0 2 * * * /root/git/telerithm/scripts/backup.sh /backups/telerithm
+```
+
+Each run writes `<backup_dir>/<timestamp>/postgres.sql.gz` and `clickhouse_logs.native.gz` and keeps the latest 10 runs, at most 10 days. A run that fails midway removes its own directory. Environment variables:
+
+- `BACKUP_COMPOSE_FILE`: compose file of the stack to back up (default: `docker-compose.traefik.yml` in the repository root).
+- `BACKUP_ENV_FILE`: env file passed to compose (default: `.env.production` in the repository root; skipped when it does not exist).
+- `BACKUP_OFFHOST_HOOK`: path of an executable that copies the finished backup off the host. It is called with the backup directory as its only argument. Unset or empty means the backup stays on this host. A failing hook makes the script exit non-zero and keeps the local backup.
+
+A backup that stays on the server is lost with the server. Set `BACKUP_OFFHOST_HOOK` to a script that copies the directory to storage you control. The dumps contain source API keys in clear text (see Security model), so the hook should encrypt before the data leaves the host, for example:
+
+```bash
+#!/usr/bin/env bash
+# /root/bin/telerithm-offsite.sh (chmod +x); $1 is the backup directory
+set -euo pipefail
+tar -C "$(dirname "$1")" -cz "$(basename "$1")" \
+  | age -r "$AGE_RECIPIENT" \
+  | ssh backup@backup-host "cat > telerithm-$(basename "$1").tar.gz.age"
+```
+
+Then run `BACKUP_OFFHOST_HOOK=/root/bin/telerithm-offsite.sh ./scripts/backup.sh /backups/telerithm` (in cron, put the variable in the crontab line or in the cron environment). The script does not run restores: test one against a scratch stack before relying on the backups.
+
+The commands below are the manual equivalents and the restore steps. The script's ClickHouse file is gzip-compressed Native, so decompress both script files first (`gunzip -c postgres.sql.gz > backup.sql`, `gunzip -c clickhouse_logs.native.gz > logs_backup.native`).
 
 ### PostgreSQL
 

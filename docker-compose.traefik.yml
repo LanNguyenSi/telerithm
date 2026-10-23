@@ -1,4 +1,8 @@
-version: "3.8"
+# Fixed project name: the deployed stack lives in the directory DEPLOYMENT.md
+# clones into (telerithm), so Compose already used this name. Pinning it keeps
+# container, network and volume names (telerithm_pgdata, telerithm_chdata, ...)
+# stable if the checkout directory is ever renamed or moved.
+name: telerithm
 
 # Production deployment with Traefik integration
 # Assumes Traefik is already running on the VPS with:
@@ -97,6 +101,11 @@ services:
       # rate limiters see the real client address. 1 = Traefik only; raise it
       # if another proxy or CDN sits in front of Traefik (see docs/configuration.md).
       TRUST_PROXY: ${TRUST_PROXY:-1}
+      # Cap the V8 old-generation heap below the 512M container limit so a
+      # large aggregate fails with a JS "heap out of memory" error in the logs
+      # instead of an OOM kill (exit 137, no JS error). Keep it about 75% of
+      # the limit: the rest is for buffers, native code and the stack.
+      NODE_OPTIONS: --max-old-space-size=384
       LOG_LEVEL: ${LOG_LEVEL:-info}
       REGISTRATION_MODE: ${REGISTRATION_MODE:-approval}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
