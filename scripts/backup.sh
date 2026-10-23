@@ -107,7 +107,7 @@ if [ "${BACKUP_COUNT}" -gt 10 ]; then
   ls -dt */ | tail -n +11 | xargs rm -rf
 fi
 # Also remove anything older than 10 days
-find "${BACKUP_DIR}" -mindepth 1 -maxdepth 1 -type d -mtime +10 -exec rm -rf {} \;
+find "${BACKUP_DIR}" -maxdepth 1 -type d -mtime +10 -exec rm -rf {} \;
 
 echo "[backup] Backup complete: ${BACKUP_PATH}"
 ls -lh "${BACKUP_PATH}"
