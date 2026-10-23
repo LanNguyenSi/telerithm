@@ -122,7 +122,7 @@ A request over the limit gets `429 Too Many Requests` with:
 
 ### Global, ingest, and auth limiters (pre-existing)
 
-The global, ingest, and auth limiters already existed before the per-user limiter above was added; this page documents their current, unchanged behavior rather than introducing them. All three are keyed by client IP (`express-rate-limit`'s default `keyGenerator`) and their limits are hardcoded, not env-configurable. Widening that to match the notification-test limiter's env-configurability is a reasonable follow-up but is out of scope here (see the docs-audit-followup-2 task this page was written for).
+The global, ingest, and auth limiters already existed before the per-user limiter above was added; this page documents their current, unchanged behavior rather than introducing them. All three are keyed by client IP (`express-rate-limit`'s default `keyGenerator`) and their limits are hardcoded, not env-configurable. Widening that to match the notification-test limiter's env-configurability is a reasonable follow-up but is out of scope here.
 
 ### Behind a reverse proxy (`TRUST_PROXY`)
 

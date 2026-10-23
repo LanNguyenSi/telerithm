@@ -27,7 +27,7 @@ Telerithm turns plain-language questions into structured queries over your logs.
 
 **Self-host:**
 
-Prerequisites: Docker Engine 20.10+, Docker Compose v2, and make. The local stack needs no Traefik; [DEPLOYMENT.md](DEPLOYMENT.md) covers production.
+Prerequisites: Docker Engine 20.10+, Docker Compose v2, and make. To run the backend or frontend outside Docker (`make setup`, `npm run dev`) you also need Node.js 22.9 or newer. The local stack needs no Traefik; [DEPLOYMENT.md](DEPLOYMENT.md) covers production.
 
 ```bash
 git clone https://github.com/LanNguyenSi/telerithm.git

@@ -1,6 +1,6 @@
 COMPOSE=docker compose
 
-.PHONY: setup backend frontend build up down logs init dev deploy deploy-backend deploy-frontend prod-logs
+.PHONY: setup backend frontend build up down logs init dev deploy deploy-backend deploy-frontend prod-logs require-clean-tree
 
 # One-time setup for running backend and frontend outside Docker: starts the
 # datastores (this also creates the ClickHouse tables from
@@ -49,23 +49,44 @@ dev:
 PROD_COMPOSE=docker-compose.traefik.yml
 PROD_ENV=.env.production
 
-deploy:
-	git stash || true
-	git pull origin master
+# The deploy targets refuse to run when a tracked file has local changes
+# (staged or not), instead of stashing them: a stash that is never popped
+# silently drops the change. Commit the change on this checkout (git pull
+# --rebase below replays it on top of master) or revert it, then deploy again.
+# Untracked files such as .env.production do not count. They also refuse to
+# run in the middle of a rebase or merge, or on a detached HEAD (a rebase that
+# stopped on a conflict leaves both), where pulling again would pile up state.
+require-clean-tree:
+	@for state in rebase-merge rebase-apply MERGE_HEAD; do \
+		path=$$(git rev-parse --git-path $$state) || { echo "make: cannot read the git status; refusing to deploy." >&2; exit 1; }; \
+		if [ -e "$$path" ]; then \
+			echo "make: refusing to deploy, a rebase or merge is in progress ($$state). Finish or abort it (git rebase --continue or --abort, git merge --abort), then run make again." >&2; \
+			exit 1; \
+		fi; \
+	done; \
+	git symbolic-ref -q HEAD >/dev/null || { echo "make: refusing to deploy, HEAD is detached. Check out a branch (git switch master), then run make again." >&2; exit 1; }; \
+	status=$$(git status --porcelain --untracked-files=no) || { echo "make: cannot read the git status; refusing to deploy." >&2; exit 1; }; \
+	if [ -n "$$status" ]; then \
+		echo "make: refusing to deploy, tracked files have local changes:" >&2; \
+		echo "$$status" >&2; \
+		echo "Commit them on this checkout or revert them (see DEPLOYMENT.md, Updating), then run make again. Nothing was stashed or discarded." >&2; \
+		exit 1; \
+	fi
+
+deploy: require-clean-tree
+	git pull --rebase origin master
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --no-cache
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) up -d --force-recreate
 	@echo "✅ Deployed. Check https://demo.telerithm.cloud"
 
-deploy-backend:
-	git stash || true
-	git pull origin master
+deploy-backend: require-clean-tree
+	git pull --rebase origin master
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --no-cache backend
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) up -d --no-deps --force-recreate backend
 	@echo "✅ Backend deployed"
 
-deploy-frontend:
-	git stash || true
-	git pull origin master
+deploy-frontend: require-clean-tree
+	git pull --rebase origin master
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --no-cache frontend
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) up -d --no-deps --force-recreate frontend
 	@echo "✅ Frontend deployed"

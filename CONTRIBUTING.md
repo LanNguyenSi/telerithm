@@ -17,7 +17,7 @@ Thanks for your interest in contributing. This guide covers the basics.
 make init
 ```
 
-To run backend and frontend outside Docker, start only the datastores in Docker. This also creates the ClickHouse tables from `backend/clickhouse/init.sql`; the backend does not create them itself. `make setup` runs these steps for you (datastores, example env files, `npm install` in both packages, `db:push`); the manual version:
+To run backend and frontend outside Docker you need Node.js 22.9 or newer (`npm run dev` uses Node's `--env-file-if-exists` flag, which older versions reject with `node: bad option`; CI and the Docker images use Node 22). Start only the datastores in Docker. This also creates the ClickHouse tables from `backend/clickhouse/init.sql`; the backend does not create them itself. `make setup` runs these steps for you (datastores, example env files, `npm install` in both packages, `db:push`); the manual version:
 
 ```bash
 docker compose up -d postgres clickhouse redis

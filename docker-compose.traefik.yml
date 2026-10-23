@@ -1,4 +1,8 @@
-version: "3.8"
+# Fixed project name: the deployed stack lives in the directory DEPLOYMENT.md
+# clones into (telerithm), so Compose already used this name. Pinning it keeps
+# container, network and volume names (telerithm_pgdata, telerithm_chdata, ...)
+# stable if the checkout directory is ever renamed or moved.
+name: telerithm
 
 # Production deployment with Traefik integration
 # Assumes Traefik is already running on the VPS with:
