@@ -13,6 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_SH="${SCRIPT_DIR}/backup.sh"
 
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-backup-test.XXXXXX")"
+SCRATCH="$(cd "${SCRATCH}" && pwd -P)"
 trap 'rm -rf "${SCRATCH}"' EXIT
 
 export HOME="${SCRATCH}/home"
@@ -169,9 +170,10 @@ if [ "${RC}" -eq 0 ] && [ ! -s "${HOOK_LOG}" ]; then ok "hook empty: treated as 
 D6="${SCRATCH}/b6"
 : > "${HOOK_LOG}"
 BACKUP_OFFHOST_HOOK="${HOOK}" run_backup withhook "${D6}"
+BK6="$(find "${D6}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
 if [ "${RC}" -eq 0 ] \
   && [ "$(grep -c '^hook called with:' "${HOOK_LOG}")" = "1" ] \
-  && grep -E "^hook called with: .*/b6/[0-9]{8}_[0-9]{6}$" "${HOOK_LOG}" | grep -q . \
+  && grep -qxF "hook called with: ${BK6}" "${HOOK_LOG}" \
   && grep -q "postgres.sql.gz" "${HOOK_LOG}" && grep -q "clickhouse_logs.native.gz" "${HOOK_LOG}"; then
   ok "hook set: called once with the backup directory holding both dumps"
 else bad "hook set: rc=${RC} hooklog=$(cat "${HOOK_LOG}")"; fi
@@ -189,6 +191,22 @@ BACKUP_OFFHOST_HOOK="${SCRATCH}/no-such-hook" run_backup badhook "${D8}"
 if [ "${RC}" -ne 0 ] && [ ! -d "${D8}" ] && grep -q "not an executable file" <<< "${OUT}"; then
   ok "hook not executable: refused before any dump"
 else bad "hook not executable: rc=${RC} out=${OUT}"; fi
+
+# --- 5f. defaults: without BACKUP_COMPOSE_FILE / BACKUP_ENV_FILE the script uses
+# docker-compose.traefik.yml and .env.production of the repository it lives in
+REPO2="${SCRATCH}/repo2"
+mkdir -p "${REPO2}/scripts"
+cp "${BACKUP_SH}" "${REPO2}/scripts/backup.sh"
+echo "services: {}" > "${REPO2}/docker-compose.traefik.yml"
+echo "services: {}" > "${REPO2}/docker-compose.yml"
+echo "POSTGRES_PASSWORD=dummy" > "${REPO2}/.env.production"
+: > "${STUB_LOG}"
+OUT="$(env -u BACKUP_COMPOSE_FILE -u BACKUP_ENV_FILE bash "${REPO2}/scripts/backup.sh" "${SCRATCH}/b10" 2>&1)"
+RC=$?
+if [ "${RC}" -eq 0 ] \
+  && ! grep -v "^docker compose -f ${REPO2}/docker-compose.traefik.yml --env-file ${REPO2}/.env.production " "${STUB_LOG}" | grep -q .; then
+  ok "defaults: targets docker-compose.traefik.yml and .env.production next to scripts/"
+else bad "defaults: rc=${RC} calls=$(cat "${STUB_LOG}") out=${OUT}"; fi
 
 # --- 6. relative backup dir and retention --------------------------------------
 D9="${SCRATCH}/b9"

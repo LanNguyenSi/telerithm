@@ -17,6 +17,7 @@ MAKEFILE="${SCRIPT_DIR}/../Makefile"
 REAL_GIT="$(command -v git)"
 
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-deploy-test.XXXXXX")"
+SCRATCH="$(cd "${SCRATCH}" && pwd -P)"
 trap 'rm -rf "${SCRATCH}"' EXIT
 
 export HOME="${SCRATCH}/home"
@@ -79,7 +80,7 @@ for target in deploy deploy-backend deploy-frontend; do
   # clean tree: the deploy goes ahead (pull, then build and up)
   reset_repo
   run_make "${target}"
-  if [ "${RC}" -eq 0 ] && grep -q "^git pull" "${CALL_LOG}" && grep -q "^docker compose .* up -d" "${CALL_LOG}"; then
+  if [ "${RC}" -eq 0 ] && grep -qx "git pull --rebase origin master" "${CALL_LOG}" && grep -q "^docker compose .* up -d" "${CALL_LOG}"; then
     ok "${target}: clean tree deploys (pull, build, up)"
   else bad "${target}: clean tree rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
 
