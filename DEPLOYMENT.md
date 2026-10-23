@@ -98,7 +98,7 @@ curl https://yourdomain.example/api/v1/health
 curl https://yourdomain.example
 ```
 
-Compose project names are fixed in the files: `docker-compose.traefik.yml` sets `name: telerithm`, which is the name the stack already had when it was cloned into a directory called `telerithm` as in step 1, so the containers, the `telerithm-internal` network and the `telerithm_pgdata`, `telerithm_chdata` and `telerithm_redisdata` volumes keep their names. If your checkout directory has another name, your volumes carry that prefix instead; run `docker volume ls` before the first deploy of a version that sets the name, and move the data or keep the old name with `COMPOSE_PROJECT_NAME` in the environment of the compose command, which overrides the file. The local `docker-compose.yml` uses `name: telerithm-dev`, so it can run on the same machine without replacing the production containers.
+Compose project names are fixed in the files: `docker-compose.traefik.yml` sets `name: telerithm`, which is the name the stack already had when it was cloned into a directory called `telerithm` as in step 1, so the containers, the `telerithm_telerithm-internal` network and the `telerithm_pgdata`, `telerithm_chdata` and `telerithm_redisdata` volumes keep their names. If your checkout directory has another name, your volumes carry that prefix instead; run `docker volume ls` before the first deploy of a version that sets the name, and move the data or keep the old name by adding `COMPOSE_PROJECT_NAME=<old prefix>` (for example `COMPOSE_PROJECT_NAME=myapp` for volumes called `myapp_pgdata`) to `.env.production`. Compose reads that variable from the `--env-file` and it overrides `name:` in the file; `make deploy` and `scripts/backup.sh` both pass `.env.production`, so they pick it up, while a compose command you type without `--env-file .env.production` does not and would use `telerithm`. The local `docker-compose.yml` uses `name: telerithm-dev`, so it can run on the same machine without replacing the production containers.
 
 ## Architecture
 
@@ -154,11 +154,11 @@ Expected memory usage (8GB VPS):
 
 `make deploy` does the whole update below in one command (pull, rebuild without cache, recreate), `make deploy-backend` and `make deploy-frontend` do it for one service. All three stop before doing anything if a tracked file has local changes, and none of them stashes or discards a change.
 
-By hand:
+By hand (the same steps; `make deploy` additionally builds with `--no-cache` and recreates the containers with `--force-recreate`, so it always picks up a changed base image or dependency):
 
 ```bash
 cd /root/git/telerithm
-git pull origin master
+git pull --rebase origin master
 
 # Rebuild and restart
 docker compose -f docker-compose.traefik.yml --env-file .env.production build
@@ -167,6 +167,10 @@ docker compose -f docker-compose.traefik.yml --env-file .env.production up -d
 # Apply schema changes (prisma db push)
 docker compose -f docker-compose.traefik.yml exec backend npx prisma db push
 ```
+
+`--rebase` matters once you have committed a local edit (for example the domain in `docker-compose.traefik.yml`): a plain `git pull` fails on the diverged history, `git pull --rebase` replays your commit on top of the new master. If the rebase stops on a conflict, resolve it and run `git rebase --continue` (or `git rebase --abort`) before deploying; the deploy targets refuse to run while a rebase or merge is in progress or HEAD is detached.
+
+Two notes for a server that deployed with an older Makefile. Older `make deploy` runs stashed local changes and never restored them, so an edit that an earlier deploy dropped may still sit in `git stash list` on the server; `git stash show -p` shows it and `git stash pop` restores it. And `make` reads the Makefile before `git pull` runs, so the first `make deploy` after this update still runs the old recipe (stash, plain pull) for that one run: commit any local edit and run `git pull --rebase origin master` yourself before it, so the old recipe has nothing left to stash and its plain pull has nothing to merge.
 
 ### ClickHouse schema changes
 

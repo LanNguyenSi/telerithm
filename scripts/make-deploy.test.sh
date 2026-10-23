@@ -59,6 +59,14 @@ echo "POSTGRES_PASSWORD=dummy" > "${REPO}/.env.production"
   git config user.name t
   git add Makefile docker-compose.traefik.yml
   git commit -q -m init
+  echo "# second" >> docker-compose.traefik.yml
+  git commit -q -am second
+  git branch -m trunk
+  # a side branch holding one empty commit: merging it with --no-commit leaves
+  # MERGE_HEAD in place while the working tree stays clean
+  git switch -q -c side
+  git commit -q --allow-empty -m side
+  git switch -q trunk
 )
 
 PASS=0
@@ -73,7 +81,23 @@ run_make() {
 }
 
 reset_repo() {
-  (cd "${REPO}" && git checkout -q -- . && git reset -q --hard && git clean -qfd -e .env.production)
+  (
+    cd "${REPO}" || exit 1
+    git rebase --abort >/dev/null 2>&1
+    git merge --abort >/dev/null 2>&1
+    git switch -q trunk
+    git checkout -q -- . && git reset -q --hard && git clean -qfd -e .env.production
+  )
+}
+
+# stop an interactive rebase of the last commit at an "edit" step: the working
+# tree is clean, but a rebase is in progress and HEAD is detached
+start_rebase_stop() {
+  (
+    cd "${REPO}" || exit 1
+    GIT_SEQUENCE_EDITOR='f() { sed "s/^pick/edit/" "$1" > "$1.new" && mv "$1.new" "$1"; }; f' \
+      git rebase -q -i HEAD~1 >/dev/null 2>&1
+  )
 }
 
 for target in deploy deploy-backend deploy-frontend; do
@@ -111,6 +135,43 @@ for target in deploy deploy-backend deploy-frontend; do
   if [ "${RC}" -ne 0 ] && grep -q "refusing to deploy" <<< "${OUT}" && [ ! -s "${CALL_LOG}" ]; then
     ok "${target}: staged edit refused"
   else bad "${target}: staged edit rc=${RC} calls=$(cat "${CALL_LOG}")"; fi
+
+  # rebase stopped (clean tree, detached HEAD, rebase-merge present): refused
+  reset_repo
+  start_rebase_stop
+  if [ -d "${REPO}/.git/rebase-merge" ] && [ -z "$(cd "${REPO}" && git status --porcelain --untracked-files=no)" ]; then
+    run_make "${target}"
+    if [ "${RC}" -ne 0 ] && grep -q "rebase or merge is in progress (rebase-merge)" <<< "${OUT}" && [ ! -s "${CALL_LOG}" ]; then
+      ok "${target}: rebase in progress refused, nothing pulled"
+    else bad "${target}: rebase in progress rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+  else bad "${target}: could not set up a stopped rebase with a clean tree"; fi
+
+  # rebase-apply (git am style) marker alone
+  reset_repo
+  mkdir "${REPO}/.git/rebase-apply"
+  run_make "${target}"
+  if [ "${RC}" -ne 0 ] && grep -q "rebase or merge is in progress (rebase-apply)" <<< "${OUT}" && [ ! -s "${CALL_LOG}" ]; then
+    ok "${target}: rebase-apply marker refused"
+  else bad "${target}: rebase-apply rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+  rmdir "${REPO}/.git/rebase-apply"
+
+  # merge in progress (MERGE_HEAD, clean tree): refused
+  reset_repo
+  (cd "${REPO}" && git merge -q --no-commit --no-ff side >/dev/null 2>&1)
+  if [ -f "${REPO}/.git/MERGE_HEAD" ] && [ -z "$(cd "${REPO}" && git status --porcelain --untracked-files=no)" ]; then
+    run_make "${target}"
+    if [ "${RC}" -ne 0 ] && grep -q "rebase or merge is in progress (MERGE_HEAD)" <<< "${OUT}" && [ ! -s "${CALL_LOG}" ]; then
+      ok "${target}: merge in progress refused, nothing pulled"
+    else bad "${target}: merge in progress rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+  else bad "${target}: could not set up a merge in progress with a clean tree"; fi
+
+  # detached HEAD, nothing else wrong: refused
+  reset_repo
+  (cd "${REPO}" && git switch -q --detach)
+  run_make "${target}"
+  if [ "${RC}" -ne 0 ] && grep -q "HEAD is detached" <<< "${OUT}" && [ ! -s "${CALL_LOG}" ]; then
+    ok "${target}: detached HEAD refused, nothing pulled"
+  else bad "${target}: detached HEAD rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
 done
 
 # outside a git work tree the status is unreadable: refused, not waved through

@@ -24,7 +24,8 @@ set -euo pipefail
 #                         (default: <repo root>/.env.production, skipped if absent)
 #   BACKUP_OFFHOST_HOOK   optional path of an executable that copies the finished
 #                         backup off this host. It is called with the backup
-#                         directory as its only argument. Unset or empty means
+#                         directory as its only argument (a relative path is
+#                         taken from where this script is started). Unset or empty means
 #                         the backup stays local. The dumps hold source API keys
 #                         in clear text: encrypt them in the hook before they
 #                         leave the host. A hook that fails makes this script
@@ -43,8 +44,13 @@ fail() {
 }
 
 [ -f "${COMPOSE_FILE}" ] || fail "compose file not found: ${COMPOSE_FILE}"
-if [ -n "${OFFHOST_HOOK}" ] && [ ! -x "${OFFHOST_HOOK}" ]; then
-  fail "BACKUP_OFFHOST_HOOK is not an executable file: ${OFFHOST_HOOK}"
+if [ -n "${OFFHOST_HOOK}" ]; then
+  if [ ! -f "${OFFHOST_HOOK}" ] || [ ! -x "${OFFHOST_HOOK}" ]; then
+    fail "BACKUP_OFFHOST_HOOK is not an executable file: ${OFFHOST_HOOK}"
+  fi
+  # Made absolute here, before this script changes directory for the retention
+  # step, so a relative path resolves against where the script was started.
+  OFFHOST_HOOK="$(cd "$(dirname "${OFFHOST_HOOK}")" && pwd)/$(basename "${OFFHOST_HOOK}")"
 fi
 
 COMPOSE=(docker compose -f "${COMPOSE_FILE}")
@@ -66,7 +72,11 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 mkdir -p "${BACKUP_DIR}"
 BACKUP_DIR="$(cd "${BACKUP_DIR}" && pwd)"
 BACKUP_PATH="${BACKUP_DIR}/${TIMESTAMP}"
-mkdir -p "${BACKUP_PATH}"
+# No -p: the timestamp has one-second resolution, and a run that reused the
+# directory of another run could delete that run's finished backup when it
+# cleans up after its own failure.
+mkdir "${BACKUP_PATH}" 2>/dev/null \
+  || fail "backup directory already exists (another run in the same second?): ${BACKUP_PATH}"
 
 # A run that dies before both dumps are complete removes its own directory, so
 # a half-written backup neither looks like a backup nor counts toward the

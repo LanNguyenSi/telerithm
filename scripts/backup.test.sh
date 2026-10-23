@@ -29,6 +29,7 @@ unset CLAUDE_CONFIG_DIR CODEX_HOME BACKUP_COMPOSE_FILE BACKUP_ENV_FILE BACKUP_OF
 #   STUB_RUNNING   services `ps --status running --services` lists (newline separated)
 #   STUB_PS_FAIL   non-empty: `ps` exits 1
 #   STUB_PG_FAIL   non-empty: `exec ... postgres` exits 1 after printing nothing
+#   STUB_CH_FAIL   non-empty: `exec ... clickhouse` prints some bytes, then exits 1
 # Every invocation is appended to $STUB_LOG.
 STUB_DIR="${SCRATCH}/stubbin"
 mkdir -p "${STUB_DIR}"
@@ -48,6 +49,7 @@ case " $* " in
     exit 0 ;;
   *" exec "*clickhouse*)
     echo "fake-native-bytes"
+    [ -z "${STUB_CH_FAIL:-}" ] || exit 1
     exit 0 ;;
 esac
 exit 98
@@ -141,6 +143,41 @@ if [ "${RC}" -ne 0 ] && [ "$(count_dirs "${D4}")" = "0" ]; then
   ok "failed pg_dump: non-zero and the half-written directory is removed"
 else bad "failed pg_dump: rc=${RC} dirs=$(count_dirs "${D4}")"; fi
 
+# a ClickHouse failure after a finished PostgreSQL dump leaves nothing behind:
+# no timestamp directory (so no postgres-only "backup") and no .partial file
+D4B="${SCRATCH}/b4b"
+STUB_CH_FAIL=1 run_backup chfail "${D4B}"
+if [ "${RC}" -ne 0 ] \
+  && [ "$(count_dirs "${D4B}")" = "0" ] \
+  && ! find "${D4B}" -name '*.partial' | grep -q .; then
+  ok "failed clickhouse dump: non-zero, no directory and no .partial file remain"
+else bad "failed clickhouse dump: rc=${RC} dirs=$(count_dirs "${D4B}") files=$(find "${D4B}" -type f 2>/dev/null)"; fi
+
+# --- 4b. two runs in the same second: the second must not delete the first
+DATE_STUB="${SCRATCH}/datestub"
+mkdir -p "${DATE_STUB}"
+cat > "${DATE_STUB}/date" <<'DATESTUB'
+#!/usr/bin/env bash
+echo 20990101_000000
+DATESTUB
+chmod +x "${DATE_STUB}/date"
+D4C="${SCRATCH}/b4c"
+PATH="${DATE_STUB}:${PATH}" run_backup firstrun "${D4C}"
+if [ "${RC}" -eq 0 ] && [ -s "${D4C}/20990101_000000/postgres.sql.gz" ]; then
+  ok "same-second: first run succeeds"
+else bad "same-second: first run rc=${RC} out=${OUT}"; fi
+PATH="${DATE_STUB}:${PATH}" STUB_PG_FAIL=1 run_backup secondrun "${D4C}"
+if [ "${RC}" -ne 0 ] \
+  && grep -q "already exists" <<< "${OUT}" \
+  && [ -s "${D4C}/20990101_000000/postgres.sql.gz" ] \
+  && [ -s "${D4C}/20990101_000000/clickhouse_logs.native.gz" ]; then
+  ok "same-second: second run is refused and the first backup is untouched"
+else bad "same-second: second run rc=${RC} out=${OUT} files=$(find "${D4C}" -type f)"; fi
+PATH="${DATE_STUB}:${PATH}" run_backup thirdrun "${D4C}"
+if [ "${RC}" -ne 0 ] && [ -s "${D4C}/20990101_000000/postgres.sql.gz" ]; then
+  ok "same-second: a second run that would succeed is refused too, first backup kept"
+else bad "same-second: third run rc=${RC} out=${OUT}"; fi
+
 # --- 5. off-host hook ----------------------------------------------------------
 HOOK="${SCRATCH}/hook.sh"
 HOOK_LOG="${SCRATCH}/hook.log"
@@ -163,7 +200,7 @@ else bad "hook unset: rc=${RC} hooklog=$(cat "${HOOK_LOG}") out=${OUT}"; fi
 
 # 5b. empty string counts as unset
 : > "${HOOK_LOG}"
-BACKUP_OFFHOST_HOOK="" run_backup emptyhook "${D5}"
+BACKUP_OFFHOST_HOOK="" run_backup emptyhook "${SCRATCH}/b5b"
 if [ "${RC}" -eq 0 ] && [ ! -s "${HOOK_LOG}" ]; then ok "hook empty: treated as unset"; else bad "hook empty: rc=${RC}"; fi
 
 # 5c. set: called once with the finished backup directory containing both dumps
@@ -191,6 +228,32 @@ BACKUP_OFFHOST_HOOK="${SCRATCH}/no-such-hook" run_backup badhook "${D8}"
 if [ "${RC}" -ne 0 ] && [ ! -d "${D8}" ] && grep -q "not an executable file" <<< "${OUT}"; then
   ok "hook not executable: refused before any dump"
 else bad "hook not executable: rc=${RC} out=${OUT}"; fi
+
+# 5e2. a relative hook path is resolved before the script changes into the
+# backup directory: started from the directory holding the hook, with a backup
+# directory elsewhere, the hook still runs and gets an absolute argument
+D8B="${SCRATCH}/b8b"
+: > "${HOOK_LOG}"
+( cd "${SCRATCH}" && BACKUP_OFFHOST_HOOK="./hook.sh" bash "${BACKUP_SH}" "${D8B}" > "${SCRATCH}/relhook.out" 2>&1 ); RC=$?
+BK8B="$(find "${D8B}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+if [ "${RC}" -eq 0 ] && grep -qxF "hook called with: ${BK8B}" "${HOOK_LOG}"; then
+  ok "hook relative path (./hook.sh): runs, called with the absolute backup directory"
+else bad "hook relative path: rc=${RC} hooklog=$(cat "${HOOK_LOG}") out=$(cat "${SCRATCH}/relhook.out")"; fi
+
+# a bare file name (no slash) in the start directory resolves the same way
+D8C="${SCRATCH}/b8c"
+: > "${HOOK_LOG}"
+( cd "${SCRATCH}" && BACKUP_OFFHOST_HOOK="hook.sh" bash "${BACKUP_SH}" "${D8C}" > "${SCRATCH}/relhook2.out" 2>&1 ); RC=$?
+if [ "${RC}" -eq 0 ] && [ "$(grep -c '^hook called with:' "${HOOK_LOG}")" = "1" ]; then
+  ok "hook bare file name: runs from the start directory"
+else bad "hook bare file name: rc=${RC} out=$(cat "${SCRATCH}/relhook2.out")"; fi
+
+# a directory is not a hook
+D8D="${SCRATCH}/b8d"
+BACKUP_OFFHOST_HOOK="${SCRATCH}/stubbin" run_backup dirhook "${D8D}"
+if [ "${RC}" -ne 0 ] && [ ! -d "${D8D}" ] && grep -q "not an executable file" <<< "${OUT}"; then
+  ok "hook is a directory: refused before any dump"
+else bad "hook is a directory: rc=${RC} out=${OUT}"; fi
 
 # --- 5f. defaults: without BACKUP_COMPOSE_FILE / BACKUP_ENV_FILE the script uses
 # docker-compose.traefik.yml and .env.production of the repository it lives in

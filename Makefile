@@ -53,9 +53,19 @@ PROD_ENV=.env.production
 # (staged or not), instead of stashing them: a stash that is never popped
 # silently drops the change. Commit the change on this checkout (git pull
 # --rebase below replays it on top of master) or revert it, then deploy again.
-# Untracked files such as .env.production do not count.
+# Untracked files such as .env.production do not count. They also refuse to
+# run in the middle of a rebase or merge, or on a detached HEAD (a rebase that
+# stopped on a conflict leaves both), where pulling again would pile up state.
 require-clean-tree:
-	@status=$$(git status --porcelain --untracked-files=no) || { echo "make: cannot read the git status; refusing to deploy." >&2; exit 1; }; \
+	@for state in rebase-merge rebase-apply MERGE_HEAD; do \
+		path=$$(git rev-parse --git-path $$state) || { echo "make: cannot read the git status; refusing to deploy." >&2; exit 1; }; \
+		if [ -e "$$path" ]; then \
+			echo "make: refusing to deploy, a rebase or merge is in progress ($$state). Finish or abort it (git rebase --continue or --abort, git merge --abort), then run make again." >&2; \
+			exit 1; \
+		fi; \
+	done; \
+	git symbolic-ref -q HEAD >/dev/null || { echo "make: refusing to deploy, HEAD is detached. Check out a branch (git switch master), then run make again." >&2; exit 1; }; \
+	status=$$(git status --porcelain --untracked-files=no) || { echo "make: cannot read the git status; refusing to deploy." >&2; exit 1; }; \
 	if [ -n "$$status" ]; then \
 		echo "make: refusing to deploy, tracked files have local changes:" >&2; \
 		echo "$$status" >&2; \
