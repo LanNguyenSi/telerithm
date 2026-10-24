@@ -9,11 +9,10 @@
 
     metric_log, asynchronous_metric_log, trace_log, processors_profile_log
     and query_metric_log are disabled too: telerithm never reads them, and
-    metric_log alone (one wide row per second) kept two cores busy with
-    background merges on VPS-01 (2.16 GiB, 516 active parts on 2026-10-24,
-    TTL notwithstanding). The remaining system logs (query_log,
-    query_thread_log, part_log, error_log) are kept 7 days via TTL so
-    short-window debugging stays possible.
+    metric_log's one wide row per second makes background merges expensive
+    (see CHANGELOG). The remaining system logs (query_log, query_thread_log,
+    part_log, error_log) are kept 7 days via TTL so short-window debugging
+    stays possible.
 
     NOTE: a TTL config change only applies to NEWLY created tables. On the
     first restart with this file, ClickHouse renames each existing table to
