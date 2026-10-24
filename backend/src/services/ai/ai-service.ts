@@ -49,6 +49,13 @@ const TERM_VARIANTS: Record<string, string[]> = {
   failing: ["fail", "failed", "failure", "failures"],
 };
 
+// zod 3's `z.number()` accepted Infinity (JSON `1e999` in an LLM response);
+// zod 4's rejects it. Keep the zod 3 accept-set for filter values.
+const numberSchema = z.custom<number>(
+  (value) => typeof value === "number" && !Number.isNaN(value),
+  "Expected number",
+);
+
 const nlqResponseSchema = z.object({
   explanation: z.string().optional(),
   filtersApplied: z
@@ -56,7 +63,7 @@ const nlqResponseSchema = z.object({
       z.object({
         field: z.string(),
         operator: z.string(),
-        value: z.union([z.string(), z.number()]),
+        value: z.union([z.string(), numberSchema]),
       }),
     )
     .optional(),

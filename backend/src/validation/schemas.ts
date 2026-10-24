@@ -1,6 +1,39 @@
 import { z } from "zod";
 import { SEARCH_LIMIT_CEILING } from "../constants/search.js";
 
+// ---------------------------------------------------------------------------
+// Helpers that keep the zod 3 semantics these schemas were written against:
+// zod 4's native formats changed accept sets or outputs, so the old behaviour
+// is pinned here; the inputs each helper must keep are pinned by
+// tests/unit/zod4-compat.test.ts.
+// ---------------------------------------------------------------------------
+
+// zod 3's `.datetime()` (precision null, offset false, local false): full date
+// with leap-year rules, minute precision with optional seconds and fraction,
+// mandatory "Z". zod 4's `z.iso.datetime()` requires seconds and rejects
+// "2026-01-01T10:00Z", which the frontend sends. The message is zod 3's.
+const dateTimeSchema = z
+  .string()
+  .regex(
+    /^((\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\d|3[01])|(0[469]|11)-(0[1-9]|[12]\d|30)|(02)-(0[1-9]|1\d|2[0-8])))T([01]\d|2[0-3]):[0-5]\d(:([0-5]\d(\.\d+)?)?)?(Z)$/,
+    "Invalid datetime",
+  );
+
+// zod 4's `.int()` additionally requires a *safe* integer and rejects e.g.
+// 9007199254740992, which zod 3 accepted (JSON bodies and env strings can
+// carry it). Number.isInteger keeps the zod 3 accept set and message.
+const INT_V3_MESSAGE = "Expected integer, received float";
+const intSchema = z.number().refine((value) => Number.isInteger(value), INT_V3_MESSAGE);
+const coercedIntSchema = z.coerce.number().refine((value) => Number.isInteger(value), INT_V3_MESSAGE);
+
+// zod 3's `z.number()` accepted Infinity (reachable from JSON `1e999`); zod 4's
+// rejects it. NaN is rejected by both. Used where a value is a free-form
+// number with no `.int()` behind it.
+const numberSchema = z.custom<number>(
+  (value) => typeof value === "number" && !Number.isNaN(value),
+  "Expected number",
+);
+
 const levelSchema = z.enum(["debug", "info", "warn", "error", "fatal"]);
 
 export const registerSchema = z.object({
@@ -45,8 +78,8 @@ const alertRuleFields = {
   query: z.string().trim().min(1).max(1000),
   queryType: z.literal("sql"),
   condition: alertRuleConditionSchema,
-  threshold: z.number().int().min(0),
-  windowMinutes: z.number().int().min(1).max(1440),
+  threshold: intSchema.min(0),
+  windowMinutes: intSchema.min(1).max(1440),
   enabled: z.boolean(),
 };
 
@@ -83,21 +116,21 @@ export const updateAlertRuleSchema = z
 export const logFilterSchema = z.object({
   field: z.string(),
   operator: z.enum(["eq", "neq", "gt", "lt", "contains"]),
-  value: z.union([z.string(), z.number()]),
+  value: z.union([z.string(), numberSchema]),
 });
 
 export const searchSchema = z.object({
   teamId: z.string().min(1),
   sourceId: z.string().optional(),
-  startTime: z.string().datetime().optional(),
-  endTime: z.string().datetime().optional(),
+  startTime: dateTimeSchema.optional(),
+  endTime: dateTimeSchema.optional(),
   query: z.string().optional(),
   queryType: z.enum(["sql", "natural"]).default("sql"),
   filters: z.array(logFilterSchema).optional(),
   sortBy: z.enum(["timestamp", "level", "service", "host"]).default("timestamp"),
   sortDirection: z.enum(["asc", "desc"]).default("desc"),
-  limit: z.number().int().min(1).max(SEARCH_LIMIT_CEILING).default(100),
-  offset: z.number().int().min(0).default(0),
+  limit: intSchema.min(1).max(SEARCH_LIMIT_CEILING).default(100),
+  offset: intSchema.min(0).default(0),
   pageToken: z.string().optional(),
 });
 
@@ -121,7 +154,7 @@ const searchScopeSchema = searchSchema.omit({
 
 export const facetsSchema = searchScopeSchema.extend({
   fields: z.array(facetFieldSchema).min(1).max(12).default(["service", "level", "host", "sourceId"]),
-  limit: z.number().int().min(1).max(50).default(10),
+  limit: intSchema.min(1).max(50).default(10),
   async: z.boolean().default(false),
 });
 
@@ -132,14 +165,14 @@ export const histogramSchema = searchScopeSchema.extend({
 
 export const patternsSchema = searchScopeSchema.extend({
   groupBy: z.enum(["none", "service", "level", "service_level"]).default("service_level"),
-  limit: z.number().int().min(1).max(200).default(50),
+  limit: intSchema.min(1).max(200).default(50),
   async: z.boolean().default(false),
 });
 
 export const savedViewDefinitionSchema = z.object({
   mode: z.enum(["raw", "patterns"]).optional(),
-  startTime: z.string().datetime().optional(),
-  endTime: z.string().datetime().optional(),
+  startTime: dateTimeSchema.optional(),
+  endTime: dateTimeSchema.optional(),
   relativeTime: z.string().optional(),
   text: z.string().optional(),
   sourceId: z.string().optional(),
@@ -149,7 +182,7 @@ export const savedViewDefinitionSchema = z.object({
   sortDirection: z.enum(["asc", "desc"]).default("desc"),
   facets: z.array(z.object({ field: z.string(), value: z.string() })).default([]),
   exclusions: z.array(z.object({ field: z.string(), value: z.string() })).default([]),
-  pageSize: z.number().int().min(1).max(500).default(50),
+  pageSize: intSchema.min(1).max(500).default(50),
 });
 
 export const createSavedViewSchema = z.object({
@@ -170,9 +203,9 @@ export const updateSavedViewSchema = z.object({
 export const contextSchema = z.object({
   teamId: z.string().min(1),
   sourceId: z.string().min(1),
-  timestamp: z.string().datetime(),
-  before: z.number().int().min(1).max(100).default(20),
-  after: z.number().int().min(1).max(100).default(20),
+  timestamp: dateTimeSchema,
+  before: intSchema.min(1).max(100).default(20),
+  after: intSchema.min(1).max(100).default(20),
   scope: z.enum(["source", "service", "host"]).default("source"),
   service: z.string().optional(),
   host: z.string().optional(),
@@ -202,13 +235,13 @@ export const createSubscriptionSchema = z.object({
   teamId: z.string().min(1),
   ruleId: z.string().optional(),
   channel: subscriptionChannelSchema,
-  config: z.record(z.unknown()),
+  config: z.record(z.string(), z.unknown()),
   severities: z.array(z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"])).optional(),
 });
 
 export const updateSubscriptionSchema = z.object({
   channel: subscriptionChannelSchema.optional(),
-  config: z.record(z.unknown()).optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
   severities: z.array(z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW"])).optional(),
   enabled: z.boolean().optional(),
 });
@@ -221,8 +254,8 @@ export const issueQuerySchema = z.object({
   level: z.string().optional(),
   sortBy: z.enum(["lastSeen", "firstSeen", "eventCount", "service", "level", "status"]).default("lastSeen"),
   sortDirection: z.enum(["asc", "desc"]).default("desc"),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
-  offset: z.coerce.number().int().min(0).default(0),
+  limit: coercedIntSchema.min(1).max(200).default(50),
+  offset: coercedIntSchema.min(0).default(0),
 });
 
 export const issueUpdateSchema = z.object({
@@ -231,14 +264,14 @@ export const issueUpdateSchema = z.object({
 });
 
 export const muteRuleSchema = z.object({
-  durationMinutes: z.number().int().min(1).max(43200), // max 30 days
+  durationMinutes: intSchema.min(1).max(43200), // max 30 days
 });
 
 export const maintenanceWindowSchema = z.object({
   teamId: z.string().min(1),
   name: z.string().min(2),
-  startsAt: z.string().datetime(),
-  endsAt: z.string().datetime(),
+  startsAt: dateTimeSchema,
+  endsAt: dateTimeSchema,
 });
 
 export const createInviteSchema = z.object({
@@ -263,12 +296,12 @@ export const ingestSchema = z.object({
       z.union([
         z.string(),
         z.object({
-          timestamp: z.string().datetime().optional(),
+          timestamp: dateTimeSchema.optional(),
           level: levelSchema.optional(),
           service: z.string().optional(),
           host: z.string().optional(),
           message: z.string().optional(),
-          fields: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+          fields: z.record(z.string(), z.union([z.string(), numberSchema, z.boolean()])).optional(),
         }),
       ]),
     )
