@@ -5,8 +5,13 @@
     telerithm data stayed tiny.
 
     text_log duplicates the server's stderr log into a MergeTree table and
-    is pure ClickHouse-internal diagnostics; we disable it outright. The
-    remaining system logs are kept 7 days via TTL so short-window debugging
+    is pure ClickHouse-internal diagnostics; we disable it outright.
+
+    metric_log, asynchronous_metric_log, trace_log, processors_profile_log
+    and query_metric_log are disabled too: telerithm never reads them, and
+    metric_log's one wide row per second makes background merges expensive
+    (see CHANGELOG). The remaining system logs (query_log, query_thread_log,
+    part_log, error_log) are kept 7 days via TTL so short-window debugging
     stays possible.
 
     NOTE: a TTL config change only applies to NEWLY created tables. On the
@@ -17,24 +22,17 @@
 -->
 <clickhouse>
     <text_log remove="1"/>
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <trace_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <query_metric_log remove="1"/>
     <query_log>
         <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
     </query_log>
     <query_thread_log>
         <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
     </query_thread_log>
-    <metric_log>
-        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
-    </metric_log>
-    <asynchronous_metric_log>
-        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
-    </asynchronous_metric_log>
-    <trace_log>
-        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
-    </trace_log>
-    <processors_profile_log>
-        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
-    </processors_profile_log>
     <part_log>
         <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
     </part_log>
