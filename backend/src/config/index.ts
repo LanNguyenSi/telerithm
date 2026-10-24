@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import express from "express";
 import { z } from "zod";
 import { SEARCH_LIMIT_CEILING } from "../constants/search.js";
+import { coercedIntSchema } from "../validation/schemas.js";
 
 // Value handed to Express's `trust proxy` setting: a hop count, the
 // `loopback` keyword, or a list of trusted proxy IPs/CIDRs. `undefined` means
@@ -147,15 +148,34 @@ export function parseTrustProxy(raw: string | undefined): TrustProxySetting | un
   throw new Error(`TRUST_PROXY=${JSON.stringify(value)} is invalid. Expected ${TRUST_PROXY_EXPECTED}`);
 }
 
+// zod 4 compat (config-local: env URLs must keep their exact bytes, and there
+// is no shared url schema to import from backend/src/validation/schemas.ts):
+// zod 4's `.url()` and `z.url()` test the URL after stripping tabs, newlines
+// and surrounding whitespace and output the stripped string; zod 3 tested
+// `new URL(value)` and returned the input unchanged. The message is zod 3's.
+function isRawUrl(value: string): boolean {
+  try {
+    new URL(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+const urlSchema = z.string().refine(isRawUrl, "Invalid url");
+
+// zod 4's `.int()` also requires a *safe* integer and, for example, rejects
+// PORT="9007199254740993" at startup; zod 3 accepted any integer value. The
+// shared helper is imported from backend/src/validation/schemas.ts (same refine
+// and zod 3 message), so it is not redefined here.
 const configSchema = z.object({
-  port: z.coerce.number().int().default(4000),
+  port: coercedIntSchema.default(4000),
   host: z.string().default("127.0.0.1"),
   nodeEnv: z.enum(["development", "production", "test"]).default("development"),
-  databaseUrl: z.string().url(),
-  clickhouseUrl: z.string().url(),
+  databaseUrl: urlSchema,
+  clickhouseUrl: urlSchema,
   logLevel: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   corsOrigins: z.string().default("http://localhost:3000"),
-  redisUrl: z.string().url().default("redis://localhost:6379"),
+  redisUrl: urlSchema.default("redis://localhost:6379"),
   multiTenant: z
     .enum(["true", "false", "1", "0"])
     .default("false")
@@ -168,26 +188,18 @@ const configSchema = z.object({
     .or(z.literal(""))
     .transform((v) => (v === "" ? undefined : v)),
   openaiApiKey: z.string().optional(), // Optional: AI query engine falls back to heuristic if not provided
-  openaiBaseUrl: z.string().url().optional(), // Optional: OpenAI-compatible endpoint (e.g. Ollama, llama.cpp)
+  openaiBaseUrl: urlSchema.optional(), // Optional: OpenAI-compatible endpoint (e.g. Ollama, llama.cpp)
   openaiModel: z.string().optional(), // Optional: model name (default openai/gpt-oss-120b)
-  openaiTimeoutMs: z.coerce.number().int().positive().default(10000), // LLM call timeout
-  maxLookbackMs: z.coerce
-    .number()
-    .int()
-    .positive()
-    .default(7 * 24 * 60 * 60 * 1000),
+  openaiTimeoutMs: coercedIntSchema.positive().default(10000), // LLM call timeout
+  maxLookbackMs: coercedIntSchema.positive().default(7 * 24 * 60 * 60 * 1000),
   // A value above the request schema's own limit ceiling would have no effect;
   // loadConfig clamps it to the ceiling and records a warning.
-  maxPageSize: z.coerce.number().int().min(50).default(SEARCH_LIMIT_CEILING),
-  maxSyncRuntimeMs: z.coerce.number().int().min(100).max(30_000).default(1500),
+  maxPageSize: coercedIntSchema.min(50).default(SEARCH_LIMIT_CEILING),
+  maxSyncRuntimeMs: coercedIntSchema.min(100).max(30_000).default(1500),
   // Strict per-user limit on routes that trigger a real notification dispatch
   // (currently POST /subscriptions/:id/test). Default: 5 requests / 5 minutes.
-  notificationTestRateLimitWindowMs: z.coerce
-    .number()
-    .int()
-    .positive()
-    .default(5 * 60_000),
-  notificationTestRateLimitMax: z.coerce.number().int().positive().default(5),
+  notificationTestRateLimitWindowMs: coercedIntSchema.positive().default(5 * 60_000),
+  notificationTestRateLimitMax: coercedIntSchema.positive().default(5),
   // Opt-in proxy trust for the IP-keyed rate limiters; see parseTrustProxy.
   trustProxy: z
     .string()
