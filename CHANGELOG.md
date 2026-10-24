@@ -30,6 +30,9 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 - **Tailwind CSS 4** (GHSA-rj75-hqrm-r3gf) in `frontend/`: the frontend is migrated from Tailwind CSS 3.4 to 4, which drops `postcss-selector-parser` 6.x (quadratic selector parsing, no fix on the 6.x line) from the lockfile. The theme moves into `src/app/globals.css` (`@theme`), `tailwind.config.ts` is removed (and no longer copied by `frontend/Dockerfile`), and PostCSS uses `@tailwindcss/postcss`. Opacity modifiers on the custom colours (for example `bg-panel/85`, `bg-danger/10`, `border-line/70`) were silently dropped by Tailwind 3 and are now rendered, so cards, error icons, table rules and the sidebar avatar look slightly different, as intended. No API change.
 - **sharp 0.35.5** (GHSA-wq5f-xc86-pv6w, task aff72e2b), in `frontend/`, installed through `next`: the lockfile resolves 0.35.5 with matching `@img/*` binaries and the `sharp` override floor is now `^0.35.5`.
 - **ip-address 10.7.4** (GHSA-rxp7-6hxx-x8q5) in `backend/`: the lockfile resolves 10.7.4, which fixes quadratic-time matching of a zone identifier in `Address6`, so a long input string can no longer stall a process. It is installed through `express-rate-limit`.
+- **body-parser 1.20.9** (GHSA-27r3-jxmh-p828): the lockfile resolves 1.20.9, so trailing bytes after a compressed request body no longer cause a denial of service.
+- **undici 7.30.1** (GHSA-xjj6-f33q-929c, GHSA-4qv8-2p9j-2685, GHSA-f72v-6w45-q472): the lockfile resolves 7.30.1, which fixes a denial of service via excessive content-encodings, unbounded memory in the EventSource parser and a Subresource Integrity bypass. It is a development dependency (installed through `jsdom`).
+- **zod 4.6.7** (GHSA-mrhx-c7xc-m3w5): the lockfile resolves 4.6.7, so validating an oversized constrained collection no longer exhausts memory. It is a development dependency.
 
 ### Added
 
