@@ -8,6 +8,7 @@ import {
   createInviteSchema,
   contextSchema,
   createSubscriptionSchema,
+  dateTimeRegex,
   EMAIL_CHANNEL_UNSUPPORTED_MESSAGE,
   ingestSchema,
   loginSchema,
@@ -115,6 +116,35 @@ describe("datetime string fields keep the zod 3 accept-set", () => {
     ["maintenanceWindow.startsAt", (v) => maintenanceWindowSchema.safeParse({ teamId: "t", name: "win", startsAt: v, endsAt: "2026-01-01T10:00:00Z" }).success],
     ["ingest.logs[0].timestamp", (v) => ingestSchema.safeParse({ logs: [{ timestamp: v }] }).success],
   ];
+
+  // Each datetime input is its own case: the two malformed inputs must be
+  // rejected at every site and the two well-formed ones accepted. A regex whose
+  // seconds group is `(:([0-5]\d(\.\d+)?)?)?` (a group around an *optional*
+  // seconds unit) wrongly accepts the bare trailing colon "2026-01-01T10:00:Z";
+  // zod 3's `(:[0-5]\d(\.\d+)?)?` ties the colon to the seconds digits.
+  const secondsCases = sites.flatMap(([site, check]) =>
+    (
+      [
+        ["2026-01-01T10:00Z", true],
+        ["2026-01-01T10:00:00.123Z", true],
+        ["2026-01-01T10:00:Z", false],
+        ["2026-01-01T10:00:00.Z", false],
+      ] as [string, boolean][]
+    ).map(([input, expected]) => ({ site, check, input, expected })),
+  );
+
+  it.each(secondsCases)("$site: $input accepted=$expected (zod 3 seconds unit)", ({ check, input, expected }) => {
+    expect(check(input)).toBe(expected);
+  });
+
+  // Guard: the schema must carry zod 3's exact regex source, not a widened
+  // variant. Re-deriving it here from zod 3's datetimeRegex({ precision: null,
+  // offset: false, local: false }) is what the migration report pinned.
+  it("the datetime regex source is exactly zod 3's datetimeRegex source", () => {
+    expect(dateTimeRegex.source).toBe(
+      "^((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))T([01]\\d|2[0-3]):[0-5]\\d(:[0-5]\\d(\\.\\d+)?)?(Z)$",
+    );
+  });
 
   it.each(sites)("%s accepts the minute-precision form 2026-01-01T10:00Z (zod 3 accepted it)", (_site, check) => {
     expect(check("2026-01-01T10:00Z")).toBe(true);

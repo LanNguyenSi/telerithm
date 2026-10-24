@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import express from "express";
 import { z } from "zod";
 import { SEARCH_LIMIT_CEILING } from "../constants/search.js";
+import { coercedIntSchema } from "../validation/schemas.js";
 
 // Value handed to Express's `trust proxy` setting: a hop count, the
 // `loopback` keyword, or a list of trusted proxy IPs/CIDRs. `undefined` means
@@ -147,11 +148,11 @@ export function parseTrustProxy(raw: string | undefined): TrustProxySetting | un
   throw new Error(`TRUST_PROXY=${JSON.stringify(value)} is invalid. Expected ${TRUST_PROXY_EXPECTED}`);
 }
 
-// zod 4 compat (mirrors backend/src/validation/schemas.ts): zod 4's `.url()`
-// and `z.url()` test the URL after stripping tabs, newlines and surrounding
-// whitespace and output the stripped string; zod 3 tested `new URL(value)` and
-// returned the input unchanged. Env values keep their exact bytes. The
-// message is zod 3's default.
+// zod 4 compat (config-local: env URLs must keep their exact bytes, and there
+// is no shared url schema to import from backend/src/validation/schemas.ts):
+// zod 4's `.url()` and `z.url()` test the URL after stripping tabs, newlines
+// and surrounding whitespace and output the stripped string; zod 3 tested
+// `new URL(value)` and returned the input unchanged. The message is zod 3's.
 function isRawUrl(value: string): boolean {
   try {
     new URL(value);
@@ -163,11 +164,9 @@ function isRawUrl(value: string): boolean {
 const urlSchema = z.string().refine(isRawUrl, "Invalid url");
 
 // zod 4's `.int()` also requires a *safe* integer and, for example, rejects
-// PORT="9007199254740993" at startup; zod 3 accepted any integer value.
-const coercedIntSchema = z.coerce
-  .number()
-  .refine((value) => Number.isInteger(value), "Expected integer, received float");
-
+// PORT="9007199254740993" at startup; zod 3 accepted any integer value. The
+// shared helper is imported from backend/src/validation/schemas.ts (same refine
+// and zod 3 message), so it is not redefined here.
 const configSchema = z.object({
   port: coercedIntSchema.default(4000),
   host: z.string().default("127.0.0.1"),

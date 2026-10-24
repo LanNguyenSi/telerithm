@@ -12,24 +12,24 @@ import { SEARCH_LIMIT_CEILING } from "../constants/search.js";
 // with leap-year rules, minute precision with optional seconds and fraction,
 // mandatory "Z". zod 4's `z.iso.datetime()` requires seconds and rejects
 // "2026-01-01T10:00Z", which the frontend sends. The message is zod 3's.
-const dateTimeSchema = z
-  .string()
-  .regex(
-    /^((\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\d|3[01])|(0[469]|11)-(0[1-9]|[12]\d|30)|(02)-(0[1-9]|1\d|2[0-8])))T([01]\d|2[0-3]):[0-5]\d(:([0-5]\d(\.\d+)?)?)?(Z)$/,
-    "Invalid datetime",
-  );
+// The source is exactly zod 3's `datetimeRegex({ precision: null, offset:
+// false, local: false })`: its seconds unit is `(:[0-5]\d(\.\d+)?)?`, not a
+// group around an optional seconds unit (which also accepts a bare "10:00:Z").
+export const dateTimeRegex =
+  /^((\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\d|3[01])|(0[469]|11)-(0[1-9]|[12]\d|30)|(02)-(0[1-9]|1\d|2[0-8])))T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?(Z)$/;
+const dateTimeSchema = z.string().regex(dateTimeRegex, "Invalid datetime");
 
 // zod 4's `.int()` additionally requires a *safe* integer and rejects e.g.
 // 9007199254740992, which zod 3 accepted (JSON bodies and env strings can
 // carry it). Number.isInteger keeps the zod 3 accept set and message.
 const INT_V3_MESSAGE = "Expected integer, received float";
 const intSchema = z.number().refine((value) => Number.isInteger(value), INT_V3_MESSAGE);
-const coercedIntSchema = z.coerce.number().refine((value) => Number.isInteger(value), INT_V3_MESSAGE);
+export const coercedIntSchema = z.coerce.number().refine((value) => Number.isInteger(value), INT_V3_MESSAGE);
 
 // zod 3's `z.number()` accepted Infinity (reachable from JSON `1e999`); zod 4's
 // rejects it. NaN is rejected by both. Used where a value is a free-form
 // number with no `.int()` behind it.
-const numberSchema = z.custom<number>(
+export const numberSchema = z.custom<number>(
   (value) => typeof value === "number" && !Number.isNaN(value),
   "Expected number",
 );

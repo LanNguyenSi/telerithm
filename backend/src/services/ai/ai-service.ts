@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { z } from "zod";
 import type { LogFilter, LogQueryContext, NLQTranslation } from "../../types/domain.js";
 import { config } from "../../config/index.js";
+import { numberSchema } from "../../validation/schemas.js";
 import { logger } from "../../logger.js";
 import { DOMAIN_STOPWORDS, NLQ_STOPWORD_PROMPT_HINT } from "../../constants/nlq.js";
 import {
@@ -49,13 +50,9 @@ const TERM_VARIANTS: Record<string, string[]> = {
   failing: ["fail", "failed", "failure", "failures"],
 };
 
-// zod 3's `z.number()` accepted Infinity (JSON `1e999` in an LLM response);
-// zod 4's rejects it. Keep the zod 3 accept-set for filter values.
-const numberSchema = z.custom<number>(
-  (value) => typeof value === "number" && !Number.isNaN(value),
-  "Expected number",
-);
-
+// zod 3's `z.number()` accepted Infinity (JSON `1e999` in an LLM response) and
+// zod 4's rejects it, so the filter values use the shared zod 3 compat
+// numberSchema imported from backend/src/validation/schemas.js.
 const nlqResponseSchema = z.object({
   explanation: z.string().optional(),
   filtersApplied: z
