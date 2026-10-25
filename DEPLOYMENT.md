@@ -154,7 +154,9 @@ Expected memory usage (8GB VPS):
 
 `make deploy` does the whole update below in one command (pull, rebuild without cache, recreate), `make deploy-backend` and `make deploy-frontend` do it for one service. All three stop before doing anything if a tracked file has local changes, and none of them stashes or discards a change.
 
-By hand (the same steps; `make deploy` additionally builds with `--no-cache` and recreates the containers with `--force-recreate`, so it always picks up a changed base image or dependency):
+A deploy through deploy-panel / agent-relay builds the pulled commit once, from the build cache (the old pre-pull `--no-cache` rebuild in `.relay.yml`'s `pre_update` built the previous commit and is gone). The cache therefore decides what a deploy contains: after a security update in the base image, or when you suspect a stale layer, run on the server after the deploy `docker compose -f docker-compose.traefik.yml --env-file .env.production build --pull --no-cache` then `docker compose -f docker-compose.traefik.yml --env-file .env.production up -d` (`--pull` fetches the newer base image; `make deploy` rebuilds without cache but does not re-pull base images). That is a manual step, not part of the relay flow.
+
+By hand (the same steps; `make deploy` additionally builds with `--no-cache` and recreates the containers with `--force-recreate`, so it always picks up a changed dependency; it does not re-pull base images, for that add `--pull` to the build as described above):
 
 ```bash
 cd /root/git/telerithm

@@ -184,6 +184,17 @@ bash scripts/clickhouse-config-guard.sh
 bash scripts/clickhouse-config-guard.test.sh
 ```
 
+### Check the Relay Config
+
+`relay-config.test.sh` parses `.relay.yml` with js-yaml (root devDependency) the way agent-relay's loader reads it and fails when a `pre_update` or `post_update` entry is not a string or when `pre_update` is present but not a list (an empty `pre_update:` key parses as null and every deploy then fails), and flags any `pre_update` entry that builds images (pre_update runs against the pre-pull tree, so such a build uses the old code; the deploy system builds the pulled commit itself). A self-check list of build and non-build samples guards the matcher. CI runs it in the "Relay config" job.
+
+```bash
+bash scripts/relay-config.test.sh
+
+# Or check another file (for example the config before the build entry was dropped)
+bash scripts/relay-config.test.sh path/to/.relay.yml
+```
+
 ## Configuration Options
 
 ### collect-docker-logs.sh
