@@ -187,36 +187,51 @@ The files in `backend/clickhouse/config.d/` (`limits.xml`, `system-logs.xml`; `l
 
 The directory replaces the image's own `config.d`, so it also holds `docker_related_config.xml`, a copy of the image's file that makes the server listen on all addresses; without it the backend cannot connect to ClickHouse. When you change the ClickHouse image tag, compare it with the new image's file, and check the new image's `users.d` and entrypoint too: the image's own `users.d` is empty (checked on 24.10.2.80 and 24.12.6.70), but the entrypoint may write a file there at start (see the `users.d` paragraph below). Start the new tag once in a throwaway container with `config.d` and `users.d` mounted read-only before you move the tag in the compose files. A malformed XML file in the directory makes ClickHouse exit at start; a running server keeps its old config, so the error only shows at the next restart (host reboot, OOM, the next recreate) and the container then restarts in a loop. After a deploy that touches `config.d`, check `docker compose -f docker-compose.traefik.yml logs clickhouse` for config errors. To confirm a deploy took effect: `docker compose -f docker-compose.traefik.yml exec clickhouse ls -la /etc/clickhouse-server/config.d` lists the three files, and `exec clickhouse clickhouse-client --query "SELECT name, value FROM system.server_settings WHERE name = 'max_server_memory_usage_to_ram_ratio'"` shows the live value.
 
-The per-query limits live in `backend/clickhouse/users.d/limits.xml`, not in `config.d`: ClickHouse reads settings profiles only from the users config (`users.xml` and `users.d`) and ignores a `<profiles>` block in `config.d`. The `default` profile there caps one query at 2 GiB (`max_memory_usage`), so a query that needs more fails with `MEMORY_LIMIT_EXCEEDED` ("Memory limit (for query) exceeded"), and lets `GROUP BY` and `ORDER BY` spill to disk from 1 GiB (`max_bytes_before_external_group_by`, `max_bytes_before_external_sort`). The directory is mounted over `/etc/clickhouse-server/users.d` in both compose files, read-only, and a changed file is applied within seconds without a restart (new queries see it). To confirm a deploy took effect: `docker compose -f docker-compose.traefik.yml exec clickhouse clickhouse-client --query "SELECT name, value FROM system.settings WHERE name IN ('max_memory_usage', 'max_bytes_before_external_group_by', 'max_bytes_before_external_sort')"` shows `2147483648`, `1073741824` and `1073741824`; `0` means the profile is not applied.
+The per-query limits live in `backend/clickhouse/users.d/limits.xml`, not in `config.d`: ClickHouse reads settings profiles only from the users config (`users.xml` and `users.d`) and ignores a `<profiles>` block in `config.d`. The `default` profile there caps one query at 2 GiB (`max_memory_usage`), so a query that needs more fails with `MEMORY_LIMIT_EXCEEDED` (on 24.10 worded "Memory limit (for query) exceeded"; newer images word it differently, so match the code), and lets `GROUP BY` and `ORDER BY` spill to disk from 1 GiB (`max_bytes_before_external_group_by`, `max_bytes_before_external_sort`). The directory is mounted over `/etc/clickhouse-server/users.d` in both compose files, read-only, and a changed file is applied within seconds without a restart (new queries see it). To confirm a deploy took effect: `docker compose -f docker-compose.traefik.yml exec clickhouse clickhouse-client --query "SELECT name, value FROM system.settings WHERE name IN ('max_memory_usage', 'max_bytes_before_external_group_by', 'max_bytes_before_external_sort')"` shows `2147483648`, `1073741824` and `1073741824`; `0` means the profile is not applied.
 
 The `clickhouse` service sets `CLICKHOUSE_SKIP_USER_SETUP: "1"` and none of `CLICKHOUSE_USER` (other than `default`), `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_PASSWORD_FILE` and `CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT`; do not add any of the four. The image entrypoint can write `users.d/default-user.xml`, which fails on the read-only mount (`Read-only file system`) and the container exits at start. How often it writes depends on the image: on 24.10 (measured on 24.10.2.80, the current `:24`) only when one of the four variables is set; on newer images (measured on 24.12.6.70) on every start, even with none set, to make `default` reachable from localhost only, which would crash on the read-only mount, or break the backend's remote connection on a writable one. `CLICKHOUSE_SKIP_USER_SETUP=1` makes a newer entrypoint skip all of that (24.10 ignores the variable), so `default` stays reachable from the backend container as before. On a newer image the variable also makes the entrypoint ignore the four variables without an error, so they would silently do nothing; on 24.10 one of them stops the container at start. `scripts/clickhouse-config-guard.sh` (CI job "ClickHouse config") fails when a compose sets one of the four or drops the skip variable.
 
-To give ClickHouse a user with a password, add a file to `backend/clickhouse/users.d/`. Every file in `users.d` and `config.d` needs the `<clickhouse>` root element; without it ClickHouse exits at start (exit code 232). The whole file, here `telerithm-user.xml`:
+To give ClickHouse a user with a password, add files to `backend/clickhouse/users.d/`. Every file in `users.d` and `config.d` needs the `<clickhouse>` root element; without it ClickHouse exits at start (exit code 232). `users.d` is reloaded within seconds without a restart, so each step below takes effect as soon as its file is in place; follow the order, or the backend loses its connection in between.
 
-```xml
-<clickhouse>
-    <users>
-        <!-- default stays for the container's own health check and the init
-             script, but only from inside the container -->
-        <default>
-            <networks replace="replace">
-                <ip>127.0.0.1</ip>
-                <ip>::1</ip>
-            </networks>
-        </default>
-        <telerithm>
-            <profile>default</profile>
-            <networks>
-                <ip>::/0</ip>
-            </networks>
-            <password_sha256_hex>PUT_THE_HASH_HERE</password_sha256_hex>
-            <quota>default</quota>
-        </telerithm>
-    </users>
-</clickhouse>
-```
+1. Add the new user only, here in `telerithm-user.xml`, and leave `default` untouched:
 
-Get the hash with `printf '%s' 'THE_PASSWORD' | sha256sum`, and put the credentials in the backend's `CLICKHOUSE_URL` before you restart ClickHouse, because `default` no longer accepts the backend's connection afterwards. Restart ClickHouse once (`docker compose -f docker-compose.traefik.yml restart clickhouse`), then check `docker compose -f docker-compose.traefik.yml logs clickhouse` for config errors and `... exec clickhouse clickhouse-client --user telerithm --password THE_PASSWORD --query "SELECT getSetting('max_memory_usage')"`, which returns `2147483648`: the `default` profile from `limits.xml` applies to the new user. Do not remove `default` outright (`<default remove="remove"/>`): the compose health check and the init script on an empty data directory both connect as `default`, so the container would turn unhealthy and a fresh volume would not initialise. This recipe was run on 24.10.2.80 and 24.12.6.70, on a fresh and on an initialised volume.
+   ```xml
+   <clickhouse>
+       <users>
+           <telerithm>
+               <profile>default</profile>
+               <networks>
+                   <ip>::/0</ip>
+               </networks>
+               <password_sha256_hex>PUT_THE_HASH_HERE</password_sha256_hex>
+               <quota>default</quota>
+           </telerithm>
+       </users>
+   </clickhouse>
+   ```
+
+   Get the hash without leaving the password in the shell history: `read -rs PW; printf '%s' "$PW" | sha256sum | cut -d' ' -f1` (only the first field is the hash). Check it: `docker compose -f docker-compose.traefik.yml exec clickhouse clickhouse-client --user telerithm --password "$PW" --query "SELECT getSetting('max_memory_usage')"` returns `2147483648`, so the `default` profile from `limits.xml` applies to the new user.
+
+2. Point the backend at the new user. `CLICKHOUSE_URL` is written into `docker-compose.traefik.yml` (`http://clickhouse:8123`); change it to `http://telerithm:<password>@clickhouse:8123`, with special characters in the password percent-encoded, and commit the edit on the server checkout as described for the domain edit above (the file now holds the password in clear text, so keep the server checkout private). Recreate the backend so it picks up the new value (`docker compose -f docker-compose.traefik.yml up -d backend`) and check `GET /api/v1/health`.
+
+3. Only then restrict `default` to connections from inside the container, in a second file such as `default-localhost.xml`:
+
+   ```xml
+   <clickhouse>
+       <users>
+           <default>
+               <networks replace="replace">
+                   <ip>127.0.0.1</ip>
+                   <ip>::1</ip>
+               </networks>
+           </default>
+       </users>
+   </clickhouse>
+   ```
+
+   The compose health check and the init script on an empty data directory both connect as `default` from inside the container, so they keep working; from other containers `default` now gets `AUTHENTICATION_FAILED`. Check `docker compose -f docker-compose.traefik.yml logs clickhouse` for config errors after each step.
+
+Do not remove `default` outright (`<default remove="remove"/>`): the health check and the init script would fail, so the container would turn unhealthy and a fresh volume would not initialise. The files were run on 24.10.2.80 and 24.12.6.70, on a fresh and on an initialised volume.
 
 The first deploy after this layout (the compose mounts changed) recreates the ClickHouse container once; the data stays on the `chdata` volume. The first deploy that adds the `users.d` mount recreates it once more.
 
