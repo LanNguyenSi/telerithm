@@ -193,3 +193,24 @@ jobs:
       # globs in backup.sh) are reported but do not.
       - name: Shellcheck
         run: shellcheck --severity=warning scripts/*.sh
+
+  clickhouse-config:
+    name: ClickHouse config
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # The files under backend/clickhouse only take effect through the bind
+      # mounts of the two prod composes, and a wrong one shows only at the next
+      # ClickHouse start (a profile in config.d is silently ignored, a malformed
+      # file or a CLICKHOUSE_USER/CLICKHOUSE_PASSWORD on the read-only users.d
+      # mount stops the container). The guard renders both composes and checks
+      # the mounts, the XML root elements and the entrypoint variables.
+      - name: Check ClickHouse config and mounts
+        run: bash scripts/clickhouse-config-guard.sh
+
+      # Controls: every mutation of the shipped files must make the guard fail
+      # with the message of its own branch.
+      - name: Controls for the check
+        run: bash scripts/clickhouse-config-guard.test.sh
