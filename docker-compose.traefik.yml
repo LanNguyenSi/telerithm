@@ -48,8 +48,10 @@ services:
     volumes:
       - chdata:/var/lib/clickhouse
       - ./backend/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-      - ./backend/clickhouse/limits.xml:/etc/clickhouse-server/config.d/limits.xml:ro
-      - ./backend/clickhouse/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
+      # Mount the directory, not single files: a file bind mount pins the inode,
+      # so a deploy that replaces limits.xml (git writes a new file) would leave
+      # the running container on the old content until it is recreated.
+      - ./backend/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
     networks:
       - telerithm-internal
     deploy:
