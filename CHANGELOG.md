@@ -15,6 +15,14 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **The ClickHouse per-query limits now apply, so a query that needed more than 2 GiB fails.** `max_memory_usage` is 2 GiB per query, and `GROUP BY` and `ORDER BY` spill to disk from 1 GiB. Until now only the server-wide ratio applied and a single query could grow until it hit the server limit (about 2.55 GiB in the 3 GiB container). The deploy recreates the ClickHouse container once (the `chdata` volume is kept) because both prod composes gain a `users.d` mount. Check afterwards that `SELECT name, value FROM system.settings WHERE name IN ('max_memory_usage', 'max_bytes_before_external_group_by', 'max_bytes_before_external_sort')` returns `2147483648`, `1073741824` and `1073741824`. Do not set `CLICKHOUSE_USER` or `CLICKHOUSE_PASSWORD` on the `clickhouse` service: the entrypoint cannot write its user file to the read-only `users.d` mount and the container exits at start (DEPLOYMENT.md, "ClickHouse configuration changes", shows how to define a user in a file instead).
+
+### Fixed
+
+- **The ClickHouse `default` profile (`max_memory_usage` 2 GiB, `max_bytes_before_external_group_by` and `max_bytes_before_external_sort` 1 GiB) is now read by ClickHouse.** The block sat in `backend/clickhouse/config.d/limits.xml`, but ClickHouse reads profiles only from the users config, so `system.settings` showed all three at 0 and only `max_server_memory_usage_to_ram_ratio` applied. The profile moved to `backend/clickhouse/users.d/limits.xml`, a directory mounted read-only over `/etc/clickhouse-server/users.d` in `docker-compose.prod.yml` and `docker-compose.traefik.yml` (same pattern as `config.d`, so a file replaced by `git pull` is seen without recreating the container). Measured on a local container: before, the three settings read 0 and a 3.6 GiB `groupArray` aggregation was stopped by the server-wide limit ("Memory limit (total) exceeded"); after, they read 2147483648, 1073741824 and 1073741824 and the same query fails with "Memory limit (for query) exceeded". `config.d/limits.xml` keeps the server-wide ratio. The heaviest dashboard and search queries stay under the cap (peak memory below 1 GiB on 8 million rows over 7 days, patterns aggregation 1.0 GiB with spill).
+
 ## [0.4.0] - 2026-10-25
 
 Minor release: tenant-isolation fixes on the by-id API routes, log

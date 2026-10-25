@@ -39,6 +39,13 @@ services:
       # so a deploy that replaces limits.xml (git writes a new file) would leave
       # the running container on the old content until it is recreated.
       - ./backend/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
+      # Profiles (per-query memory cap, spill thresholds) are only read from
+      # the users config, so they live in users.d, not in config.d. Read-only
+      # on purpose: the image entrypoint writes users.d/default-user.xml when
+      # CLICKHOUSE_USER or CLICKHOUSE_PASSWORD is set, which fails on this
+      # mount and stops the container at start. Do not set those variables on
+      # this service; define users in a file in this directory instead.
+      - ./backend/clickhouse/users.d:/etc/clickhouse-server/users.d:ro
     deploy:
       resources:
         limits:
