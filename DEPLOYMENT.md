@@ -181,6 +181,14 @@ docker compose -f docker-compose.traefik.yml exec clickhouse \
   clickhouse-client --query "ALTER TABLE logs MODIFY TTL toDateTime(timestamp) + INTERVAL 14 DAY"
 ```
 
+### ClickHouse configuration changes
+
+The files in `backend/clickhouse/config.d/` (`limits.xml`, `system-logs.xml`) reach the running ClickHouse container on a deploy: the directory is bind-mounted over the container's `/etc/clickhouse-server/config.d`, so a file that `git pull` replaces is visible inside the container without recreating it. ClickHouse re-reads `config.d` on its own and applies server settings such as `max_server_memory_usage_to_ram_ratio` within seconds; the system log settings in `system-logs.xml` are read at server start, so after changing them restart ClickHouse once (`docker compose -f docker-compose.traefik.yml restart clickhouse`). A TTL change there only applies to newly created log tables, see [docs/okf/clickhouse-retention-and-memory-limits.md](docs/okf/clickhouse-retention-and-memory-limits.md).
+
+The directory replaces the image's own `config.d`, so it also holds `docker_related_config.xml`, a copy of the image's file that makes the server listen on all addresses; without it the backend cannot connect to ClickHouse. Compare it with the new image's file when you change the ClickHouse image tag. A malformed XML file in the directory makes ClickHouse exit at start. To confirm a deploy took effect: `docker compose -f docker-compose.traefik.yml exec clickhouse ls -la /etc/clickhouse-server/config.d` lists the three files, and `exec clickhouse clickhouse-client --query "SELECT name, value FROM system.server_settings WHERE name = 'max_server_memory_usage_to_ram_ratio'"` shows the live value.
+
+The first deploy after this layout (the compose mounts changed) recreates the ClickHouse container once; the data stays on the `chdata` volume.
+
 ### Rotating the PostgreSQL password
 
 `POSTGRES_PASSWORD` only sets the password when Postgres creates a new data volume. Changing it in `.env.production` alone does not change the database role, so the backend cannot sign in after its next restart, and the backend health check can stay green while queries fail. Change the role first, then the file:
@@ -291,7 +299,7 @@ docker compose -f docker-compose.traefik.yml exec -T clickhouse \
   clickhouse-client --query "INSERT INTO logs FORMAT Native" < logs_backup.native
 ```
 
-The shipped ClickHouse configuration (`backend/clickhouse/limits.xml`, `backend/clickhouse/system-logs.xml`) defines no backup disk, so `BACKUP ... TO Disk(...)` is not set up. To use it, add a `config.d` file that defines a backup disk and lists it under `<backups><allowed_disk>`, mount it in both `docker-compose.traefik.yml` and `docker-compose.prod.yml` (they must stay mirrored, see [docs/okf/compose-file-topology-and-drift.md](docs/okf/compose-file-topology-and-drift.md)), and keep that disk off the `chdata` volume so a backup survives the loss of the data volume.
+The shipped ClickHouse configuration (`backend/clickhouse/config.d/limits.xml`, `backend/clickhouse/config.d/system-logs.xml`) defines no backup disk, so `BACKUP ... TO Disk(...)` is not set up. To use it, add a file that defines a backup disk and lists it under `<backups><allowed_disk>` to `backend/clickhouse/config.d/` (the directory is mounted into both `docker-compose.traefik.yml` and `docker-compose.prod.yml`, which must stay mirrored, see [docs/okf/compose-file-topology-and-drift.md](docs/okf/compose-file-topology-and-drift.md)), and keep that disk off the `chdata` volume so a backup survives the loss of the data volume.
 
 ## Maintenance
 

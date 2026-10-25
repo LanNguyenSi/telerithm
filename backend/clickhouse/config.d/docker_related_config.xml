@@ -1,0 +1,22 @@
+<!--
+    Copy of the clickhouse/clickhouse-server image's own
+    /etc/clickhouse-server/config.d/docker_related_config.xml (checked
+    against 24.10.2.80). This directory is mounted over the image's whole
+    config.d, so the image's file is hidden and has to be shipped here;
+    without it the server listens on localhost only and the backend cannot
+    connect. After moving the image tag, compare it with the new image's
+    copy (run `cat` on the path above inside a throwaway container of the
+    new image).
+-->
+<clickhouse>
+     <!-- Listen wildcard address to allow accepting connections from other containers and host network. -->
+    <listen_host>::</listen_host>
+    <listen_host>0.0.0.0</listen_host>
+    <listen_try>1</listen_try>
+
+    <!--
+    <logger>
+        <console>1</console>
+    </logger>
+    -->
+</clickhouse>
