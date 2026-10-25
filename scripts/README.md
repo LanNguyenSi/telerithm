@@ -175,6 +175,15 @@ out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/
 echo "$out" | grep -qF "fluentd config has an unused parameter or section (the dry run warned 'is not used'):" || { echo "$out"; echo "unused-param.conf failed for another reason"; exit 1; }
 ```
 
+### Check the ClickHouse Config
+
+`clickhouse-config-guard.sh` renders `docker-compose.prod.yml` and `docker-compose.traefik.yml` and checks the ClickHouse mounts (`init.sql`, `config.d`, `users.d`, read-only and identical in both), the root element and well-formedness of every XML file under `backend/clickhouse/config.d` and `users.d`, and the `clickhouse` service environment (`CLICKHOUSE_SKIP_USER_SETUP=1`, none of the variables that make the image entrypoint write `users.d/default-user.xml`). It needs docker compose and python3 and reads no `.env`. CI runs it in the "ClickHouse config" job; `clickhouse-config-guard.test.sh` runs it against mutated copies and requires each to fail with its own message.
+
+```bash
+bash scripts/clickhouse-config-guard.sh
+bash scripts/clickhouse-config-guard.test.sh
+```
+
 ## Configuration Options
 
 ### collect-docker-logs.sh

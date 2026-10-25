@@ -32,6 +32,15 @@ services:
     image: clickhouse/clickhouse-server:24
     restart: unless-stopped
     logging: *default-logging
+    environment:
+      # Newer clickhouse-server images (measured on 24.12.6.70) write
+      # users.d/default-user.xml on every start, even without any CLICKHOUSE_*
+      # user variable (it restricts `default` to localhost). That write fails
+      # on the read-only users.d mount below and the container exits at start;
+      # with a writable mount it would cut the backend off. Setting this makes
+      # the entrypoint skip the user setup, so `default` stays reachable from
+      # the backend container as before. 24.10 (the current `:24`) ignores it.
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
     volumes:
       - chdata:/var/lib/clickhouse
       - ./backend/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -41,10 +50,14 @@ services:
       - ./backend/clickhouse/config.d:/etc/clickhouse-server/config.d:ro
       # Profiles (per-query memory cap, spill thresholds) are only read from
       # the users config, so they live in users.d, not in config.d. Read-only
-      # on purpose: the image entrypoint writes users.d/default-user.xml when
-      # CLICKHOUSE_USER or CLICKHOUSE_PASSWORD is set, which fails on this
-      # mount and stops the container at start. Do not set those variables on
-      # this service; define users in a file in this directory instead.
+      # on purpose: the image entrypoint writes users.d/default-user.xml
+      # (clickhouse-server 24.10: only when CLICKHOUSE_USER other than
+      # default, CLICKHOUSE_PASSWORD, CLICKHOUSE_PASSWORD_FILE or
+      # CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT is set; newer images: on every
+      # start unless CLICKHOUSE_SKIP_USER_SETUP is set, see `environment`),
+      # which fails on this mount and stops the container at start. Do not
+      # set those variables on this service; define users in a file in this
+      # directory instead (DEPLOYMENT.md, "ClickHouse configuration changes").
       - ./backend/clickhouse/users.d:/etc/clickhouse-server/users.d:ro
     deploy:
       resources:
