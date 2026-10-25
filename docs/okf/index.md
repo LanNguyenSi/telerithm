@@ -57,5 +57,6 @@ their areas; these docs deliberately do not duplicate them.
   the `text_log` disable + 7-day TTLs, the `max_server_memory_usage_to_ram_ratio=0`
   footgun, the per-query `default` profile that must live in `users.d`, `init.sql`'s run-once-on-empty-datadir semantics, the fixed 30-day
   `logs` TTL next to the unenforced per-source `retentionDays`, the unwired
-  `anomalies` table, and how to verify a `config.d`/`users.d` mount actually took
-  effect.
+  `anomalies` table, how to verify a `config.d`/`users.d` mount actually took
+  effect, how the image entrypoint interacts with the read-only `users.d`
+  mount by image version, and the CI guard for the mounts and files.
