@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 SDK releases are tagged on the parent repo as `sdk-vX.Y.Z`.
 
+## [Unreleased]
+
+## [0.1.1] - 2026-10-25
+
+Documentation-only release: the package README is rewritten and a wrong
+default is corrected. The runtime code (`dist/`) is unchanged and the
+package has no runtime dependencies.
+
+### Documentation
+
+- The package README now states that there is no automatic flush on
+  shutdown: call `await close()` before the process exits (or on
+  `beforeunload` in the browser), otherwise logs still in the buffer
+  are lost.
+- The README example for direct configuration passes the base URL as
+  `endpoint` together with `sourceId`, which is what the client expects.
+- `maxBreadcrumbs` defaults to `20`, not `100`; the 0.1.0 entry carries
+  a correction footnote. The full option and API reference moved to
+  `docs/reference.md` in the repository.
+
 ## [0.1.0] - 2026-04-26
 
 First public release of the SDK. Pre-1.0: the API and on-the-wire

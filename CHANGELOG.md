@@ -15,6 +15,35 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-25
+
+Minor release: tenant-isolation fixes on the by-id API routes, log
+source management (rename, delete, ingest-key rotation, list keys only
+to OWNER and ADMIN), alert-rule create, edit and delete from the API
+and Settings, a URL guard that pins the vetted address, ClickHouse
+config files delivered as a directory mount, a zod 4 backend and a
+Tailwind CSS 4 frontend, and a run of dependency advisories closed.
+Backend and frontend version in lockstep as the app suite. The SDK
+(`@telerithm/sdk`) has its own changelog and release (0.1.1).
+
+### Upgrade notes
+
+- **First deploy recreates the ClickHouse container once** because its
+  mounts changed (the `chdata` volume is kept). The compose project is
+  now pinned to `telerithm` in `docker-compose.traefik.yml`; confirm
+  the deployed stack already runs under that project name before the
+  deploy.
+- **Schema change:** `prisma db push` makes `AlertSubscription.rule`
+  `ON DELETE CASCADE`.
+- **API contract changes:** `GET /api/v1/sources` omits `apiKey` for
+  MEMBER and VIEWER; incident actions answer 409 on a wrong status;
+  channel `EMAIL` is rejected with 400 on create and update;
+  `MAX_PAGE_SIZE` above 500 is clamped to 500; ids that belong to
+  another team answer 404 instead of 403.
+- **Known gap:** the `<profiles>` block of `limits.xml` is not applied
+  by ClickHouse from `config.d`, so only the server-level memory ratio
+  takes effect. A follow-up is open; this release does not change it.
+
 ### Security
 
 - **Webhook, Slack and MS Teams deliveries now connect to the address the URL guard checked.** The guard resolved the target host and the HTTP client then resolved it a second time, so a host that answered a public address first and a private one second (DNS rebinding) could steer a delivery, including the one from `POST /api/v1/subscriptions/:id/test`, to an internal address. A delivery now resolves the name once, checks every address it returned, and connects only to one of those checked addresses; the Host header, the TLS server name and the certificate check stay on the URL's host name, and an IP-literal URL behaves as before. Redirects are still never followed (a 3xx counts as a failed delivery). A URL with embedded credentials (`https://user:pass@host/`) used to fail locally and is now delivered, without an Authorization header; the credentials are not sent. These requests no longer go through the Node runtime's `fetch`, so an environment proxy for `fetch` (`NODE_USE_ENV_PROXY` with `HTTPS_PROXY` or `HTTP_PROXY`, on Node versions that support it) is not used for them: a deployment that must send notifications through a proxy has to allow direct egress to the targets, or run without that proxy setting for the backend. The repository's own compose files set none. No schema change and no deploy step beyond the usual rebuild.
