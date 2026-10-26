@@ -1,5 +1,27 @@
 # Docker Compose overlay for log collection via Vector
-# Usage: docker compose -f docker-compose.yml -f deploy/docker-compose.logging.yml up
+#
+# REFERENCE FOR LOCAL / SINGLE-HOST USE. Read the warning below before using it
+# on a server.
+#
+# WARNING: Vector's docker_logs source needs the Docker API, so this service
+# mounts /var/run/docker.sock. A read-only (:ro) mount does NOT limit what the
+# container can do: ":ro" only stops file writes on the socket node, while every
+# API call still works, including creating a privileged container that mounts
+# the host root. Anything that can run code inside this container (a Vector
+# bug, a compromised image)
+# therefore has root on the host. For that reason the service is behind the
+# "docker-socket" profile and does not start unless you ask for it:
+#
+# Usage (opt in explicitly):
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.logging.yml \
+#     --profile docker-socket up
+# Without --profile docker-socket nothing from this file starts.
+#
+# For production, do not copy the socket mount. Options: ship logs with the
+# Docker fluentd log driver to deploy/fluentd (loopback only, see that file),
+# read the json-file logs with a file source instead of docker_logs, or put a
+# filtering socket proxy that allows only container list, inspect and logs
+# calls in front of the Docker API.
 #
 # Required env vars:
 #   TELERITHM_SOURCE_ID - The source ID to ingest logs into
@@ -7,11 +29,14 @@
 
 services:
   vector:
+    # Opt-in only: the socket mount below is a host root lever (see the header).
+    profiles: ["docker-socket"]
     image: timberio/vector:0.41.1-alpine
     # The image only loads /etc/vector/vector.yaml unless told otherwise
     command: ["--config", "/etc/vector/vector.toml"]
     volumes:
       - ./deploy/vector/vector.toml:/etc/vector/vector.toml:ro
+      # Full Docker API access even with :ro, hence the profile above.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - vector-data:/var/lib/vector
     environment:
