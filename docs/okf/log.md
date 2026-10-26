@@ -2,6 +2,8 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-26T17:48:52Z, `CHANGELOG.md` gained the Security entry for the local-only reference log shippers. `clickhouse-retention-and-memory-limits.md` makes no claim about it; `compose-file-topology-and-drift.md`'s logging-overlay claim (the dev compose backend health check the overlay relies on) still holds, and the overlay's Vector service now starts only with the `docker-socket` profile, which that doc does not restate. Both re-read and re-stamped.
+
 - 2026-10-26T17:41:18Z, reference log shippers local-only: `ingestion-pipeline.md` re-verified against `deploy/fluentd/fluent.conf` (forward input on `127.0.0.1`, commented shared-key block), `deploy/vector/vector.toml` and `deploy/docker-compose.logging.yml` (Vector behind the `docker-socket` profile) and the `docs/configuration.md` sender entries; the configs still collect Docker logs only and post a bare array. One sentence added on the local-only defaults; re-stamped.
 
 - 2026-10-26T17:39:48Z, re-verified and re-stamped after docker-compose.prod.yml got its own project name. `compose-file-topology-and-drift.md`: the prod compose sets `name: telerithm-standalone`, the traefik compose keeps `name: telerithm`, and `scripts/clickhouse-config-guard.sh` checks project, volume and network names (read against the files). `clickhouse-retention-and-memory-limits.md`: its guard and mount claims are unchanged by the new name check, re-verified and re-stamped.
