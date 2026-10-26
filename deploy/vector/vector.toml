@@ -1,4 +1,12 @@
 # Vector.dev configuration for shipping container logs to Telerithm
+#
+# REFERENCE FOR LOCAL / SINGLE-HOST USE. The docker_logs source below talks to
+# the Docker API, which means giving Vector the Docker socket: that is full
+# control of the host, even when mounted read-only. deploy/docker-compose.logging.yml
+# therefore starts Vector only with `--profile docker-socket`. For production,
+# replace the source with a `file` source on the json-file logs, or point
+# `docker_host` at a filtering socket proxy, and do not mount the raw socket.
+#
 # Usage: TELERITHM_URL=http://localhost:4000 TELERITHM_SOURCE_ID=xxx TELERITHM_API_KEY=lf_xxx vector --config vector.toml
 
 # --- Source: Collect Docker container logs ---

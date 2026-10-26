@@ -92,8 +92,8 @@ Senders that ship with the repository:
 - `packages/sdk-js`, the JavaScript/TypeScript client SDK
 - `packages/cli/logforge-pipe.sh`, which ships lines from stdin
 - `scripts/collect-docker-logs.sh`
-- `deploy/fluentd/` and `deploy/vector/`, reference forwarder configs that collect Docker container logs only. Both post a bare JSON array of events to the ingest endpoint, which accepts it
-- `deploy/docker-compose.logging.yml` to bring up the Vector sidecar alongside the main stack (it waits for the backend's health check, which `docker-compose.yml` defines)
+- `deploy/fluentd/` and `deploy/vector/`, reference forwarder configs that collect Docker container logs only. Both post a bare JSON array of events to the ingest endpoint, which accepts it. They are references for local or single-host use, not production-ready: the Fluentd forward input binds `127.0.0.1` without authentication (for other hosts, bind a private address, firewall it and enable the commented `<security>` shared-key block in `fluent.conf`; in a container publish the port as `127.0.0.1:24224:24224` only), and Vector's `docker_logs` source needs the Docker socket (see the next entry)
+- `deploy/docker-compose.logging.yml` to bring up the Vector sidecar alongside the main stack (it waits for the backend's health check, which `docker-compose.yml` defines). The service mounts `/var/run/docker.sock`, which is full control of the Docker host even with `:ro`, so it sits behind the `docker-socket` profile and starts only with `docker compose -f docker-compose.yml -f deploy/docker-compose.logging.yml --profile docker-socket up`. Do not copy the socket mount to a production server; ship logs through the Fluentd log driver, a file source on the json-file logs, or a filtering socket proxy instead
 
 Syslog, Filebeat and CloudWatch need a forwarder you configure yourself that posts batches in the `logs` envelope or as a bare array.
 
