@@ -1,3 +1,12 @@
+# Non-Traefik reference variant (see DEPLOYMENT.md). It is NOT the production
+# stack of the VPS: that one runs docker-compose.traefik.yml (project
+# "telerithm"). This file has its own project name so that starting it from the
+# same checkout can never recreate the production containers or reuse the
+# production volumes (telerithm_pgdata, telerithm_chdata, telerithm_redisdata);
+# its own volumes are telerithm-standalone_*. scripts/clickhouse-config-guard.sh
+# fails when this name collides with the one in docker-compose.traefik.yml.
+name: telerithm-standalone
+
 # Bounded container logs: without this the json-file driver grows unbounded
 # (same class of problem as the ClickHouse system.text_log incident 2026-07-15).
 x-logging: &default-logging
