@@ -16,6 +16,11 @@
 #      holds no <profiles> block (ClickHouse ignores it there)
 #   3. the clickhouse service sets CLICKHOUSE_SKIP_USER_SETUP=1 and none of the
 #      variables that make the entrypoint write users.d/default-user.xml
+#   4. the project, volume and network names of the two composes are disjoint,
+#      and docker-compose.traefik.yml keeps the project "telerithm" with its
+#      telerithm_* volumes (the live stack's volumes derive from that name), so
+#      `docker compose -f docker-compose.prod.yml up` on the production
+#      checkout cannot recreate the production containers
 #
 # Usage: scripts/clickhouse-config-guard.sh [repo-root]
 # Needs docker compose and python3. No .env is read: the compose variables get
@@ -32,7 +37,8 @@ rendered=()
 for f in "${composes[@]}"; do
   out="$tmp/${f%.yml}.json"
   # --env-file /dev/null: never read a real .env next to the compose file.
-  if ! POSTGRES_PASSWORD=ci-dummy OPENAI_API_KEY=ci-dummy \
+  # env -u COMPOSE_PROJECT_NAME: the name check below must see the file's own name.
+  if ! env -u COMPOSE_PROJECT_NAME POSTGRES_PASSWORD=ci-dummy OPENAI_API_KEY=ci-dummy \
     docker compose --env-file /dev/null -f "$root/$f" config --format json >"$out"; then
     echo "clickhouse-config-guard: FAIL: docker compose config failed for $f" >&2
     exit 1
@@ -69,9 +75,16 @@ forbidden_env = [
 ]
 
 mount_sets = {}
+identities = {}
 for name, path in rendered:
     with open(path) as fh:
-        service = json.load(fh).get("services", {}).get("clickhouse")
+        doc = json.load(fh)
+    service = doc.get("services", {}).get("clickhouse")
+    identities[name] = {
+        "project": doc.get("name"),
+        "volumes": {v.get("name") for v in (doc.get("volumes") or {}).values()},
+        "networks": {n.get("name") for n in (doc.get("networks") or {}).values()},
+    }
     if service is None:
         fail(f"{name}: no clickhouse service")
         continue
@@ -113,6 +126,27 @@ for other in names[1:]:
         only_b = sorted(set(mount_sets[other].items()) - set(mount_sets[names[0]].items()))
         fail(f"clickhouse volumes differ between {names[0]} and {other}: only in {names[0]}: {only_a}; only in {other}: {only_b}")
 
+# 4. project, volume and network names
+prod_file, live_file = "docker-compose.prod.yml", "docker-compose.traefik.yml"
+if prod_file in identities and live_file in identities:
+    prod, live = identities[prod_file], identities[live_file]
+    if live["project"] != "telerithm":
+        fail(f"{live_file}: project name is {live['project']!r}, must stay 'telerithm' (the live volumes and network derive from it)")
+    want_volumes = {"telerithm_pgdata", "telerithm_chdata", "telerithm_redisdata"}
+    if live["volumes"] != want_volumes:
+        fail(f"{live_file}: volume names are {sorted(live['volumes'])}, must stay {sorted(want_volumes)} (the live data lives there)")
+    with open(os.path.join(root, prod_file)) as fh:
+        if not any(line.startswith("name:") and line[5:].strip() for line in fh):
+            fail(f"{prod_file}: no top-level name:; without it the project name is the checkout directory, which is 'telerithm' on the production host")
+    if prod["project"] == live["project"]:
+        fail(f"{prod_file} and {live_file} share the project name {prod['project']!r}; starting {prod_file} would recreate the production containers")
+    shared_volumes = prod["volumes"] & live["volumes"]
+    if shared_volumes:
+        fail(f"{prod_file} and {live_file} share the volumes {sorted(shared_volumes)}")
+    shared_networks = (prod["networks"] & live["networks"]) - {"traefik"}
+    if shared_networks:
+        fail(f"{prod_file} and {live_file} share the networks {sorted(shared_networks)}")
+
 # 2. XML files
 for sub in ("config.d", "users.d"):
     directory = os.path.join(root, "backend", "clickhouse", sub)
@@ -142,5 +176,5 @@ if failures:
     for msg in failures:
         print(f"clickhouse-config-guard: FAIL: {msg}", file=sys.stderr)
     sys.exit(1)
-print("clickhouse-config-guard: OK (mounts, XML roots, entrypoint variables)")
+print("clickhouse-config-guard: OK (mounts, XML roots, entrypoint variables, project names)")
 PY

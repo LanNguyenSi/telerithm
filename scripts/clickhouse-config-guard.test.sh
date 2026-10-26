@@ -114,4 +114,37 @@ fresh_copy
 replace docker-compose.traefik.yml "$skip_env" 'CLICKHOUSE_SKIP_USER_SETUP: "0"'
 expect_fail "CLICKHOUSE_SKIP_USER_SETUP=0 (traefik)" "docker-compose.traefik.yml: clickhouse service must set CLICKHOUSE_SKIP_USER_SETUP=1"
 
+fresh_copy
+replace docker-compose.prod.yml "name: telerithm-standalone
+" ""
+expect_fail "prod compose has no top-level name" "docker-compose.prod.yml: no top-level name:"
+
+fresh_copy
+replace docker-compose.prod.yml "name: telerithm-standalone" "name: telerithm"
+expect_fail "prod compose takes the production project name" "share the project name 'telerithm'"
+
+fresh_copy
+replace docker-compose.traefik.yml "name: telerithm
+" "name: telerithm-live
+"
+expect_fail "traefik compose project name changed" "docker-compose.traefik.yml: project name is 'telerithm-live', must stay 'telerithm'"
+
+fresh_copy
+replace docker-compose.prod.yml "  pgdata:
+" "  pgdata:
+    name: telerithm_pgdata
+"
+expect_fail "prod compose reuses a production volume" "share the volumes ['telerithm_pgdata']"
+
+fresh_copy
+replace docker-compose.traefik.yml "  pgdata:
+    driver: local" "  pgdata:
+    name: telerithm_pgdata_renamed
+    driver: local"
+expect_fail "traefik compose volume renamed" "docker-compose.traefik.yml: volume names are"
+
+fresh_copy
+printf 'networks:\n  default:\n    name: telerithm_telerithm-internal\n' >>"$work/tree/docker-compose.prod.yml"
+expect_fail "prod compose reuses the production network" "share the networks ['telerithm_telerithm-internal']"
+
 exit "$failed"
