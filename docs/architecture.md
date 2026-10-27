@@ -31,7 +31,8 @@ backend/
     validation/           Zod request schemas
     repositories/         ClickHouse + Prisma data access
   clickhouse/             logs table DDL (init.sql) and ClickHouse server config
-  prisma/                 Postgres schema (applied with prisma db push, no migrations) and demo seed
+  prisma/                 Postgres schema, its migrations (prisma/migrations) and demo seed
+  scripts/migrate.sh      Applies the migrations at container start (prisma migrate deploy)
   tests/                  Vitest unit and integration tests
 packages/sdk-js/          @telerithm/sdk client SDK
 packages/cli/             stdin-to-ingest shipping script (logforge-pipe.sh)

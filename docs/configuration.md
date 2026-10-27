@@ -37,7 +37,7 @@ A starter file lives at `backend/.env.example`. Copy and edit:
 cp backend/.env.example backend/.env
 ```
 
-`npm run dev` (in `backend/`) loads `backend/.env` through Node's `--env-file-if-exists` flag, which needs Node 22.9 or newer (CI uses Node 22); variables already set in your shell take precedence over the file, and a missing file is skipped. The file is read once at start: `tsx watch` does not restart on `.env` edits, so restart the dev server after changing it. The server reads the file only in this dev mode: `npm start` (the built server) and the Docker images do not load it, so set the variables in the environment there (compose passes them in). Prisma CLI commands run from `backend/`, such as `npx prisma db push`, load `backend/.env` on their own.
+`npm run dev` (in `backend/`) loads `backend/.env` through Node's `--env-file-if-exists` flag, which needs Node 22.9 or newer (CI uses Node 22); variables already set in your shell take precedence over the file, and a missing file is skipped. The file is read once at start: `tsx watch` does not restart on `.env` edits, so restart the dev server after changing it. The server reads the file only in this dev mode: `npm start` (the built server) and the Docker images do not load it, so set the variables in the environment there (compose passes them in). Prisma CLI commands run from `backend/`, such as `npx prisma migrate dev` or `npm run db:migrate`, load `backend/.env` on their own.
 
 ## Frontend env vars
 
@@ -131,8 +131,9 @@ For production with Traefik + Let's Encrypt, see [../DEPLOYMENT.md](../DEPLOYMEN
 cp .env.production.example .env.production
 # edit .env.production
 docker compose -f docker-compose.traefik.yml --env-file .env.production up -d --build
-docker compose -f docker-compose.traefik.yml exec backend npx prisma db push
 ```
+
+The backend container applies the committed database migrations before it starts the server; a database from a release before migrations is recorded as migrated when it matches the schema, and the start stops otherwise. [../DEPLOYMENT.md](../DEPLOYMENT.md), "Database migrations", describes the step, its messages and the recovery.
 
 Only the variables referenced in the backend `environment:` block of `docker-compose.traefik.yml` reach the container: `POSTGRES_PASSWORD`, `TRUST_PROXY`, `LOG_LEVEL`, `REGISTRATION_MODE`, `ADMIN_EMAIL`, `OPENAI_API_KEY` and `OPENAI_MODEL`. To set any other backend variable from this page (for example `MULTI_TENANT` or `WEBHOOK_HOST_ALLOWLIST`), add a line for it to that block.
 

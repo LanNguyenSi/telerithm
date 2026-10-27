@@ -1,6 +1,17 @@
 name: telerithm
 health: /api/v1/health
 compose_file: docker-compose.traefik.yml
-post_update:
-  - docker compose -f docker-compose.traefik.yml exec backend npx prisma db push --skip-generate
+# No post_update hook: the backend container applies the database migrations
+# itself before it starts the server (backend/entrypoint.sh), and that
+# entrypoint is the only writer of the schema. A hook running prisma db push
+# would apply schema.prisma outside the migrations. When a migration fails the
+# backend never becomes healthy, so the relay's compose up step fails
+# ("dependency failed to start: container ... is unhealthy", the frontend
+# waits for a healthy backend) and the deploy rolls back; the difference is in
+# docker compose logs backend.
+#
+# rollback: true resets the code to the previous commit and redeploys it; it
+# does not undo a migration the new release applied. The previous release then
+# runs against the new schema, so every migration has to keep the previous
+# release working (expand/contract). See DEPLOYMENT.md, "Database migrations".
 rollback: true
