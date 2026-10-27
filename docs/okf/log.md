@@ -2,6 +2,8 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-27T14:33:26Z, `DEPLOYMENT.md`'s "When a migration fails" recovery now writes the diff to `fix.sql`, drops a backfill-only default again and re-runs the diff before `--applied`. `clickhouse-retention-and-memory-limits.md` cites `DEPLOYMENT.md` only for step 4, the "ClickHouse schema changes" section, the Maintenance delete, the ClickHouse user and image-tag steps and the "Database migrations" pointer, none of which changed in meaning; re-read and re-stamped.
+
 - 2026-10-27T14:24:04Z, re-verified and re-stamped after the review fixes to the migration docs. `compose-file-topology-and-drift.md`: the `.relay.yml` sentence now gives the true reason for dropping the `post_update` hook (the entrypoint is the only schema writer; `db push` in a hook would apply `schema.prisma` outside the migrations) and describes the abort as the relay's `compose up` step failing because the frontend waits for a healthy backend, re-checked against `.relay.yml` and `docker-compose.traefik.yml`. `clickhouse-retention-and-memory-limits.md`: cites `DEPLOYMENT.md` and `CHANGELOG.md` only for the "ClickHouse schema changes" section and the `[0.1.1]` note, both untouched, so no claim changed.
 
 - 2026-10-27T13:52:16Z, `DEPLOYMENT.md`'s "Database migrations" section gained a sentence on when the automatic baseline applies. `clickhouse-retention-and-memory-limits.md` cites `DEPLOYMENT.md` for step 4, the "ClickHouse schema changes" section, the Maintenance delete and the ClickHouse user and image-tag steps, none of which changed; re-read and re-stamped.
