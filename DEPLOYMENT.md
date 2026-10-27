@@ -77,14 +77,14 @@ This will:
 
 ### 5. Initialize Database
 
-The backend container runs `prisma db push` on every start (`backend/entrypoint.sh`), so no manual step is required. The demo seed it also invokes is skipped in production unless `SEED_DEMO_DATA=true`. Check that services are healthy, and re-sync the schema by hand only if needed:
+The backend container applies the committed Prisma migrations (`backend/prisma/migrations`) on every start, before it starts the server (`backend/entrypoint.sh` runs `backend/scripts/migrate.sh`). On a new installation the empty database gets the whole schema from them, so no manual step is required; [Database migrations](#database-migrations) describes what the step does with an existing database. The demo seed the entrypoint also invokes is skipped in production unless `SEED_DEMO_DATA=true`. Check that services are healthy:
 
 ```bash
 # Wait for services to be healthy (30-60 seconds)
 docker compose -f docker-compose.traefik.yml ps
 
-# Optional: re-sync the Prisma schema manually
-docker compose -f docker-compose.traefik.yml exec backend npx prisma db push
+# The migration step logs its decisions with the prefix "migrate:"
+docker compose -f docker-compose.traefik.yml logs backend | grep 'migrate:'
 ```
 
 ### 6. Verify Deployment
@@ -165,14 +165,63 @@ git pull --rebase origin master
 # Rebuild and restart
 docker compose -f docker-compose.traefik.yml --env-file .env.production build
 docker compose -f docker-compose.traefik.yml --env-file .env.production up -d
-
-# Apply schema changes (prisma db push)
-docker compose -f docker-compose.traefik.yml exec backend npx prisma db push
 ```
+
+There is no separate schema step: the new backend container applies the pending migrations before it starts the server (see [Database migrations](#database-migrations)). Back up the database before a deploy that brings a migration (`./scripts/backup.sh /backups/telerithm`, see [Backup](#backup)).
 
 `--rebase` matters once you have committed a local edit (for example the domain in `docker-compose.traefik.yml`): a plain `git pull` fails on the diverged history, `git pull --rebase` replays your commit on top of the new master. If the rebase stops on a conflict, resolve it and run `git rebase --continue` (or `git rebase --abort`) before deploying; the deploy targets refuse to run while a rebase or merge is in progress or HEAD is detached.
 
 Two notes for a server that deployed with an older Makefile. Older `make deploy` runs stashed local changes and never restored them, so an edit that an earlier deploy dropped may still sit in `git stash list` on the server; `git stash show -p` shows it and `git stash pop` restores it. And `make` reads the Makefile before `git pull` runs, so the first `make deploy` after this update still runs the old recipe (stash, plain pull) for that one run: commit any local edit and run `git pull --rebase origin master` yourself before it, so the old recipe has nothing left to stash and its plain pull has nothing to merge.
+
+### Database migrations
+
+The Postgres schema is versioned as Prisma migrations in `backend/prisma/migrations`, and `backend/prisma/schema.prisma` always equals the result of applying all of them (the CI job "Backend" applies them to an empty database and fails on any difference). Every start of the backend container runs `backend/scripts/migrate.sh` before the server. It never runs `prisma db push` and decides by the state of the database:
+
+| Database | What the start does |
+| --- | --- |
+| Has a migration history (the table `public._prisma_migrations`) | `prisma migrate deploy`: applies the migrations that are not applied yet |
+| Empty | `prisma migrate deploy`: the first migration, `20261027132152_baseline`, creates the whole schema |
+| Has tables but no history: created by an earlier release, which applied the schema with `prisma db push` on every start | Compares the database with `schema.prisma` (`prisma migrate diff`). If they are equal, it records the baseline migration as applied without running it (`prisma migrate resolve --applied 20261027132152_baseline`), then runs `prisma migrate deploy`. If they differ, it stops (see below) |
+
+The checks only read. When one of them fails (database unreachable, wrong password, a `DATABASE_URL` that selects a schema other than `public`), when the schema differs, or when `prisma migrate deploy` fails, the server is not started: the container exits with code 1, logs `Database migrations did not complete; the server is not started.` and restarts (`restart: unless-stopped`), and the database is left as the failed step found it.
+
+**The first deploy of this version on an existing installation.** A database from an earlier release has tables and no history, so the first start compares it with the schema. Back up before that deploy:
+
+```bash
+./scripts/backup.sh /backups/telerithm
+```
+
+When the database matches (it does when the running release is v0.4.0 or later, started cleanly with `prisma db push`, and nobody changed the schema by hand since), the log shows
+
+```
+migrate: the database has tables but no migration history (a database from before migrations); comparing it with prisma/schema.prisma.
+migrate: the database matches prisma/schema.prisma, recording the baseline migration 20261027132152_baseline as applied.
+Migration 20261027132152_baseline marked as applied.
+No pending migrations to apply.
+```
+
+and `_prisma_migrations` holds one row for `20261027132152_baseline` with `applied_steps_count` 0 (recorded, not run). Every later start finds the history (`migrate: migration history found`) and only runs `prisma migrate deploy`. An installation on a release older than v0.4.0 has an older schema, so the comparison fails: deploy v0.4.0 first (the last release that applies the schema with `prisma db push`; its `schema.prisma` is the baseline), then this version.
+
+**When the start stops because the schema differs.** The log lists the difference as the changes that would make the database match `schema.prisma` (an extra column shows as `[-] Removed column`), followed by `migrate: the database schema differs from prisma/schema.prisma` and the recovery hint. Nothing was changed. Read it with `docker compose -f docker-compose.traefik.yml logs backend`. Under deploy-panel / agent-relay the health check then fails (its step output carries a log excerpt of the services that were running at that moment, which can miss a backend between two restarts), and `rollback: true` redeploys the previous commit, whose entrypoint still runs `prisma db push` at start; that replaces the container and its log. To recover:
+
+1. Back up the database: `./scripts/backup.sh /backups/telerithm`.
+2. Get the difference again, as SQL, from the new release: on the server checkout at the new commit with its backend image built (after a relay rollback the checkout and the image are the previous release, so run `git pull --rebase origin master` and `docker compose -f docker-compose.traefik.yml --env-file .env.production build backend` first), run `docker compose -f docker-compose.traefik.yml --env-file .env.production run --rm --no-deps backend npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script > fix.sql`. A one-off container is needed because the new backend container never stays up.
+3. Then either make the database match: review `fix.sql` (it can drop columns and their data) and apply it with `docker compose -f docker-compose.traefik.yml exec -T postgres psql -U telerithm -d telerithm -v ON_ERROR_STOP=1 < fix.sql`. Or, when the difference is deliberate and the code works with it (an extra index, an extra nullable column), record the baseline without the check: `docker compose -f docker-compose.traefik.yml --env-file .env.production run --rm --no-deps backend npx prisma migrate resolve --applied 20261027132152_baseline`.
+4. Deploy again (`make deploy-backend`, or `docker compose -f docker-compose.traefik.yml --env-file .env.production up -d backend` when the checkout is already at the new commit).
+
+Do not repair it with `prisma db push`: it makes the database match the schema without recording a migration, and drops whatever the schema does not have.
+
+**When a migration fails.** `prisma migrate deploy` stops with `P3018` and the error from Postgres. Postgres rolls the failed migration back as a whole (measured with a migration whose third statement failed: the table and the column its first two statements added were gone afterwards), but its row in `_prisma_migrations` stays unfinished, and every later start stops with `P3009` until it is resolved. Fix the cause, then mark the migration with `npx prisma migrate resolve --rolled-back <migration>` (the next start runs it again) or, if you applied its changes by hand, `--applied <migration>`, using the same one-off `run --rm --no-deps backend` container as above.
+
+**Rollbacks do not undo migrations.** `rollback: true` in `.relay.yml` resets the code to the previous commit and redeploys it; a migration the new release applied stays applied, and the previous release then runs against the migrated schema (its `prisma migrate deploy` finds nothing to apply and leaves the migration it does not know in place). The first rollback after this version is no exception: the previous release's `prisma db push` leaves `_prisma_migrations` in place. So every migration has to keep the previous release working (expand/contract): add tables, and add columns as nullable or with a default; to rename or remove something, first ship the new shape together with code that no longer uses the old one, and drop the old column or table in a later release. Going back past a migration means restoring a backup.
+
+**Changing the schema.** Edit `backend/prisma/schema.prisma`, then, with the local database from `make setup` running, create the migration in `backend/`:
+
+```bash
+npx prisma migrate dev --name add_source_description
+```
+
+It writes `prisma/migrations/<timestamp>_add_source_description/migration.sql`, applies it to the local database and regenerates the client (it creates and drops a temporary shadow database, which the local `telerithm` user may do). Review the SQL against the expand/contract rule above and commit it together with the schema change; CI fails when `schema.prisma` and the migrations disagree. `npm run db:migrate` runs the same step as the container start against the local database (`make setup` uses it). `npm run db:push` (`prisma db push`) is kept only as a shortcut for a throwaway local database: it records no migration history, so do not use it on a database that has one; a local database that has drifted can be rebuilt from the migrations with `npx prisma migrate reset` (its data is lost).
 
 ### ClickHouse schema changes
 

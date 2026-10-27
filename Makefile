@@ -5,12 +5,14 @@ COMPOSE=docker compose
 # One-time setup for running backend and frontend outside Docker: starts the
 # datastores (this also creates the ClickHouse tables from
 # backend/clickhouse/init.sql), copies the example env files when missing,
-# installs dependencies and applies the Postgres schema. See CONTRIBUTING.md.
+# installs dependencies and applies the committed Postgres migrations
+# (backend/scripts/migrate.sh, the same step the backend container runs at
+# start). See CONTRIBUTING.md.
 setup:
 	$(COMPOSE) up -d --wait postgres clickhouse redis
 	test -f backend/.env || cp backend/.env.example backend/.env
 	test -f frontend/.env.local || cp frontend/.env.local.example frontend/.env.local
-	cd backend && npm install && npm run db:push
+	cd backend && npm install && npm run db:migrate
 	cd frontend && npm install
 	@echo "Set REGISTRATION_MODE=open (or ADMIN_EMAIL to your address) in backend/.env before you sign up."
 	@echo "Then run make backend and make frontend in two shells."

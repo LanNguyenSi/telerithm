@@ -8,7 +8,11 @@
 # because pre_update runs against the pre-pull tree, a build there builds the
 # OLD code (58.6 s measured per deploy for no effect; the deploy system builds
 # the pulled commit itself after the pull), so the build entry was dropped and
-# must not come back.
+# must not come back. No hook entry may change the database schema either
+# (prisma db push, or prisma migrate deploy/dev/reset/resolve): the backend
+# container applies the migrations itself before it starts the server, and a
+# hook runs while that container may still be starting. A file without any
+# pre_update or post_update entry is valid (both keys are optional).
 # Needs js-yaml from the root node_modules (npm ci at the repository root).
 #   bash scripts/relay-config.test.sh [path to .relay.yml]
 set -euo pipefail
@@ -42,9 +46,13 @@ for (const key of ["pre_update", "post_update"]) {
     }
   });
 }
-if (total === 0) {
-  console.log("FAIL: no pre_update or post_update entries found");
+// Both hook keys are optional, so a file without entries is valid; the file
+// must still be the relay config (name and health are required there).
+if (typeof doc.name !== "string" || typeof doc.health !== "string") {
+  console.log("FAIL: not a relay config (name or health missing)");
   bad++;
+} else if (total === 0) {
+  console.log("PASS: no pre_update or post_update entries");
 }
 // agent-relay runs pre_update against the pre-pull tree, so an image build
 // there builds the OLD code (wasted time, and a likely containerd snapshot
@@ -115,6 +123,54 @@ for (const s of mustPass) {
     console.log(`FAIL: predicate flags a non-build: ${JSON.stringify(s)}`);
     bad++;
   }
+}
+// The backend entrypoint (backend/entrypoint.sh) is the only place that
+// changes the Postgres schema. A hook would run while the new backend container
+// may still be applying migrations, since compose up -d does not wait for it,
+// and prisma db push applies schema.prisma without a migration. Read-only
+// commands (migrate status, migrate diff, generate) are not flagged.
+function changesSchema(entry) {
+  const joined = entry.replace(/\\\r?\n/g, " ");
+  return /\bprisma\s+(db\s+push|migrate\s+(deploy|dev|reset|resolve))\b/.test(joined);
+}
+const mustFlagSchema = [
+  "docker compose -f docker-compose.traefik.yml exec backend npx prisma db push --skip-generate",
+  "docker compose exec backend npx prisma migrate deploy",
+  "npx  prisma\tdb  push",
+  "npx prisma migrate dev --name x",
+  "npx prisma migrate reset --force",
+  "npx prisma migrate resolve --applied 20261027132152_baseline",
+  "docker compose exec backend npx prisma \\\ndb push",
+];
+const mustPassSchema = [
+  "docker compose exec backend npx prisma migrate status",
+  "docker compose exec backend npx prisma migrate diff --from-empty --to-schema-datasource prisma/schema.prisma",
+  "npx prisma generate",
+  "echo db push is gone",
+];
+for (const s of mustFlagSchema) {
+  if (!changesSchema(s)) {
+    console.log(`FAIL: schema predicate misses a schema change: ${JSON.stringify(s)}`);
+    bad++;
+  }
+}
+for (const s of mustPassSchema) {
+  if (changesSchema(s)) {
+    console.log(`FAIL: schema predicate flags a read-only command: ${JSON.stringify(s)}`);
+    bad++;
+  }
+}
+for (const key of ["pre_update", "post_update"]) {
+  if (!Array.isArray(doc[key])) continue;
+  doc[key].forEach((entry, i) => {
+    if (typeof entry !== "string") return;
+    if (changesSchema(entry)) {
+      console.log(`FAIL: ${key}.${i} changes the database schema (the backend entrypoint applies the migrations)`);
+      bad++;
+    } else {
+      console.log(`PASS: ${key}.${i} does not change the database schema`);
+    }
+  });
 }
 if (Array.isArray(doc.pre_update)) {
   doc.pre_update.forEach((entry, i) => {

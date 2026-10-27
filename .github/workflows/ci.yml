@@ -64,6 +64,29 @@ jobs:
         working-directory: backend
         run: npx prisma generate
 
+      # The script the container entrypoint runs. On the empty CI database it
+      # takes the empty-database path, so this applies the committed migrations
+      # with prisma migrate deploy, against the real Postgres service.
+      - name: Apply the committed migrations
+        working-directory: backend
+        run: sh scripts/migrate.sh
+
+      # Fails when the committed migrations do not produce the schema that
+      # schema.prisma declares (`--exit-code` returns 2 on any difference), so
+      # a schema change without a migration fails here.
+      - name: Check migrations match schema.prisma
+        working-directory: backend
+        run: npx prisma migrate diff --from-url "$DATABASE_URL" --to-schema-datamodel prisma/schema.prisma --exit-code
+
+      # A second start finds the migration history the first run wrote and
+      # only runs prisma migrate deploy (nothing pending).
+      - name: Migration step on a migrated database
+        working-directory: backend
+        run: |
+          out=$(sh scripts/migrate.sh 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          grep -qF "migrate: migration history found" <<< "$out" || { echo "the second run did not detect the migration history"; exit 1; }
+
       - name: Type check
         working-directory: backend
         run: npx tsc --noEmit
@@ -192,7 +215,7 @@ jobs:
       # Warnings and errors fail the job; style notes (for example the ls
       # globs in backup.sh) are reported but do not.
       - name: Shellcheck
-        run: shellcheck --severity=warning scripts/*.sh
+        run: shellcheck --severity=warning scripts/*.sh backend/entrypoint.sh backend/scripts/*.sh
 
   clickhouse-config:
     name: ClickHouse config
@@ -214,6 +237,21 @@ jobs:
       # with the message of its own branch.
       - name: Controls for the check
         run: bash scripts/clickhouse-config-guard.test.sh
+
+  backend-entrypoint:
+    name: Backend entrypoint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # Every branch of the start-time migration decision in
+      # backend/scripts/migrate.sh and backend/entrypoint.sh, against a stub
+      # Prisma CLI (no database): history present, empty database, a database
+      # from before migrations that matches the schema (baseline recorded as
+      # applied) or differs (abort), and every error and failed deploy.
+      - name: Migration decision tests
+        run: bash scripts/backend-migrate.test.sh
 
   relay-config:
     name: Relay config

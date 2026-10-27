@@ -16,6 +16,7 @@
     "format": "prettier --write src/",
     "format:check": "prettier --check src/",
     "typecheck": "tsc --noEmit",
+    "db:migrate": "sh scripts/migrate.sh",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts"
   },

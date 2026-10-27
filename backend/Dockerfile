@@ -19,6 +19,7 @@ COPY package.json package-lock.json ./
 COPY prisma ./prisma
 RUN npm ci --omit=dev && npx prisma generate
 COPY --from=build /app/dist ./dist
+COPY scripts ./scripts
 COPY entrypoint.sh ./
 EXPOSE 4000
 CMD ["sh", "entrypoint.sh"]
