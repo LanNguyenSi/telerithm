@@ -17,15 +17,15 @@ Thanks for your interest in contributing. This guide covers the basics.
 make init
 ```
 
-To run backend and frontend outside Docker you need Node.js 22.9 or newer (`npm run dev` uses Node's `--env-file-if-exists` flag, which older versions reject with `node: bad option`; CI and the Docker images use Node 22). Start only the datastores in Docker. This also creates the ClickHouse tables from `backend/clickhouse/init.sql`; the backend does not create them itself. `make setup` runs these steps for you (datastores, example env files, `npm install` in both packages, `db:push`); the manual version:
+To run backend and frontend outside Docker you need Node.js 22.9 or newer (`npm run dev` uses Node's `--env-file-if-exists` flag, which older versions reject with `node: bad option`; CI and the Docker images use Node 22). Start only the datastores in Docker. This also creates the ClickHouse tables from `backend/clickhouse/init.sql`; the backend does not create them itself. `make setup` runs these steps for you (datastores, example env files, `npm install` in both packages, `db:migrate`); the manual version:
 
 ```bash
 docker compose up -d postgres clickhouse redis
 cp backend/.env.example backend/.env
-cd backend && npm install && npm run db:push && npm run dev
+cd backend && npm install && npm run db:migrate && npm run dev
 ```
 
-`npm run dev` reads `backend/.env`. The backend exits at startup without `DATABASE_URL` and `CLICKHOUSE_URL`. `REGISTRATION_MODE` defaults to `approval`, so set `REGISTRATION_MODE=open` or `ADMIN_EMAIL` to your own address in `backend/.env` before you sign up locally. In another shell:
+`npm run db:migrate` applies the committed migrations, the same step the container runs at start. `npm run db:push` (`prisma db push`) is only a shortcut for a throwaway database, since it records no migration history. `npm run dev` reads `backend/.env`. The backend exits at startup without `DATABASE_URL` and `CLICKHOUSE_URL`. `REGISTRATION_MODE` defaults to `approval`, so set `REGISTRATION_MODE=open` or `ADMIN_EMAIL` to your own address in `backend/.env` before you sign up locally. In another shell:
 
 ```bash
 cp frontend/.env.local.example frontend/.env.local

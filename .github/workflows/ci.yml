@@ -87,6 +87,40 @@ jobs:
           echo "$out"
           grep -qF "migrate: migration history found" <<< "$out" || { echo "the second run did not detect the migration history"; exit 1; }
 
+      # A database from the releases that applied the schema with prisma db
+      # push (tables, no migration history) that matches schema.prisma: the
+      # script records the baseline migration as applied, once, without running it.
+      - name: Baseline of a database from before migrations
+        working-directory: backend
+        run: |
+          psql "postgresql://telerithm:telerithm@localhost:5432/postgres" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE legacy'
+          export DATABASE_URL=postgresql://telerithm:telerithm@localhost:5432/legacy
+          npx prisma db push --skip-generate
+          out=$(sh scripts/migrate.sh 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          grep -qF "recording the baseline migration" <<< "$out" || { echo "the baseline was not recorded"; exit 1; }
+          rows=$(psql "$DATABASE_URL" -At -c 'SELECT count(*) FROM _prisma_migrations')
+          [ "$rows" = 1 ] || { echo "expected one _prisma_migrations row, got $rows"; exit 1; }
+
+      # The same database with one column the schema does not have: the script
+      # must stop with exit 1 and leave the database without a migration history.
+      - name: A database from before migrations that differs is left untouched
+        working-directory: backend
+        run: |
+          psql "postgresql://telerithm:telerithm@localhost:5432/postgres" -v ON_ERROR_STOP=1 -c 'CREATE DATABASE drifted'
+          export DATABASE_URL=postgresql://telerithm:telerithm@localhost:5432/drifted
+          npx prisma db push --skip-generate
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'ALTER TABLE "User" ADD COLUMN x text'
+          set +e
+          out=$(sh scripts/migrate.sh 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          [ "$rc" = 1 ] || { echo "expected exit 1, got $rc"; exit 1; }
+          grep -qF "the database schema differs from" <<< "$out" || { echo "the difference was not reported"; exit 1; }
+          history=$(psql "$DATABASE_URL" -At -c "SELECT to_regclass('public._prisma_migrations') IS NOT NULL")
+          [ "$history" = f ] || { echo "the script created a migration history on a differing database"; exit 1; }
+
       - name: Type check
         working-directory: backend
         run: npx tsc --noEmit

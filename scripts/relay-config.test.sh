@@ -125,9 +125,9 @@ for (const s of mustPass) {
   }
 }
 // The backend entrypoint (backend/entrypoint.sh) is the only place that
-// changes the Postgres schema. A hook would run while the new backend container
-// may still be applying migrations, since compose up -d does not wait for it,
-// and prisma db push applies schema.prisma without a migration. Read-only
+// changes the Postgres schema. A hook running prisma db push would apply
+// schema.prisma outside the migrations, and a migrate command in a hook would
+// race the entrypoint's own run. Read-only
 // commands (migrate status, migrate diff, generate) are not flagged.
 function changesSchema(entry) {
   const joined = entry.replace(/\\\r?\n/g, " ");

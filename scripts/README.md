@@ -184,9 +184,17 @@ bash scripts/clickhouse-config-guard.sh
 bash scripts/clickhouse-config-guard.test.sh
 ```
 
+### Check the Backend Migration Step
+
+`backend-migrate.test.sh` runs every branch of the start-time migration decision (`backend/scripts/migrate.sh`, called by `backend/entrypoint.sh`) against a stub Prisma CLI, under `sh` and `dash`: migration history present, empty database, a database from before migrations that matches the schema (baseline recorded) or differs from it, and each check that errors. CI runs it in the "Backend entrypoint" job; the "Backend" job additionally runs the script against real Postgres.
+
+```bash
+bash scripts/backend-migrate.test.sh
+```
+
 ### Check the Relay Config
 
-`relay-config.test.sh` parses `.relay.yml` with js-yaml (root devDependency) the way agent-relay's loader reads it and fails when a `pre_update` or `post_update` entry is not a string or when `pre_update` is present but not a list (an empty `pre_update:` key parses as null and every deploy then fails), and flags any `pre_update` entry that builds images (pre_update runs against the pre-pull tree, so such a build uses the old code; the deploy system builds the pulled commit itself). A self-check list of build and non-build samples guards the matcher. CI runs it in the "Relay config" job.
+`relay-config.test.sh` parses `.relay.yml` with js-yaml (root devDependency) the way agent-relay's loader reads it and fails when a `pre_update` or `post_update` entry is not a string or when `pre_update` is present but not a list (an empty `pre_update:` key parses as null and every deploy then fails), flags any `pre_update` entry that builds images (pre_update runs against the pre-pull tree, so such a build uses the old code; the deploy system builds the pulled commit itself), and flags any hook entry that changes the Postgres schema (`prisma db push`, `migrate deploy`, `dev`, `reset`, `resolve`; the backend entrypoint is the only schema writer, read-only `migrate diff` and `migrate status` pass). A file without hooks is accepted, which is the committed state. Self-check lists of build and non-build and of schema-changing and read-only samples guard the matchers. CI runs it in the "Relay config" job.
 
 ```bash
 bash scripts/relay-config.test.sh
