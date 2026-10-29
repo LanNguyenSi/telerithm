@@ -11,6 +11,26 @@
  * link-local ranges, which the form cannot check, and the form shows its message.
  */
 
+import type { AlertSubscription, SubscriptionRow } from "@/types";
+
+/**
+ * Picks the display fields of a subscription by allowlist so `config` (webhook
+ * URL, hook URL, HMAC secret) can never reach the client with a new API field.
+ */
+export function toSubscriptionRow(sub: AlertSubscription | SubscriptionRow): SubscriptionRow {
+  return {
+    id: sub.id,
+    userId: sub.userId,
+    teamId: sub.teamId,
+    ruleId: sub.ruleId,
+    channel: sub.channel,
+    severities: sub.severities,
+    enabled: sub.enabled,
+    createdAt: sub.createdAt,
+    rule: sub.rule,
+  };
+}
+
 export const SUBSCRIPTION_CHANNELS = ["WEBHOOK", "SLACK", "MSTEAMS"] as const;
 export type SubscriptionChannel = (typeof SUBSCRIPTION_CHANNELS)[number];
 

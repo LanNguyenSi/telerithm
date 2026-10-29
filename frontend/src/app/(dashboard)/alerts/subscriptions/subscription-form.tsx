@@ -62,6 +62,8 @@ export function SubscriptionForm({
     dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
     return () => {
       returnFocusRef.current?.focus();
+      setUrl("");
+      setSecret("");
     };
   }, [open, initialRuleId]);
 
@@ -90,6 +92,8 @@ export function SubscriptionForm({
     setError(null);
     try {
       await onSubmit(result.payload);
+      setUrl("");
+      setSecret("");
       onClose();
     } catch (err) {
       setError({ field: null, message: err instanceof Error ? err.message : "Creating the subscription failed." });

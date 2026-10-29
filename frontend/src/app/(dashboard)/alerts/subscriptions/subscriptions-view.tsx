@@ -8,9 +8,9 @@ import { Dialog, useDialog } from "@/components/ui/dialog";
 import { createSubscription, deleteSubscription, testSubscription, updateSubscription } from "@/lib/api/client";
 import { formatDate } from "@/lib/utils/format";
 import { subscriptionRuleLabel } from "@/lib/utils/subscription-rule-label";
-import type { AlertRule, AlertSubscription } from "@/types";
+import type { AlertRule, SubscriptionRow } from "@/types";
 import { SubscriptionForm } from "./subscription-form";
-import type { SubscriptionPayload } from "./subscription-input";
+import { toSubscriptionRow, type SubscriptionPayload } from "./subscription-input";
 
 const buttonClass =
   "rounded-lg border border-line px-2.5 py-1 text-xs text-ink transition hover:border-slate-400 disabled:opacity-50";
@@ -22,7 +22,7 @@ function channelTone(channel: string) {
   return "neutral";
 }
 
-function targetDescription(sub: AlertSubscription): string {
+function targetDescription(sub: SubscriptionRow): string {
   if (sub.rule) return `rule "${sub.rule.name}"`;
   if (sub.ruleId !== null) return "a rule that is no longer available";
   return "all rules in the team";
@@ -43,7 +43,7 @@ export function SubscriptionsView({
   teamId,
   token,
 }: {
-  subscriptions: AlertSubscription[];
+  subscriptions: SubscriptionRow[];
   rules: AlertRule[];
   teamId: string;
   token: string;
@@ -72,14 +72,14 @@ export function SubscriptionsView({
     const { subscription } = await createSubscription(token, payload);
     const rule = rules.find((r) => r.id === subscription.ruleId);
     setItems((current) => [
-      { ...subscription, rule: rule ? { id: rule.id, name: rule.name } : null },
+      toSubscriptionRow({ ...subscription, rule: rule ? { id: rule.id, name: rule.name } : null }),
       ...current.filter((s) => s.id !== subscription.id),
     ]);
     setError(null);
     router.refresh();
   };
 
-  const toggleEnabled = async (sub: AlertSubscription) => {
+  const toggleEnabled = async (sub: SubscriptionRow) => {
     setBusyId(sub.id);
     setError(null);
     try {
@@ -93,7 +93,7 @@ export function SubscriptionsView({
     }
   };
 
-  const remove = async (sub: AlertSubscription) => {
+  const remove = async (sub: SubscriptionRow) => {
     const confirmed = await dialog.confirm(
       `Delete the ${sub.channel} subscription for ${targetDescription(sub)}?`,
       "You stop receiving these notifications. This cannot be undone.",
@@ -112,7 +112,7 @@ export function SubscriptionsView({
     }
   };
 
-  const sendTest = async (sub: AlertSubscription) => {
+  const sendTest = async (sub: SubscriptionRow) => {
     setBusyId(sub.id);
     setNotices((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== sub.id)));
     try {

@@ -204,6 +204,12 @@ export interface AlertSubscription {
   rule?: { id: string; name: string } | null;
 }
 
+/**
+ * A subscription as the client component sees it: no `config`, which holds the
+ * webhook URL, the Slack/Teams hook URL and the HMAC secret and stays on the server.
+ */
+export type SubscriptionRow = Omit<AlertSubscription, "config">;
+
 export interface Issue {
   id: string;
   teamId: string;
