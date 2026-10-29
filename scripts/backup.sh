@@ -31,8 +31,11 @@ set -euo pipefail
 #                         leave the host. A hook that fails makes this script
 #                         exit non-zero; the local backup is kept.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# Every `cd` below is prefixed with an empty CDPATH: an exported CDPATH would
+# otherwise resolve a relative directory against it (and print it), so the
+# paths could differ from the ones the caller named.
+SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
+REPO_ROOT="$(CDPATH='' cd -- "${SCRIPT_DIR}/.." >/dev/null && pwd)"
 
 COMPOSE_FILE="${BACKUP_COMPOSE_FILE:-${REPO_ROOT}/docker-compose.traefik.yml}"
 ENV_FILE="${BACKUP_ENV_FILE:-${REPO_ROOT}/.env.production}"
@@ -50,7 +53,7 @@ if [ -n "${OFFHOST_HOOK}" ]; then
   fi
   # Made absolute here, before this script changes directory for the retention
   # step, so a relative path resolves against where the script was started.
-  OFFHOST_HOOK="$(cd "$(dirname "${OFFHOST_HOOK}")" && pwd)/$(basename "${OFFHOST_HOOK}")"
+  OFFHOST_HOOK="$(CDPATH='' cd -- "$(dirname "${OFFHOST_HOOK}")" >/dev/null && pwd)/$(basename "${OFFHOST_HOOK}")"
 fi
 
 COMPOSE=(docker compose -f "${COMPOSE_FILE}")
@@ -70,13 +73,17 @@ done
 BACKUP_DIR="${1:-./backups}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 mkdir -p "${BACKUP_DIR}"
-BACKUP_DIR="$(cd "${BACKUP_DIR}" && pwd)"
+BACKUP_DIR="$(CDPATH='' cd -- "${BACKUP_DIR}" >/dev/null && pwd)"
 BACKUP_PATH="${BACKUP_DIR}/${TIMESTAMP}"
 # No -p: the timestamp has one-second resolution, and a run that reused the
 # directory of another run could delete that run's finished backup when it
 # cleans up after its own failure.
-mkdir "${BACKUP_PATH}" 2>/dev/null \
-  || fail "backup directory already exists (another run in the same second?): ${BACKUP_PATH}"
+# The collision message is for a path that exists; any other mkdir failure
+# (read-only parent, no space) shows mkdir's own error instead.
+if [ -e "${BACKUP_PATH}" ]; then
+  fail "backup directory already exists (another run in the same second?): ${BACKUP_PATH}"
+fi
+mkdir "${BACKUP_PATH}" || fail "could not create the backup directory: ${BACKUP_PATH}"
 
 # A run that dies before both dumps are complete removes its own directory, so
 # a half-written backup neither looks like a backup nor counts toward the
@@ -111,7 +118,7 @@ echo "[backup] ClickHouse dump complete"
 DUMPS_COMPLETE=1
 
 # Cleanup old backups (keep last 10 by count, max 10 days)
-cd "${BACKUP_DIR}"
+CDPATH='' cd -- "${BACKUP_DIR}" >/dev/null
 BACKUP_COUNT=$(ls -d */ 2>/dev/null | wc -l)
 if [ "${BACKUP_COUNT}" -gt 10 ]; then
   ls -dt */ | tail -n +11 | xargs rm -rf

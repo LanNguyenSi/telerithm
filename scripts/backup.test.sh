@@ -280,6 +280,58 @@ if [ "${RC}" -eq 0 ] && [ "$(count_dirs "${D9}")" = "1" ]; then
   ok "relative backup dir: exit 0, old backups pruned, new one kept"
 else bad "relative backup dir: rc=${RC} dirs=$(count_dirs "${D9}") out=$(cat "${SCRATCH}/rel.out")"; fi
 
+# --- 7. mkdir failures other than a collision -----------------------------------
+# A backup path that exists gets the collision message (covered in 4b). Any other
+# mkdir failure shows mkdir's own error and must not claim a collision.
+D11="${SCRATCH}/b11"
+mkdir -p "${D11}"
+chmod 555 "${D11}"
+if [ "$(id -u)" = "0" ] || [ -w "${D11}" ]; then
+  echo "skip - read-only backup directory (running as root or the directory stays writable)"
+else
+  run_backup readonly "${D11}"
+  if [ "${RC}" -ne 0 ] \
+    && grep -qi "permission denied" <<< "${OUT}" \
+    && ! grep -q "already exists" <<< "${OUT}" \
+    && [ "$(count_dirs "${D11}")" = "0" ]; then
+    ok "read-only backup dir: mkdir's own error, no collision message"
+  else bad "read-only backup dir: rc=${RC} out=${OUT}"; fi
+fi
+chmod 755 "${D11}"
+
+# --- 8. CDPATH must not redirect any resolved path -----------------------------
+# The decoy tree holds a directory of the same relative name for each cd the
+# script makes, so a cd that honours CDPATH lands in the decoy instead.
+DECOY="${SCRATCH}/decoy"
+mkdir -p "${DECOY}/bk" "${DECOY}/hooks" "${DECOY}/scripts"
+CWD8="${SCRATCH}/cwd8"
+mkdir -p "${CWD8}/hooks"
+cp "${HOOK}" "${CWD8}/hooks/hook.sh"
+: > "${HOOK_LOG}"
+( cd "${CWD8}" && CDPATH="${DECOY}" BACKUP_OFFHOST_HOOK="hooks/hook.sh" bash "${BACKUP_SH}" "bk" > "${SCRATCH}/cdpath.out" 2>&1 ); RC=$?
+BK8="$(find "${CWD8}/bk" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | head -n 1)"
+if [ "${RC}" -eq 0 ] && [ -n "${BK8}" ] \
+  && [ "$(count_dirs "${DECOY}/bk")" = "0" ] \
+  && grep -qxF "hook called with: ${BK8}" "${HOOK_LOG}" \
+  && ! grep -q "${DECOY}" "${SCRATCH}/cdpath.out"; then
+  ok "CDPATH set: backup dir resolves to the caller's path, not the decoy"
+else bad "CDPATH set: rc=${RC} bk=${BK8} decoy=$(find "${DECOY}" -type f) hooklog=$(cat "${HOOK_LOG}") out=$(cat "${SCRATCH}/cdpath.out")"; fi
+
+# the off-host hook path is resolved without CDPATH too: the hook exists only at
+# ./hooks/hook.sh, and the decoy hooks/ directory has none, so a captured
+# resolution would put the decoy directory in front of the file name
+: > "${HOOK_LOG}"
+( cd "${CWD8}" && CDPATH="${DECOY}" BACKUP_OFFHOST_HOOK="hooks/hook.sh" bash "${BACKUP_SH}" "${SCRATCH}/b12" > "${SCRATCH}/cdpath2.out" 2>&1 ); RC=$?
+if [ "${RC}" -eq 0 ] && [ "$(grep -c '^hook called with:' "${HOOK_LOG}")" = "1" ]; then
+  ok "CDPATH set: relative off-host hook path still resolves"
+else bad "CDPATH set, hook: rc=${RC} out=$(cat "${SCRATCH}/cdpath2.out")"; fi
+
+# the script's own directory: started as scripts/backup.sh, with a decoy scripts/
+# directory on CDPATH, the default compose file is still the repository's
+( cd "${REPO2}" && env -u BACKUP_COMPOSE_FILE -u BACKUP_ENV_FILE CDPATH="${DECOY}" bash scripts/backup.sh "${SCRATCH}/b13" > "${SCRATCH}/cdpath3.out" 2>&1 ); RC=$?
+if [ "${RC}" -eq 0 ]; then ok "CDPATH set: script directory resolves to the repository's scripts/"
+else bad "CDPATH set, script dir: rc=${RC} out=$(cat "${SCRATCH}/cdpath3.out")"; fi
+
 echo
 echo "passed: ${PASS}, failed: ${FAIL}"
 [ "${FAIL}" -eq 0 ]
