@@ -34,12 +34,17 @@ type DialogProps = {
     }
 );
 
+const DIALOG_FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function Dialog(props: DialogProps) {
   const { open, title, description, onClose } = props;
   const [inputValue, setInputValue] = useState("");
   const [shared, setShared] = useState(false);
   const [isDefault, setIsDefault] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const titleId = useId();
   const bodyId = useId();
 
@@ -54,11 +59,52 @@ export function Dialog(props: DialogProps) {
     }
   }, [open, props.variant, props.variant === "prompt" ? props.defaultValue : undefined, props.variant === "save-view" ? props.defaultName : undefined]);
 
+  // Focus moves into the dialog on open and goes back to the opener on close.
+  // Keyed on `open` alone: `onClose` changes identity with the dialog state, and
+  // a cleanup tied to it would restore focus on every render. The cleanup runs
+  // for every way of closing (Cancel, Confirm, Escape, backdrop) because they
+  // all end in `open` turning false.
   useEffect(() => {
-    if (open && inputRef.current) {
+    if (!open) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (inputRef.current) {
       inputRef.current.focus();
       inputRef.current.select();
+    } else {
+      cancelRef.current?.focus();
     }
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [open]);
+
+  // Tab and Shift+Tab wrap inside the dialog; focus that sits outside is pulled in.
+  useEffect(() => {
+    if (!open) return;
+    const handleTab = (e: KeyboardEvent) => {
+      const panel = panelRef.current;
+      if (e.key !== "Tab" || !panel) return;
+      const items = Array.from(panel.querySelectorAll<HTMLElement>(DIALOG_FOCUSABLE));
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = items[0];
+      const last = items[items.length - 1];
+      const active = document.activeElement;
+      if (!panel.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleTab);
+    return () => document.removeEventListener("keydown", handleTab);
   }, [open]);
 
   useEffect(() => {
@@ -92,6 +138,7 @@ export function Dialog(props: DialogProps) {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
+        ref={panelRef}
         className="w-full max-w-sm rounded-2xl border border-line bg-white p-5 shadow-panel dark:bg-slate-900"
         role="dialog"
         aria-modal="true"
@@ -154,6 +201,7 @@ export function Dialog(props: DialogProps) {
 
         <div className="mt-4 flex items-center justify-end gap-2">
           <button
+            ref={cancelRef}
             type="button"
             onClick={onClose}
             className="rounded-lg border border-line px-3 py-1.5 text-sm text-ink transition hover:border-slate-400"

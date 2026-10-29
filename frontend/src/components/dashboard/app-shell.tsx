@@ -12,7 +12,7 @@ export function AppShell({ children, user }: AppShellProps) {
       <Sidebar user={user} />
 
       {/* Main content area — offset by sidebar on desktop, by top bar on mobile */}
-      <div className="lg:pl-52">
+      <div data-app-content className="lg:pl-52">
         <main className="mx-auto max-w-6xl px-4 py-6 pt-20 sm:px-6 lg:px-8 lg:py-8 lg:pt-8">
           {children}
         </main>
