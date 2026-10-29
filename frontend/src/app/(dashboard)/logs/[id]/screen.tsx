@@ -142,7 +142,7 @@ export function LogDetailScreen({
                     <div className="flex gap-1">
                       <Link
                         href={`/logs/search?${encodeURIComponent(key)}=${encodeURIComponent(text)}`}
-                        className="rounded-sm px-1.5 py-0.5 text-[10px] text-signal transition hover:bg-cyan-100 dark:hover:bg-cyan-900/20"
+                        className="inline-flex min-h-6 min-w-6 items-center justify-center rounded-sm px-1.5 py-0.5 text-[10px] text-signal transition hover:bg-cyan-100 dark:hover:bg-cyan-900/20"
                       >
                         filter
                       </Link>

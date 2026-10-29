@@ -107,3 +107,15 @@ describe("LogTable — empty state", () => {
     expect(screen.getByText("Service")).toBeInTheDocument();
   });
 });
+
+describe("LogTable — details button target size (WCAG 2.5.8)", () => {
+  it("gives every details button min-h-6 and min-w-6 sizing classes", () => {
+    render(<LogTable logs={[makeLog()]} />);
+    const buttons = screen.getAllByRole("button", { name: "details" });
+    expect(buttons.length).toBeGreaterThan(0);
+    for (const button of buttons) {
+      expect(button.className).toContain("min-h-6");
+      expect(button.className).toContain("min-w-6");
+    }
+  });
+});
