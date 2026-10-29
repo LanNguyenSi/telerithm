@@ -2,6 +2,8 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-29T12:37:26Z, `migrate.sh` compares a database from before migrations with the frozen `backend/prisma/baseline.prisma` instead of `schema.prisma`; `CHANGELOG.md` and `DEPLOYMENT.md` ("Database migrations") describe it. `clickhouse-retention-and-memory-limits.md` cites `DEPLOYMENT.md` only for the sentence that Postgres schema changes ship as Prisma migrations applied at every start, which still holds, and for the ClickHouse sections that did not change; re-read and re-stamped. `compose-file-topology-and-drift.md` cites `CHANGELOG.md` for the `[0.1.1]` note and the `.relay.yml` migration paragraph (post_update hook gone, failed migration keeps the backend unhealthy and the deploy rolls back), neither of which changed; re-read and re-stamped.
+
 - 2026-10-29T06:36:19Z, `docs/configuration.md`'s "Notification channels" section gains one sentence on managing subscriptions in the UI. `ingestion-pipeline.md` cites `docs/configuration.md` only for the "Ingestion sources" section, which did not change; re-read and re-stamped.
 - 2026-10-27T14:33:26Z, `DEPLOYMENT.md`'s "When a migration fails" recovery now writes the diff to `fix.sql`, drops a backfill-only default again and re-runs the diff before `--applied`. `clickhouse-retention-and-memory-limits.md` cites `DEPLOYMENT.md` only for step 4, the "ClickHouse schema changes" section, the Maintenance delete, the ClickHouse user and image-tag steps and the "Database migrations" pointer, none of which changed in meaning; re-read and re-stamped.
 

@@ -10,11 +10,13 @@
 #       -> prisma migrate deploy (the baseline migration creates the schema)
 #   no history, database not empty: a database from the releases that applied
 #   the schema with prisma db push
-#       -> only when it matches prisma/schema.prisma exactly: record the
-#          baseline migration as applied (prisma migrate resolve), then
-#          prisma migrate deploy
-#       -> any difference, or any error while checking: stop with exit 1 and
-#          change nothing
+#       -> only when it matches the frozen baseline schema
+#          (prisma/baseline.prisma, the schema the baseline migration creates;
+#          NOT the current prisma/schema.prisma, which later migrations
+#          change): record the baseline migration as applied (prisma migrate
+#          resolve), then prisma migrate deploy applies every later migration
+#       -> any difference, a missing prisma/baseline.prisma, or any error while
+#          checking: stop with exit 1 and change nothing
 #
 # Each check is read from exit codes only. A check that neither confirms nor
 # rules out its condition counts as an error, and every error exits 1. The
@@ -27,9 +29,12 @@ set -u
 
 # The first migration: the schema the db push releases applied, as one
 # migration. Recording it as applied without running it is only right for a
-# database that already has exactly this schema.
+# database that already has exactly this schema, and BASELINE_SCHEMA is that
+# schema, frozen: CI keeps it equal to the migration's SQL. The runtime image
+# ships it with the rest of prisma/ (the Dockerfile copies the folder whole).
 BASELINE_MIGRATION=20261027132152_baseline
 SCHEMA=prisma/schema.prisma
+BASELINE_SCHEMA=prisma/baseline.prisma
 GUIDE='DEPLOYMENT.md, "Database migrations"'
 
 say() { echo "migrate: $*"; }
@@ -96,26 +101,30 @@ case $rc in
     ;;
 esac
 
-say "the database has tables but no migration history (a database from before migrations); comparing it with $SCHEMA."
-diff_out=$(prisma migrate diff --from-schema-datasource "$SCHEMA" --to-schema-datamodel "$SCHEMA" --exit-code 2>&1)
+say "the database has tables but no migration history (a database from before migrations); comparing it with the baseline schema $BASELINE_SCHEMA."
+if [ ! -f "$BASELINE_SCHEMA" ]; then
+  err "$BASELINE_SCHEMA is missing (it is the schema the baseline migration $BASELINE_MIGRATION creates, committed with the migrations). Nothing was changed; the server does not start."
+  exit 1
+fi
+diff_out=$(prisma migrate diff --from-schema-datasource "$SCHEMA" --to-schema-datamodel "$BASELINE_SCHEMA" --exit-code 2>&1)
 rc=$?
 case $rc in
   0) ;;
   2)
     printf '%s\n' "$diff_out" >&2
-    err "the database schema differs from $SCHEMA (the changes above would make it match)."
-    err "Stopped before changing anything; the server does not start. The baseline migration $BASELINE_MIGRATION is recorded as applied only for a database that matches the schema exactly."
-    err "Recovery ($GUIDE): back up the database (scripts/backup.sh), then either change the database to match the schema (npx prisma migrate diff --from-schema-datasource $SCHEMA --to-schema-datamodel $SCHEMA --script prints the SQL; review it, it can drop columns and data) or, when the difference is known to be harmless, run npx prisma migrate resolve --applied $BASELINE_MIGRATION; then start the backend again. Do not run prisma db push."
+    err "the database schema differs from the baseline schema $BASELINE_SCHEMA (the changes above would make it match). The comparison is with the baseline, not with the current $SCHEMA: later migrations are applied after the baseline is recorded."
+    err "Stopped before changing anything; the server does not start. The baseline migration $BASELINE_MIGRATION is recorded as applied only for a database that matches the baseline schema exactly."
+    err "Recovery ($GUIDE): back up the database (scripts/backup.sh), then either align the database with the baseline (npx --no-install prisma migrate diff --from-schema-datasource $SCHEMA --to-schema-datamodel $BASELINE_SCHEMA --script prints the SQL; review it, it can drop columns and data) or, when the difference is known to be harmless, resolve by hand after review: npx --no-install prisma migrate resolve --applied $BASELINE_MIGRATION; then start the backend again (later migrations are applied by the start). Do not run prisma db push."
     exit 1
     ;;
   *)
     printf '%s\n' "$diff_out" >&2
-    err "could not compare the database with $SCHEMA (prisma migrate diff exit $rc, see above). Nothing was changed; the server does not start."
+    err "could not compare the database with $BASELINE_SCHEMA (prisma migrate diff exit $rc, see above). Nothing was changed; the server does not start."
     exit 1
     ;;
 esac
 
-say "the database matches $SCHEMA, recording the baseline migration $BASELINE_MIGRATION as applied."
+say "the database matches the baseline schema $BASELINE_SCHEMA, recording the baseline migration $BASELINE_MIGRATION as applied."
 if ! prisma migrate resolve --applied "$BASELINE_MIGRATION"; then
   err "prisma migrate resolve failed, see the Prisma error above. No migration was run; the server does not start. See $GUIDE."
   exit 1

@@ -1,0 +1,350 @@
+// FROZEN. This is backend/prisma/schema.prisma as it stood when the repo moved
+// from `prisma db push` to committed migrations, and it must never change.
+// scripts/migrate.sh compares a database that has tables but no migration
+// history (one the db push releases filled) with THIS file, not with
+// schema.prisma, before it records the baseline migration as applied: the
+// baseline migration creates exactly this schema, and every later migration is
+// applied on top by `prisma migrate deploy`. Comparing with the current
+// schema.prisma would refuse a database at the baseline once a second migration
+// exists.
+//
+// CI and scripts/backend-migrate.test.sh assert that
+//   prisma migrate diff --from-empty --to-schema-datamodel \
+//     prisma/baseline.prisma --script
+// reproduces migrations/20261027132152_baseline/migration.sql (minus the
+// leading CREATE SCHEMA statement and the trailing blank line Prisma adds to the
+// script), so this file cannot drift from the baseline migration. Do not edit
+// it for a schema change; add a migration and change schema.prisma instead.
+// The runtime image already ships it (the Dockerfile copies prisma/ whole).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String              @id @default(uuid())
+  email           String              @unique
+  passwordHash    String
+  name            String
+  role            UserRole            @default(USER)
+  status          UserStatus          @default(ACTIVE)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  teams           TeamMember[]
+  sessions        Session[]
+  subscriptions   AlertSubscription[]
+  incidentEvents  IncidentEvent[]
+  assignedIssues  Issue[]
+  escalationSteps EscalationStep[]
+  logViews        LogView[]
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Team {
+  id                 String              @id @default(uuid())
+  name               String
+  slug               String              @unique
+  createdAt          DateTime            @default(now())
+  members            TeamMember[]
+  sources            LogSource[]
+  alerts             AlertRule[]
+  dashboards         Dashboard[]
+  subscriptions      AlertSubscription[]
+  issues             Issue[]
+  escalationPolicies EscalationPolicy[]
+  maintenanceWindows MaintenanceWindow[]
+  invites            TeamInvite[]
+  logViews           LogView[]
+}
+
+model TeamMember {
+  id       String   @id @default(uuid())
+  teamId   String
+  userId   String
+  role     TeamRole @default(MEMBER)
+  joinedAt DateTime @default(now())
+  team     Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+}
+
+model LogSource {
+  id            String     @id @default(uuid())
+  teamId        String
+  name          String
+  type          SourceType
+  config        Json
+  schema        Json?
+  retentionDays Int        @default(7)
+  apiKey        String     @unique
+  createdAt     DateTime   @default(now())
+  team          Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+}
+
+model AlertRule {
+  id            String              @id @default(uuid())
+  teamId        String
+  name          String
+  description   String?
+  query         String
+  queryType     QueryType           @default(SQL)
+  condition     AlertCondition
+  threshold     Int
+  windowMinutes Int                 @default(5)
+  enabled       Boolean             @default(true)
+  muteUntil     DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  team          Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  incidents     AlertIncident[]
+  subscriptions AlertSubscription[]
+}
+
+model AlertIncident {
+  id        String          @id @default(uuid())
+  ruleId    String
+  status    IncidentStatus  @default(OPEN)
+  severity  Severity
+  message   String
+  createdAt DateTime        @default(now())
+  rule      AlertRule       @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  events    IncidentEvent[]
+}
+
+model Dashboard {
+  id        String   @id @default(uuid())
+  teamId    String
+  name      String
+  layout    Json
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+}
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  PENDING
+  DISABLED
+}
+
+// VIEWER is read-only on team-scoped write routes (403); OWNER, ADMIN and MEMBER
+// may write. The rule lives in canWrite() in src/api/rest/router.ts.
+enum TeamRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum SourceType {
+  HTTP
+  SYSLOG_UDP
+  SYSLOG_TCP
+  FILEBEAT
+  DOCKER
+  CLOUDWATCH
+}
+
+enum QueryType {
+  SQL
+  NATURAL_LANGUAGE
+}
+
+enum AlertCondition {
+  GREATER_THAN
+  LESS_THAN
+  EQUALS
+  CHANGES_BY
+  ANOMALY_DETECTED
+}
+
+enum IncidentStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+enum Severity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+// --- Incident Events (audit trail) ---
+
+enum IncidentAction {
+  ACKNOWLEDGED
+  RESOLVED
+  REOPENED
+  COMMENTED
+}
+
+model IncidentEvent {
+  id         String         @id @default(uuid())
+  incidentId String
+  incident   AlertIncident  @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User           @relation(fields: [userId], references: [id])
+  action     IncidentAction
+  comment    String?
+  createdAt  DateTime       @default(now())
+
+  @@index([incidentId])
+}
+
+// --- Alert Subscriptions ---
+
+enum NotificationChannel {
+  EMAIL
+  WEBHOOK
+  SLACK
+  MSTEAMS
+}
+
+model AlertSubscription {
+  id         String              @id @default(uuid())
+  userId     String
+  user       User                @relation(fields: [userId], references: [id])
+  teamId     String
+  team       Team                @relation(fields: [teamId], references: [id])
+  ruleId     String?
+  rule       AlertRule?          @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+  channel    NotificationChannel
+  config     Json
+  severities String[]
+  enabled    Boolean             @default(true)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+
+  @@index([teamId])
+  @@index([userId])
+}
+
+// --- Error Grouping / Issues ---
+
+enum IssueStatus {
+  NEW
+  ONGOING
+  RESOLVED
+  IGNORED
+}
+
+model Issue {
+  id          String      @id @default(uuid())
+  teamId      String
+  team        Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  fingerprint String
+  title       String
+  level       String
+  service     String      @default("unknown")
+  status      IssueStatus @default(NEW)
+  firstSeen   DateTime
+  lastSeen    DateTime
+  eventCount  Int         @default(1)
+  assigneeId  String?
+  assignee    User?       @relation(fields: [assigneeId], references: [id])
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@unique([teamId, fingerprint])
+}
+
+// --- Escalation Policies ---
+
+model EscalationPolicy {
+  id     String           @id @default(uuid())
+  teamId String
+  team   Team             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name   String
+  steps  EscalationStep[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model EscalationStep {
+  id            String              @id @default(uuid())
+  policyId      String
+  policy        EscalationPolicy    @relation(fields: [policyId], references: [id], onDelete: Cascade)
+  delayMinutes  Int // minutes after incident creation to escalate
+  notifyUserId  String?
+  notifyUser    User?               @relation(fields: [notifyUserId], references: [id])
+  notifyChannel NotificationChannel
+  notifyConfig  Json // channel-specific config
+  stepOrder     Int // 0-based order
+
+  @@index([policyId])
+}
+
+// --- Team Invites ---
+
+model TeamInvite {
+  id        String    @id @default(uuid())
+  teamId    String
+  team      Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  email     String?
+  token     String    @unique
+  role      TeamRole  @default(MEMBER)
+  createdBy String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([teamId])
+}
+
+// --- Maintenance Windows ---
+
+model MaintenanceWindow {
+  id        String   @id @default(uuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name      String
+  startsAt  DateTime
+  endsAt    DateTime
+  createdAt DateTime @default(now())
+
+  @@index([teamId])
+}
+
+// --- Logs Saved Views ---
+
+model LogView {
+  id          String   @id @default(uuid())
+  teamId      String
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  ownerUserId String?
+  ownerUser   User?    @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+  name        String
+  isShared    Boolean  @default(false)
+  isDefault   Boolean  @default(false)
+  definition  Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([teamId])
+  @@index([ownerUserId])
+}
