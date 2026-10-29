@@ -139,6 +139,18 @@ describe("create form", () => {
     expect(mocks.refresh).not.toHaveBeenCalled();
   });
 
+  it("sends once when the form is submitted again while the first request is pending", async () => {
+    mocks.createSubscription.mockReturnValue(new Promise(() => {}));
+    renderView([]);
+    const dialog = openForm();
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: "https://hooks.example.com/pager" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create subscription" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Creating..." })).toBeDisabled());
+    // Enter in a text field submits the form even though the button is disabled.
+    fireEvent.submit(dialog.querySelector("form") as HTMLFormElement);
+    expect(mocks.createSubscription).toHaveBeenCalledTimes(1);
+  });
+
   it("opens with the rule preselected from the Subscribe button on a rule card", () => {
     renderView([]);
     fireEvent.click(screen.getByRole("button", { name: "Subscribe to Checkout burst" }));
