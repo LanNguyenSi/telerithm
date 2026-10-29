@@ -163,4 +163,17 @@ describe("create form clears url and secret", () => {
     expect(screen.getByLabelText("Webhook URL")).toHaveValue(WEBHOOK_URL);
     expect(screen.getByLabelText("Signing secret (optional)")).toHaveValue(SECRET);
   });
+
+  it("when the dialog closes without submitting", () => {
+    const props = { rules, initialRuleId: "", teamId: "team-1", onClose: vi.fn(), onSubmit: vi.fn() };
+    const { container, rerender } = render(<SubscriptionForm open {...props} />);
+    fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: WEBHOOK_URL } });
+    fireEvent.change(screen.getByLabelText("Signing secret (optional)"), { target: { value: SECRET } });
+    expect(reactStateDump(container)).toContain(SECRET);
+
+    rerender(<SubscriptionForm open={false} {...props} />);
+    const state = reactStateDump(container);
+    expect(state).not.toContain(SECRET);
+    expect(state).not.toContain(WEBHOOK_URL);
+  });
 });
