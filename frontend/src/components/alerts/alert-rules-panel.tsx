@@ -135,13 +135,14 @@ export function AlertRulesPanel({
               </p>
               {writable ? (
                 <div className="mt-2 flex flex-wrap gap-2">
-                  <label className="flex items-center gap-1.5 text-xs text-ink">
+                  <label className="flex min-h-6 items-center gap-1.5 text-xs text-ink">
                     <input
                       type="checkbox"
                       checked={rule.enabled}
                       disabled={busyId === rule.id}
                       onChange={() => void toggleEnabled(rule)}
                       aria-label={`Enabled: ${rule.name}`}
+                      className="size-4"
                     />
                     Enabled
                   </label>

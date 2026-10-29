@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 /* ------------------------------------------------------------------ */
 /*  Dialog component                                                   */
@@ -40,6 +40,8 @@ export function Dialog(props: DialogProps) {
   const [shared, setShared] = useState(false);
   const [isDefault, setIsDefault] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const titleId = useId();
+  const bodyId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -93,10 +95,12 @@ export function Dialog(props: DialogProps) {
         className="w-full max-w-sm rounded-2xl border border-line bg-white p-5 shadow-panel dark:bg-slate-900"
         role="dialog"
         aria-modal="true"
+        aria-labelledby={titleId}
+        aria-describedby={description ? bodyId : undefined}
       >
-        <h3 className="text-base font-semibold text-ink">{title}</h3>
+        <h3 id={titleId} className="text-base font-semibold text-ink">{title}</h3>
         {description ? (
-          <p className="mt-1 text-sm text-muted">{description}</p>
+          <p id={bodyId} className="mt-1 text-sm text-muted">{description}</p>
         ) : null}
 
         {props.variant === "prompt" ? (
@@ -176,7 +180,7 @@ export function Dialog(props: DialogProps) {
 type DialogState =
   | { open: false }
   | ({ open: true } & (
-      | { variant: "confirm"; title: string; description?: string; resolve: (ok: boolean) => void }
+      | { variant: "confirm"; title: string; description?: string; confirmLabel?: string; cancelLabel?: string; resolve: (ok: boolean) => void }
       | { variant: "prompt"; title: string; description?: string; defaultValue?: string; resolve: (value: string | null) => void }
       | { variant: "save-view"; title: string; description?: string; defaultName?: string; canManageShared: boolean; disabledReason?: string; resolve: (data: { name: string; shared: boolean; isDefault: boolean } | null) => void }
     ));
@@ -184,11 +188,14 @@ type DialogState =
 export function useDialog() {
   const [state, setState] = useState<DialogState>({ open: false });
 
-  const confirm = useCallback((title: string, description?: string): Promise<boolean> => {
-    return new Promise((resolve) => {
-      setState({ open: true, variant: "confirm", title, description, resolve });
-    });
-  }, []);
+  const confirm = useCallback(
+    (title: string, description?: string, labels?: { confirmLabel?: string; cancelLabel?: string }): Promise<boolean> => {
+      return new Promise((resolve) => {
+        setState({ open: true, variant: "confirm", title, description, confirmLabel: labels?.confirmLabel, cancelLabel: labels?.cancelLabel, resolve });
+      });
+    },
+    [],
+  );
 
   const prompt = useCallback((title: string, defaultValue?: string): Promise<string | null> => {
     return new Promise((resolve) => {
@@ -216,6 +223,8 @@ export function useDialog() {
           variant: "confirm" as const,
           title: state.title,
           description: state.description,
+          confirmLabel: state.confirmLabel,
+          cancelLabel: state.cancelLabel,
           onClose: close,
           onConfirm: () => { state.resolve(true); setState({ open: false }); },
         }

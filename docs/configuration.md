@@ -108,7 +108,7 @@ Sources are created per team via the API (`POST /api/v1/sources` with `teamId`, 
 
 ## Notification channels
 
-Users subscribe to alert incidents through `/api/v1/subscriptions`. A subscription belongs to one user and team, can be limited to one rule (`ruleId`) and to a set of severities, and names a channel and its `config`:
+Users subscribe to alert incidents through `/api/v1/subscriptions`. A subscription belongs to one user and team, can be limited to one rule (`ruleId`) and to a set of severities, and names a channel and its `config`. The Subscriptions page (`/alerts/subscriptions`, linked from Alerts) does the same without the API: a form for rule, channel, URL (and, for a webhook, a signing secret) and severities, an Enabled switch, Send test (not shown for `EMAIL` subscriptions, which send nothing) and Delete with a confirmation. The API lets every team member, `VIEWER` included, manage their own subscriptions, so the page hides no control by role; a refusal from the API is shown as it is worded. Channels and `config`:
 
 | Channel   | `config` keys                                   | Delivery |
 | --------- | ----------------------------------------------- | -------- |

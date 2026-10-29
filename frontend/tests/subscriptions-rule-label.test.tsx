@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/auth/guard", () => ({ requireAuth: mocks.requireAuth }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 vi.mock("@/lib/api/client", () => ({
   getSubscriptions: mocks.getSubscriptions,

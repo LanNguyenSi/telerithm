@@ -7,6 +7,7 @@ import type { AdminUser, Team } from "@/types";
 import { AddToTeamModal } from "./add-to-team-modal";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { Dialog, useDialog } from "@/components/ui/dialog";
 
 function statusTone(status: AdminUser["status"]) {
   if (status === "ACTIVE") return "signal";
@@ -27,6 +28,7 @@ export function UserTable({
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [modalUser, setModalUser] = useState<AdminUser | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const dialog = useDialog();
 
   async function approve(userId: string) {
     setPendingId(userId);
@@ -91,6 +93,16 @@ export function UserTable({
     } finally {
       setPendingId(null);
     }
+  }
+
+  async function requestRemove(user: AdminUser, team: AdminUser["teams"][number]) {
+    const confirmed = await dialog.confirm(
+      `Remove ${user.name} from ${team.name}?`,
+      `${user.name} will lose ${team.role.toLowerCase()} access to the ${team.name} team. They can be added again later.`,
+      { confirmLabel: "Remove", cancelLabel: "Cancel" },
+    );
+    if (!confirmed) return;
+    void removeFromTeam(user.id, team.id);
   }
 
   return (
@@ -165,8 +177,8 @@ export function UserTable({
                           <button
                             type="button"
                             disabled={pendingId === user.id}
-                            onClick={() => void removeFromTeam(user.id, team.id)}
-                            className="text-xs text-muted transition hover:text-rose-600 disabled:opacity-50"
+                            onClick={() => void requestRemove(user, team)}
+                            className="inline-flex min-h-6 min-w-6 items-center justify-center rounded-lg px-1.5 text-xs text-muted transition hover:text-rose-600 disabled:opacity-50"
                           >
                             Remove
                           </button>
@@ -187,6 +199,7 @@ export function UserTable({
         onClose={() => setModalUser(null)}
         onSubmit={addToTeam}
       />
+      <Dialog {...dialog.dialogProps} />
     </>
   );
 }
