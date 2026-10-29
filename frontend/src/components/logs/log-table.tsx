@@ -50,7 +50,7 @@ export function LogTable({
             role="region"
             aria-label="Logs table"
             tabIndex={0}
-            className="overflow-x-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-slate-400"
+            className="overflow-x-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-400"
           >
             <table className="min-w-full text-left text-sm">
               <thead className="border-b border-line bg-slate-950 text-[11px] uppercase tracking-[0.14em] text-white">

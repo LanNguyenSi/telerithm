@@ -324,7 +324,7 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
             role="region"
             aria-label="Issues table"
             tabIndex={0}
-            className="hidden overflow-x-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-slate-400 md:block"
+            className="hidden overflow-x-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-400 md:block"
           >
             <table className="w-full text-left text-sm">
               <thead>

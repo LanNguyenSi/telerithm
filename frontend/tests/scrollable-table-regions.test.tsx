@@ -55,6 +55,9 @@ function assertFocusableRegion(name: string) {
   expect(region.querySelector("table")).not.toBeNull();
   expect(region.className).toContain("overflow-x-auto");
   expect(region.className).toMatch(/focus-visible:/);
+  // The light-theme ring needs 3:1 against the near-white card (WCAG 1.4.11):
+  // slate-600 is about 7.6:1 there, slate-400 only about 2.5:1.
+  expect(region.className).toContain("focus-visible:outline-slate-600");
 }
 
 beforeEach(() => {
