@@ -28,7 +28,8 @@ trap 'rm -rf "${SCRATCH}"' EXIT
 #   STUB_HISTORY     present | absent | error: answers of the two db execute
 #                    probes (error: both fail, as on a connection error)
 #   STUB_EMPTY_RC    exit of `migrate diff --from-empty` (0 empty, 2 not, 1 error)
-#   STUB_EQUAL_RC    exit of the equality diff (0 equal, 2 differs, 1 error)
+#   STUB_EQUAL_RC    exit of the diff against the frozen prisma/baseline.prisma
+#                    (0 equal, 2 differs, 1 error)
 #   STUB_RESOLVE_RC  exit of `migrate resolve` (default 0)
 #   STUB_DEPLOY_RC   exit of `migrate deploy` (default 0)
 # Any other command line is logged as "unexpected" and exits 95.
@@ -58,7 +59,7 @@ case "${args}" in
     [ "${STUB_EMPTY_RC:-x}" = 2 ] && echo "[+] Added tables"
     [ "${STUB_EMPTY_RC:-x}" = 1 ] && echo "Error: P1001 Can't reach database server" >&2
     exit "${STUB_EMPTY_RC:-94}" ;;
-  "migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --exit-code")
+  "migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/baseline.prisma --exit-code")
     log "diff-equal"
     [ "${STUB_EQUAL_RC:-x}" = 2 ] && printf '%s\n' '[*] Changed the `User` table' '  [-] Removed column `legacyNote`'
     [ "${STUB_EQUAL_RC:-x}" = 1 ] && echo "Error: P1001 Can't reach database server" >&2
@@ -157,7 +158,7 @@ scenarios() {
   STUB_HISTORY=absent STUB_EMPTY_RC=2 STUB_EQUAL_RC=2 run_entrypoint
   expect "no history, not empty, schema differs: abort, no resolve, no deploy, no server" nonzero \
     "probe-present probe-absent diff-empty diff-equal" \
-    "differs from prisma/schema.prisma" 'Removed column `legacyNote`' "scripts/backup.sh" \
+    "differs from the baseline schema prisma/baseline.prisma" "not with the current prisma/schema.prisma" 'Removed column `legacyNote`' "scripts/backup.sh" \
     'DEPLOYMENT.md, "Database migrations"' "migrate resolve --applied ${BASELINE}" "Do not run prisma db push" "${NOT_STARTED}"
 
   # --- errors while checking --------------------------------------------------
@@ -175,11 +176,11 @@ scenarios() {
 
   STUB_HISTORY=absent STUB_EMPTY_RC=2 STUB_EQUAL_RC=1 run_entrypoint
   expect "equality check errors: abort, no resolve" nonzero "probe-present probe-absent diff-empty diff-equal" \
-    "could not compare the database with prisma/schema.prisma" "P1001" "${NOT_STARTED}"
+    "could not compare the database with prisma/baseline.prisma" "P1001" "${NOT_STARTED}"
 
   STUB_HISTORY=absent STUB_EMPTY_RC=2 STUB_EQUAL_RC=3 run_entrypoint
   expect "equality check returns an unknown code: abort, no resolve" nonzero "probe-present probe-absent diff-empty diff-equal" \
-    "could not compare the database with prisma/schema.prisma (prisma migrate diff exit 3" "${NOT_STARTED}"
+    "could not compare the database with prisma/baseline.prisma (prisma migrate diff exit 3" "${NOT_STARTED}"
 
   STUB_HISTORY=absent STUB_EMPTY_RC=2 STUB_EQUAL_RC=0 STUB_RESOLVE_RC=1 run_entrypoint
   expect "resolve fails: abort, no deploy" nonzero "probe-present probe-absent diff-empty diff-equal resolve:${BASELINE}" \
@@ -238,6 +239,27 @@ scenarios() {
   STUB_HISTORY=present run_in "${plain}" scripts/migrate.sh
   export PRISMA_CLI="${STUB_DIR}/prisma"
   expect "PRISMA_CLI unset, no local CLI: abort (no npx download)" nonzero "" "could not tell whether the database has a migration history"
+
+  # --- prisma/baseline.prisma missing: refuse before the comparison ----------
+  # The scratch copy has the script and no prisma/baseline.prisma. A database
+  # from before migrations stops after the emptiness check: no comparison, no
+  # resolve, no deploy.
+  STUB_HISTORY=absent STUB_EMPTY_RC=2 STUB_EQUAL_RC=0 run_in "${plain}" scripts/migrate.sh
+  expect "baseline.prisma missing, database with tables and no history: abort before the comparison" nonzero \
+    "probe-present probe-absent diff-empty" "prisma/baseline.prisma is missing" "Nothing was changed"
+  # The same scratch copy with the file present takes the normal path, so the
+  # case above is about the file and not about the scratch layout.
+  mkdir -p "${plain}/prisma"
+  : > "${plain}/prisma/baseline.prisma"
+  STUB_HISTORY=absent STUB_EMPTY_RC=2 STUB_EQUAL_RC=0 run_in "${plain}" scripts/migrate.sh
+  expect "baseline.prisma present in the same scratch copy: resolve the baseline, then deploy" 0 \
+    "probe-present probe-absent diff-empty diff-equal resolve:${BASELINE} deploy"
+  rm -rf "${plain}/prisma"
+  # The file is read only on the branch that compares: other states need no file.
+  STUB_HISTORY=present run_in "${plain}" scripts/migrate.sh
+  expect "baseline.prisma missing, history present: deploy only" 0 "probe-present deploy"
+  STUB_HISTORY=absent STUB_EMPTY_RC=0 run_in "${plain}" scripts/migrate.sh
+  expect "baseline.prisma missing, empty database: deploy only" 0 "probe-present probe-absent diff-empty deploy"
 }
 
 for CUR_SHELL in "${SHELLS[@]}"; do
@@ -261,6 +283,37 @@ if awk '/^FROM .* AS runtime/{r=1} r && /^COPY scripts \.\/scripts$/{f=1} END{ex
   ok "the runtime image copies backend/scripts (the entrypoint runs scripts/migrate.sh)"
 else
   bad "backend/Dockerfile's runtime stage does not COPY scripts ./scripts"
+fi
+
+# The runtime image copies prisma/ whole, so prisma/baseline.prisma is in the
+# image the entrypoint runs migrate.sh from. A narrower COPY would leave the
+# file out and every database from before migrations would be refused.
+if awk '/^FROM .* AS runtime/{r=1} r && /^COPY prisma \.\/prisma$/{f=1} END{exit !f}' "${BACKEND}/Dockerfile"; then
+  ok "the runtime image copies backend/prisma whole (prisma/baseline.prisma ships with migrate.sh)"
+else
+  bad "backend/Dockerfile's runtime stage does not COPY prisma ./prisma, so prisma/baseline.prisma would be missing from the image"
+fi
+if [ -s "${BACKEND}/prisma/baseline.prisma" ]; then
+  ok "backend/prisma/baseline.prisma exists"
+else
+  bad "backend/prisma/baseline.prisma is missing or empty"
+fi
+
+# baseline.prisma reproduces the baseline migration's SQL. `prisma migrate
+# diff --from-empty --script` needs the CLI from node_modules (npm ci in
+# backend/) but no database. Prisma adds a leading `CREATE SCHEMA IF NOT EXISTS
+# "public"` block (three lines) and a trailing blank line that the committed
+# migration omits (see CHANGELOG.md); both are cut, nothing else.
+if [ -x "${BACKEND}/node_modules/.bin/prisma" ]; then
+  generated="${SCRATCH}/baseline-from-schema.sql"
+  if (cd "${BACKEND}" && node_modules/.bin/prisma migrate diff --from-empty --to-schema-datamodel prisma/baseline.prisma --script 2>/dev/null) | sed '1,3d;$d' > "${generated}" \
+    && cmp -s "${generated}" "${BACKEND}/prisma/migrations/${BASELINE}/migration.sql"; then
+    ok "baseline.prisma produces ${BASELINE}/migration.sql byte for byte"
+  else
+    bad "baseline.prisma no longer produces ${BASELINE}/migration.sql byte for byte (the frozen file drifted)"
+  fi
+else
+  echo "skip - baseline.prisma vs ${BASELINE}/migration.sql: backend/node_modules/.bin/prisma not installed (the CI job Backend runs this check)"
 fi
 
 echo
