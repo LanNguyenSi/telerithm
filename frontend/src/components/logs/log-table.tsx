@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { PaginationControls } from "@/components/ui/pagination-controls";
+import { useOverflowTabindex } from "@/components/ui/use-overflow-tabindex";
 import { decodeHtml, formatDate, levelTone } from "@/lib/utils/format";
 import type { LogEntry } from "@/types";
 
@@ -31,6 +32,11 @@ export function LogTable({
   onSelectLog?: (log: LogEntry) => void;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // The scroll region only earns a tab stop while the table is wider than the
+  // box; re-measure when the extra columns or the rows change.
+  const { ref: regionRef, tabIndex } = useOverflowTabindex(
+    `${extraColumns.join(",")}#${logs.map((log) => log.id).join(",")}`,
+  );
 
   function toggle(id: string) {
     setExpanded((prev) => {
@@ -47,9 +53,10 @@ export function LogTable({
       <div className="hidden md:block">
         <Card className="overflow-hidden p-0">
           <div
+            ref={regionRef}
             role="region"
             aria-label="Logs table"
-            tabIndex={0}
+            tabIndex={tabIndex}
             className="overflow-x-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-400"
           >
             <table className="min-w-full text-left text-sm">
