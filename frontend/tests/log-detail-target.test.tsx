@@ -35,7 +35,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("LogDetailScreen — filter link target size (WCAG 2.5.8)", () => {
+describe("LogDetailScreen: filter link target size (WCAG 2.5.8)", () => {
   it("gives the filter link min-h-6 and min-w-6 sizing classes", async () => {
     mocks.getLogById.mockResolvedValue({ log });
     mocks.getLogContext.mockResolvedValue({ before: [], after: [] });

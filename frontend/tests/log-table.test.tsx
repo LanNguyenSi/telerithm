@@ -108,7 +108,7 @@ describe("LogTable — empty state", () => {
   });
 });
 
-describe("LogTable — details button target size (WCAG 2.5.8)", () => {
+describe("LogTable: details button target size (WCAG 2.5.8)", () => {
   it("gives every details button min-h-6 and min-w-6 sizing classes", () => {
     render(<LogTable logs={[makeLog()]} />);
     const buttons = screen.getAllByRole("button", { name: "details" });

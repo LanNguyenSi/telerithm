@@ -37,7 +37,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("UserTable — Remove is a 24x24 target (WCAG 2.5.8)", () => {
+describe("UserTable: Remove is a 24x24 target (WCAG 2.5.8)", () => {
   it("gives the Remove button min-h-6 and min-w-6 sizing classes", () => {
     renderTable();
     const button = screen.getByRole("button", { name: "Remove" });
@@ -46,7 +46,7 @@ describe("UserTable — Remove is a 24x24 target (WCAG 2.5.8)", () => {
   });
 });
 
-describe("UserTable — removing a team member asks for confirmation first", () => {
+describe("UserTable: removing a team member asks for confirmation first", () => {
   it("opens a confirm dialog naming the user and the team instead of removing directly", async () => {
     renderTable();
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
