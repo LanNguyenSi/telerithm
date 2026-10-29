@@ -161,7 +161,7 @@ interface SidebarProps {
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const drawerRef = useRef<HTMLElement>(null);
+  const drawerRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const skipFocusReturnRef = useRef(false);
   const closeDrawer = useCallback(() => setMobileOpen(false), []);
@@ -274,7 +274,7 @@ export function Sidebar({ user }: SidebarProps) {
       {mobileOpen && (
         <>
           <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setMobileOpen(false)} />
-          <aside
+          <div
             id="mobile-nav-drawer"
             ref={drawerRef}
             role="dialog"
@@ -284,7 +284,7 @@ export function Sidebar({ user }: SidebarProps) {
             className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col bg-[#0f1419] shadow-2xl lg:hidden"
           >
             {navContent}
-          </aside>
+          </div>
         </>
       )}
     </>
