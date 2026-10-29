@@ -109,6 +109,11 @@ for target in deploy deploy-backend deploy-frontend; do
     ok "${target}: clean tree deploys (pull, build, up)"
   else bad "${target}: clean tree rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
 
+  # the image build fetches newer base images and skips the cache
+  if grep -q "^docker compose .* build --pull --no-cache" "${CALL_LOG}"; then
+    ok "${target}: builds with --pull --no-cache"
+  else bad "${target}: build line lacks --pull --no-cache: $(cat "${CALL_LOG}")"; fi
+
   # untracked files (such as .env.production, or a stray file) do not block
   reset_repo
   echo stray > "${REPO}/stray.txt"

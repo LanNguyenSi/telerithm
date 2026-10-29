@@ -77,19 +77,19 @@ require-clean-tree:
 
 deploy: require-clean-tree
 	git pull --rebase origin master
-	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --no-cache
+	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --pull --no-cache
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) up -d --force-recreate
 	@echo "✅ Deployed. Check https://demo.telerithm.cloud"
 
 deploy-backend: require-clean-tree
 	git pull --rebase origin master
-	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --no-cache backend
+	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --pull --no-cache backend
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) up -d --no-deps --force-recreate backend
 	@echo "✅ Backend deployed"
 
 deploy-frontend: require-clean-tree
 	git pull --rebase origin master
-	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --no-cache frontend
+	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --pull --no-cache frontend
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) up -d --no-deps --force-recreate frontend
 	@echo "✅ Frontend deployed"
 

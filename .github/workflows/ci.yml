@@ -278,6 +278,24 @@ jobs:
       - name: Shellcheck
         run: shellcheck --severity=warning scripts/*.sh backend/entrypoint.sh backend/scripts/*.sh
 
+  shell-tests:
+    name: Shell script tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # backup.sh against a stub docker: success path, wrong or stopped stack,
+      # failed dumps, same-second collision, mkdir failures, CDPATH, the
+      # off-host hook. Needs only bash and gzip.
+      - name: Backup script tests
+        run: bash scripts/backup.test.sh
+
+      # The deploy targets of the Makefile in a scratch git repository with a
+      # stub docker and git: refusals on a dirty tree, and the build flags.
+      - name: Make deploy tests
+        run: bash scripts/make-deploy.test.sh
+
   clickhouse-config:
     name: ClickHouse config
     runs-on: ubuntu-latest
