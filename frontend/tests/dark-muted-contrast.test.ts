@@ -92,6 +92,7 @@ describe("dark theme muted text contrast (WCAG 1.4.3)", () => {
   });
 
   it("rejects the muted value that this pin was written for", () => {
+    // Calibration self-check: compares only constants, so it guards the threshold, not the CSS.
     // 3.53:1 and 4.10:1: AA large text, AA body text no. The boundary that makes
     // the threshold above meaningful, and the reason 4.5 cannot be lowered.
     expect(contrastRatio(MUTED_BEFORE_THE_BUMP, ADMIN_TEAM_CHIP)).toBeLessThan(AA_BODY_TEXT);

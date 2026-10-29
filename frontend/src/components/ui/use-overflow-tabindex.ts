@@ -13,9 +13,14 @@ import { useCallback, useEffect, useState } from "react";
  *
  * Measurement: once when the node is attached, again whenever `reviewKey`
  * changes (extra columns or a different page of rows widen the table without
- * resizing the region, which ResizeObserver alone would not notice), and again
- * on every resize of the region itself. `reviewKey` is a string the caller
- * rebuilds from the content that could change the width.
+ * resizing the region), and again on every resize of the region or of the
+ * content inside it: the same observer watches `region.firstElementChild`, so
+ * the table growing under an unresized region (refetched cell content, a
+ * webfont swap, expanded rows) re-measures too. `reviewKey` is a string the
+ * caller rebuilds from the content that could change the width.
+ *
+ * Accepted behaviour: a focused region that stops overflowing loses its tab
+ * stop, so focus falls back to the body.
  *
  * Where `ResizeObserver` is missing (older browsers, some test environments)
  * the initial measure plus `reviewKey` are all the measurement there is, and
@@ -46,6 +51,8 @@ export function useOverflowTabindex(reviewKey?: string): {
 
     const observer = new ResizeObserver(measure);
     observer.observe(region);
+    const content = region.firstElementChild;
+    if (content) observer.observe(content);
 
     return () => {
       observer.disconnect();

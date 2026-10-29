@@ -96,14 +96,15 @@ class ResizeObserverStub {
     this.disconnected = true;
   }
 
-  resize() {
-    this.callback([], this as unknown as ResizeObserver);
+  resize(target?: Element) {
+    const entries = target ? ([{ target }] as ResizeObserverEntry[]) : [];
+    this.callback(entries, this as unknown as ResizeObserver);
   }
 }
 
 function observerFor(node: Element): ResizeObserverStub {
   const observer = ResizeObserverStub.instances.find((instance) => instance.targets.includes(node));
-  if (!observer) throw new Error("no ResizeObserver is watching the region");
+  if (!observer) throw new Error("no ResizeObserver is watching this element");
   return observer;
 }
 
@@ -255,6 +256,25 @@ describe("re-measure when the content changes", () => {
     const open = ResizeObserverStub.instances.filter((instance) => !instance.disconnected);
     expect(open).toHaveLength(1);
     expect(open[0].targets.includes(region)).toBe(true);
+  });
+
+  it("adds the tab stop when only the table inside the region resizes", async () => {
+    stubLayout(800, 800);
+    render(<LogTable logs={[log]} />);
+    const region = await screen.findByRole("region", { name: "Logs table" });
+    expect(region).not.toHaveAttribute("tabindex");
+
+    // The observer watches the region and its first child (the table), so the
+    // table growing under an unresized region (refetched cell content, a
+    // webfont swap) re-measures without a region resize or a review-key change.
+    const table = region.firstElementChild as Element;
+    expect(observerFor(table).targets).toContain(table);
+
+    stubElementLayout(region, 1200, 800);
+    await act(async () => {
+      observerFor(table).resize(table);
+    });
+    expect(region).toHaveAttribute("tabindex", "0");
   });
 });
 
