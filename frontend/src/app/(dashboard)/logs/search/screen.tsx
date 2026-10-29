@@ -405,6 +405,8 @@ export function SearchScreen() {
 
   return (
     <div className="space-y-4 lg:space-y-6">
+      <h1 className="text-lg font-semibold text-ink sm:text-xl">Log Search</h1>
+
       {savedViewsLoading ? null : (
         <SavedViewBar
           views={savedViews}

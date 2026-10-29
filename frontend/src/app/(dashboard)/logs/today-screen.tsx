@@ -71,6 +71,8 @@ export function TodayScreen() {
 
   return (
     <div className="space-y-4">
+      <h1 className="text-lg font-semibold text-ink sm:text-xl">Logs</h1>
+
       <LiveTail teamId={team.id} token={token} />
 
       <Card>

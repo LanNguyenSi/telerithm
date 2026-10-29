@@ -15,6 +15,7 @@ export default async function SettingsPage() {
 
   return (
     <div className="space-y-4 lg:space-y-6">
+      <h1 className="text-lg font-semibold text-ink sm:text-xl">Settings</h1>
       <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr] lg:gap-6">
         <Card>
         <h2 className="text-lg font-semibold text-ink">Workspace</h2>

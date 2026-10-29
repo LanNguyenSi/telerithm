@@ -28,7 +28,7 @@ export function FacetSidebar({
   return (
     <Card className="h-fit p-4">
       <div className="mb-3">
-        <p className="text-xs uppercase tracking-[0.16em] text-muted">Facets</p>
+        <h2 className="text-xs uppercase tracking-[0.16em] text-muted">Facets</h2>
       </div>
       {loading ? (
         <p className="text-xs text-muted">Loading facet counts...</p>

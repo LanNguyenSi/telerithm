@@ -15,6 +15,7 @@ export default async function HomePage() {
 
   return (
     <>
+      <h1 className="mb-4 text-lg font-semibold text-ink sm:text-xl lg:mb-6">Overview</h1>
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-6">
         <MetricCard
           label="Total Logs"

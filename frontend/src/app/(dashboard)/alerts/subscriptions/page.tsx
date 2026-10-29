@@ -24,7 +24,7 @@ export default async function SubscriptionsPage() {
   return (
     <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
       <Card>
-        <h2 className="text-lg font-semibold text-ink">My Subscriptions</h2>
+        <h1 className="text-lg font-semibold text-ink">My Subscriptions</h1>
         <div className="mt-4 space-y-3">
           {subscriptions.map((sub) => (
             <article
