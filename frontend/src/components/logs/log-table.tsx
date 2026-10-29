@@ -120,7 +120,7 @@ export function LogTable({
                               event.stopPropagation();
                               onSelectLog?.(log);
                             }}
-                            className="rounded-sm border border-line px-1.5 py-0.5 text-[10px] text-muted transition hover:text-ink"
+                            className="inline-flex min-h-6 min-w-6 items-center justify-center rounded-sm border border-line px-1.5 py-0.5 text-[10px] text-muted transition hover:text-ink"
                           >
                             details
                           </button>
@@ -185,7 +185,7 @@ export function LogTable({
                 <button
                   type="button"
                   onClick={() => onSelectLog?.(log)}
-                  className="rounded-sm border border-line px-1.5 py-0.5 text-[10px] text-muted transition hover:text-ink"
+                  className="inline-flex min-h-6 min-w-6 items-center justify-center rounded-sm border border-line px-1.5 py-0.5 text-[10px] text-muted transition hover:text-ink"
                 >
                   details
                 </button>

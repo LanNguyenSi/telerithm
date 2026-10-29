@@ -201,4 +201,13 @@ describe("AlertRulesPanel", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("Alert rule not found");
     expect(mocks.refresh).not.toHaveBeenCalled();
   });
+
+  it("makes the Enabled control a 24px-tall target (WCAG 2.5.8)", () => {
+    renderPanel("MEMBER");
+    const checkbox = screen.getByRole("checkbox", { name: /Enabled: Timeouts/ });
+    const label = checkbox.closest("label");
+    expect(label).not.toBeNull();
+    expect((label as HTMLLabelElement).className).toContain("min-h-6");
+    expect(checkbox.className).toContain("size-4");
+  });
 });
