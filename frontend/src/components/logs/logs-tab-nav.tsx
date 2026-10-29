@@ -12,11 +12,12 @@ export function LogsTabNav() {
   const pathname = usePathname();
   const router = useRouter();
 
-  // On detail pages (/logs/<id>) show back button instead of tabs
+  // On detail pages (/logs/<id>) the single control is a back action, not a
+  // set of links, so it is not a navigation landmark.
   const isDetail = pathname.startsWith("/logs/") && pathname !== "/logs/search";
   if (isDetail) {
     return (
-      <nav className="mb-4">
+      <div className="mb-4">
         <button
           type="button"
           onClick={() => router.back()}
@@ -27,12 +28,12 @@ export function LogsTabNav() {
           </svg>
           Back
         </button>
-      </nav>
+      </div>
     );
   }
 
   return (
-    <nav className="mb-4 flex gap-1 border-b border-line">
+    <nav aria-label="Logs sections" className="mb-4 flex gap-1 border-b border-line">
       {tabs.map((tab) => {
         const active = tab.href === "/logs" ? pathname === "/logs" : pathname.startsWith(tab.href);
         return (

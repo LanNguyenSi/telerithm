@@ -92,6 +92,8 @@ export function LogDetailScreen({
 
   return (
     <div className="space-y-4">
+      <h1 className="text-lg font-semibold text-ink sm:text-xl">Log Detail</h1>
+
       {/* Header */}
       <Card className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 font-mono text-xs">

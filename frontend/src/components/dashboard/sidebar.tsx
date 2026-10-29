@@ -202,7 +202,7 @@ export function Sidebar({ user }: SidebarProps) {
       </div>
 
       {/* Nav items */}
-      <nav className="mt-2 flex-1 space-y-0.5 px-2">
+      <nav aria-label="Main" className="mt-2 flex-1 space-y-0.5 px-2">
         {navigation.map((item) => {
           const active = isActive(pathname, item.href);
           return (

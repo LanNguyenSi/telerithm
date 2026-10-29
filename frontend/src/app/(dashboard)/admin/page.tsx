@@ -20,7 +20,7 @@ export default async function AdminPage() {
         <Card>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-muted">Admin</p>
+              <h1 className="text-xs uppercase tracking-[0.2em] text-muted">Admin</h1>
               <h2 className="mt-1 text-lg font-semibold text-ink">User management</h2>
             </div>
             <p className="text-sm text-muted">

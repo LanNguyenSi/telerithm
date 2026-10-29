@@ -19,7 +19,7 @@ export default async function AlertsPage() {
   return (
     <>
       <div className="mb-4 flex items-center justify-between lg:mb-6">
-        <h2 className="text-lg font-semibold text-ink sm:text-xl">Alerts</h2>
+        <h1 className="text-lg font-semibold text-ink sm:text-xl">Alerts</h1>
         <Link
           href="/alerts/subscriptions"
           className="rounded-lg border border-line bg-white/80 px-3 py-1.5 text-sm text-ink transition hover:border-slate-400 dark:bg-white/5"

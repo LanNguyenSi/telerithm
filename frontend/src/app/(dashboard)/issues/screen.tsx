@@ -205,7 +205,7 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
         <div className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-muted">Issues</p>
+              <h1 className="text-xs uppercase tracking-[0.2em] text-muted">Issues</h1>
               <h2 className="mt-1 text-lg font-semibold text-ink">Grouped errors and regressions</h2>
             </div>
             <p className="text-sm text-muted">{total} total</p>
@@ -320,7 +320,12 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
         </Card>
       ) : (
         <Card>
-          <div className="hidden overflow-x-auto md:block">
+          <div
+            role="region"
+            aria-label="Issues table"
+            tabIndex={0}
+            className="hidden overflow-x-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-400 md:block"
+          >
             <table className="w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-line text-[11px] uppercase tracking-[0.14em] text-muted">

@@ -8,7 +8,7 @@ export function LoginForm({ registrationMode }: { registrationMode: "open" | "in
   const [state, action, pending] = useActionState(loginAction, null);
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-paper">
+    <main className="flex min-h-screen items-center justify-center bg-paper">
       <div className="w-full max-w-sm space-y-6 px-6">
         <div>
           <p className="font-mono text-xs uppercase tracking-[0.4em] text-muted">Telerithm</p>
@@ -69,6 +69,6 @@ export function LoginForm({ registrationMode }: { registrationMode: "open" | "in
           </p>
         )}
       </div>
-    </div>
+    </main>
   );
 }
