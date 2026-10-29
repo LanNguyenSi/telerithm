@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { logoutAction } from "@/lib/auth/actions";
+import { useDrawerA11y } from "./use-drawer-a11y";
 import type { SessionUser } from "@/types";
 
 const baseNavigation = [
@@ -160,6 +161,37 @@ interface SidebarProps {
 export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const skipFocusReturnRef = useRef(false);
+  const closeDrawer = useCallback(() => setMobileOpen(false), []);
+  // Choosing a link closes the drawer too; the navigation then decides where
+  // focus goes, so focus is not sent back to the toggle in that case.
+  const closeForNavigation = useCallback(() => {
+    skipFocusReturnRef.current = true;
+    setMobileOpen(false);
+  }, []);
+  useDrawerA11y({
+    open: mobileOpen,
+    onClose: closeDrawer,
+    containerRef: drawerRef,
+    returnFocusRef: toggleRef,
+    skipFocusReturnRef,
+  });
+
+  // The drawer is mobile-only (lg:hidden). If the viewport grows to the
+  // desktop layout while it is open, close it so no trap stays active behind
+  // a hidden element.
+  useEffect(() => {
+    if (!mobileOpen || typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia("(min-width: 1024px)");
+    const onChange = (e: MediaQueryListEvent) => {
+      if (e.matches) closeForNavigation();
+    };
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, [mobileOpen, closeForNavigation]);
+
   const navigation = user?.role === "ADMIN" ? [...baseNavigation, adminItem] : [...baseNavigation];
 
   const navContent = (
@@ -177,7 +209,7 @@ export function Sidebar({ user }: SidebarProps) {
             <Link
               key={item.href}
               href={item.href}
-              onClick={() => setMobileOpen(false)}
+              onClick={closeForNavigation}
               className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition ${
                 active
                   ? "bg-white/10 text-white"
@@ -196,7 +228,7 @@ export function Sidebar({ user }: SidebarProps) {
       {/* User menu */}
       <div className="border-t border-white/6 px-2 pb-3 pt-2">
         {user ? (
-          <UserMenu user={user} onNavigate={() => setMobileOpen(false)} />
+          <UserMenu user={user} onNavigate={closeForNavigation} />
         ) : (
           <div className="px-2 py-2 text-[12px] text-slate-500">Not signed in</div>
         )}
@@ -216,8 +248,11 @@ export function Sidebar({ user }: SidebarProps) {
         <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-slate-400">Telerithm</p>
         <button
           type="button"
+          ref={toggleRef}
           onClick={() => setMobileOpen((v) => !v)}
           aria-label="Toggle navigation"
+          aria-expanded={mobileOpen}
+          aria-controls="mobile-nav-drawer"
           className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:text-white"
         >
           {mobileOpen ? (
@@ -239,9 +274,17 @@ export function Sidebar({ user }: SidebarProps) {
       {mobileOpen && (
         <>
           <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setMobileOpen(false)} />
-          <aside className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col bg-[#0f1419] shadow-2xl lg:hidden">
+          <div
+            id="mobile-nav-drawer"
+            ref={drawerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Navigation menu"
+            tabIndex={-1}
+            className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col bg-[#0f1419] shadow-2xl lg:hidden"
+          >
             {navContent}
-          </aside>
+          </div>
         </>
       )}
     </>
