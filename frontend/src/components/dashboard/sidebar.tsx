@@ -163,6 +163,8 @@ export function Sidebar({ user }: SidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const asideRef = useRef<HTMLElement>(null);
+  const topBarRef = useRef<HTMLDivElement>(null);
   const skipFocusReturnRef = useRef(false);
   const closeDrawer = useCallback(() => setMobileOpen(false), []);
   // Choosing a link closes the drawer too; the navigation then decides where
@@ -177,6 +179,12 @@ export function Sidebar({ user }: SidebarProps) {
     containerRef: drawerRef,
     returnFocusRef: toggleRef,
     skipFocusReturnRef,
+    // The page content is a sibling rendered by AppShell, found by its marker.
+    getInertTargets: () => [
+      asideRef.current,
+      topBarRef.current,
+      document.querySelector<HTMLElement>("[data-app-content]"),
+    ],
   });
 
   // The drawer is mobile-only (lg:hidden). If the viewport grows to the
@@ -239,12 +247,12 @@ export function Sidebar({ user }: SidebarProps) {
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-52 flex-col border-r border-white/6 bg-[#0f1419] lg:flex">
+      <aside ref={asideRef} className="fixed inset-y-0 left-0 z-40 hidden w-52 flex-col border-r border-white/6 bg-[#0f1419] lg:flex">
         {navContent}
       </aside>
 
       {/* Mobile top bar */}
-      <div className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-line bg-[#0f1419] px-4 lg:hidden">
+      <div ref={topBarRef} className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-line bg-[#0f1419] px-4 lg:hidden">
         <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-slate-400">Telerithm</p>
         <button
           type="button"

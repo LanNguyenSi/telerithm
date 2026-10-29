@@ -22,13 +22,21 @@ interface DrawerA11yOptions {
    * navigation decides where focus goes.
    */
   skipFocusReturnRef: RefObject<boolean>;
+  /**
+   * Returns the elements that sit outside the drawer and its overlay (top bar,
+   * desktop sidebar, page content). They carry `inert` while the drawer is open,
+   * so neither keyboard focus nor assistive technology reaches them. Missing
+   * entries (null) are skipped. Read when the drawer opens.
+   */
+  getInertTargets?: () => ReadonlyArray<HTMLElement | null>;
 }
 
 /**
  * Keyboard and focus behaviour of a modal drawer: focus moves into the drawer
  * when it opens, Tab and Shift+Tab wrap inside it, Escape closes it, and focus
- * goes back to the opening control when it closes. The effect only runs while
- * `open` is true, so a closed drawer leaves no listener behind.
+ * goes back to the opening control when it closes. The page behind the drawer
+ * is made `inert` while it is open. The effect only runs while `open` is true,
+ * so a closed drawer leaves no listener behind.
  */
 export function useDrawerA11y({
   open,
@@ -36,14 +44,27 @@ export function useDrawerA11y({
   containerRef,
   returnFocusRef,
   skipFocusReturnRef,
+  getInertTargets,
 }: DrawerA11yOptions) {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const getInertTargetsRef = useRef(getInertTargets);
+  getInertTargetsRef.current = getInertTargets;
 
   useEffect(() => {
     if (!open) return;
     const container = containerRef.current;
     if (!container) return;
+
+    // Only elements that were not inert already are marked, so only those are
+    // released again on close.
+    const madeInert: HTMLElement[] = [];
+    for (const el of getInertTargetsRef.current?.() ?? []) {
+      if (el && !el.hasAttribute("inert")) {
+        el.setAttribute("inert", "");
+        madeInert.push(el);
+      }
+    }
 
     // Runs after React committed the drawer, so the target exists in the DOM.
     (focusableIn(container)[0] ?? container).focus();
@@ -79,6 +100,8 @@ export function useDrawerA11y({
     document.addEventListener("keydown", handleKey);
     return () => {
       document.removeEventListener("keydown", handleKey);
+      // Before focus goes back: an inert element (the toggle) cannot take focus.
+      for (const el of madeInert) el.removeAttribute("inert");
       if (skipFocusReturnRef.current) {
         skipFocusReturnRef.current = false;
       } else {
