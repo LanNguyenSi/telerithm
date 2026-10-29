@@ -493,8 +493,27 @@ export async function createSubscription(
   });
 }
 
+/** Partial update: only the keys present change. `enabled` switches delivery off and on. */
+export async function updateSubscription(
+  id: string,
+  token: string,
+  data: { channel?: string; config?: Record<string, unknown>; severities?: string[]; enabled?: boolean },
+) {
+  return authedRequest<{ subscription: AlertSubscription }>(`/subscriptions/${encodeURIComponent(id)}`, token, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
 export async function deleteSubscription(id: string, token: string) {
   return authedRequest<void>(`/subscriptions/${id}`, token, { method: "DELETE" });
+}
+
+/** Sends a synthetic notification to the caller's own subscription (rate limited by the API). */
+export async function testSubscription(id: string, token: string) {
+  return authedRequest<{ ok: boolean; message: string }>(`/subscriptions/${encodeURIComponent(id)}/test`, token, {
+    method: "POST",
+  });
 }
 
 export async function getIssues(
