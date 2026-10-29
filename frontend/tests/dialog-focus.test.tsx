@@ -132,15 +132,34 @@ describe("Dialog focus restore on close", () => {
     expect(document.activeElement).toBe(opener);
   });
 
-  it("skips the restore when the opener left the document, without throwing", async () => {
+  it("skips the restore when the opener left the document while the dialog was open", () => {
+    const tree = (withOpener: boolean, open: boolean) => (
+      <div>
+        {withOpener ? <button type="button">Opener</button> : null}
+        <Dialog open={open} variant="confirm" title="Sure?" onClose={vi.fn()} onConfirm={vi.fn()} />
+      </div>
+    );
+    const { rerender } = render(tree(true, false));
+    const opener = screen.getByRole("button", { name: "Opener" });
+    opener.focus();
+    rerender(tree(true, true));
+    const focusSpy = vi.spyOn(opener, "focus");
+    rerender(tree(false, true));
+    expect(opener.isConnected).toBe(false);
+    rerender(tree(false, false));
+    expect(dialogEl()).toBeNull();
+    expect(focusSpy).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("restores focus before the opener is removed after Confirm", async () => {
     render(<ConfirmHarness removeOpenerOnConfirm />);
     const opener = openFrom("Remove");
     await screen.findByRole("dialog");
     fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
     await act(async () => {});
-    expect(opener.isConnected).toBe(false);
     expect(dialogEl()).toBeNull();
-    expect(document.activeElement).not.toBe(opener);
+    expect(opener.isConnected).toBe(false);
     expect(document.activeElement).toBe(document.body);
   });
 
