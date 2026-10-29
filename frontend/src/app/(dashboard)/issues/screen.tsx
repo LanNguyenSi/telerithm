@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { PaginationControls } from "@/components/ui/pagination-controls";
 import { Select } from "@/components/ui/select";
 import { SkeletonTable } from "@/components/ui/skeleton";
+import { useOverflowTabindex } from "@/components/ui/use-overflow-tabindex";
 import { getIssues } from "@/lib/api/client";
 import { formatDate } from "@/lib/utils/format";
 import type { Issue, Team } from "@/types";
@@ -63,6 +64,9 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
   const [serviceInput, setServiceInput] = useState("");
   const [levelInput, setLevelInput] = useState("");
   const [sortInput, setSortInput] = useState(`${DEFAULT_SORT.sortBy}:${DEFAULT_SORT.sortDirection}`);
+  // The scroll region only earns a tab stop while the table is wider than the
+  // box; re-measure when the rows change (the columns here are fixed).
+  const { ref: regionRef, tabIndex } = useOverflowTabindex(issues.map((issue) => issue.id).join(","));
 
   const currentPage = Math.max(1, Number.parseInt(searchParams.get("page") ?? "1", 10) || 1);
   const rawPageSize =
@@ -321,9 +325,10 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
       ) : (
         <Card>
           <div
+            ref={regionRef}
             role="region"
             aria-label="Issues table"
-            tabIndex={0}
+            tabIndex={tabIndex}
             className="hidden overflow-x-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-slate-600 dark:focus-visible:outline-slate-400 md:block"
           >
             <table className="w-full text-left text-sm">
