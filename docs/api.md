@@ -1,6 +1,6 @@
 # API
 
-The OpenAPI 3 spec (`backend/src/api/openapi.ts`, served at `GET /openapi.json` and rendered at `GET /docs`) covers the health, auth, team, source, ingest, log search, saved-view, NLQ, alert-list, dashboard and streaming routes. Subscriptions, issues, maintenance windows, incident actions and the incident timeline, rule mute and unmute, invites, admin routes, `GET /auth/settings`, `POST /ingest/:sourceId/raw` and `GET /logs/:id` are not in the spec yet; this page lists them. It also covers rate limiting.
+The OpenAPI 3 spec (`backend/src/api/openapi.ts`, served at `GET /openapi.json` and rendered at `GET /docs`) covers the health, auth, team, source, ingest, log search, saved-view, NLQ, alert-rule and incident-list, dashboard and streaming routes. Subscriptions, issues, maintenance windows, incident actions and the incident timeline, rule mute and unmute, invites, admin routes, `GET /auth/settings`, `POST /ingest/:sourceId/raw` and `GET /logs/:id` are not in the spec yet; this page lists them. It also covers rate limiting.
 
 ## Endpoints
 

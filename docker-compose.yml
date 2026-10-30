@@ -87,6 +87,19 @@ services:
     environment:
       INTERNAL_API_BASE_URL: http://backend:4000/api/v1
       NEXT_PUBLIC_API_BASE_URL: http://localhost:4000/api/v1
+    # Same probe as the prod composes (the image has no curl or wget).
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/', {redirect: 'manual', signal: AbortSignal.timeout(5000)}).then(r => process.exit(r.status < 400 ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       - backend
     ports:
