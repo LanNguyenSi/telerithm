@@ -22,13 +22,15 @@
 #      `docker compose -f docker-compose.prod.yml up` on the production
 #      checkout cannot recreate the production containers
 #   5. every service of each prod compose has a bounded json-file log
-#      (max-size and max-file), memory and cpu limits and a healthcheck, and a
-#      service present in both composes has the same rendered logging block,
-#      the same limits and the same rendered healthcheck in both (the composes
-#      are mirrors, and nothing but this check tells when one drifts: the
-#      x-logging anchor, the per-service deploy blocks and the healthchecks are
-#      plain YAML that compose never compares). Services behind a compose
-#      profile are rendered and checked too (--profile '*').
+#      (max-size and max-file), memory and cpu limits and a healthcheck, the
+#      backend healthcheck of each probes http://127.0.0.1:4000/api/v1/health
+#      (localhost resolves to ::1 first and the backend listens on 0.0.0.0
+#      only), and a service present in both composes has the same rendered
+#      logging block, the same limits and the same rendered healthcheck in
+#      both (the composes are mirrors, and nothing but this check tells when
+#      one drifts: the x-logging anchor, the per-service deploy blocks and the
+#      healthchecks are plain YAML that compose never compares). Services
+#      behind a compose profile are rendered and checked too (--profile '*').
 #
 # Usage: scripts/clickhouse-config-guard.sh [repo-root]
 # Needs docker compose and python3. No .env is read: the compose variables get
@@ -38,7 +40,14 @@ set -euo pipefail
 root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 composes=(docker-compose.prod.yml docker-compose.traefik.yml)
 
-tmp="$(mktemp -d)"
+# A failed mktemp stops the guard before the cleanup trap exists: with an empty
+# tmp, the trap would delete the caller's directory (scripts/test-scratch-safety.test.sh).
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-clickhouse-guard.XXXXXX")" \
+  || { echo "clickhouse-config-guard: FAIL: mktemp failed" >&2; exit 1; }
+if [ -z "$tmp" ] || [ ! -d "$tmp" ]; then
+  echo "clickhouse-config-guard: FAIL: mktemp did not create a directory: '$tmp'" >&2
+  exit 1
+fi
 trap 'rm -rf "$tmp"' EXIT
 
 rendered=()
@@ -178,6 +187,14 @@ def has_healthcheck(service):
     return bool(check.get("test")) and not check.get("disable") and check.get("test") != ["NONE"]
 
 
+backend_probe_url = "http://127.0.0.1:4000/api/v1/health"
+
+
+def probe_text(service):
+    test = (service.get("healthcheck") or {}).get("test")
+    return " ".join(test) if isinstance(test, list) else str(test or "")
+
+
 for name, services in all_services.items():
     for svc, service in sorted(services.items()):
         if not log_bound(service):
@@ -187,6 +204,8 @@ for name, services in all_services.items():
                 fail(f"{name}: service {svc} has no deploy.resources.limits.{key}")
         if not has_healthcheck(service):
             fail(f"{name}: service {svc} has no healthcheck (Compose never restarts an unhealthy container, but docker compose ps and Traefik's docker provider read it)")
+        elif svc == "backend" and backend_probe_url not in probe_text(service):
+            fail(f"{name}: service backend healthcheck must probe {backend_probe_url}, not localhost (localhost resolves to ::1 first and the backend listens on 0.0.0.0 only): {probe_text(service)!r}")
 
 if len(all_services) == 2:
     (name_a, services_a), (name_b, services_b) = all_services.items()

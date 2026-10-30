@@ -2,7 +2,11 @@
 # Controls for scripts/clickhouse-config-guard.sh: the guard must pass on a copy
 # of the shipped files and must fail, with the message of its own branch, for
 # each mutation below. A bare non-zero exit is not enough (the guard would also
-# "fail" if it broke for another reason), so every case greps the message.
+# "fail" if it broke for another reason), so every case greps the message. The
+# last two cases are not mutations of the files but the two halves of the
+# guard's own fail-closed mktemp: the guard must exit 1 on the message of the
+# half that caught it, before its cleanup trap exists, and leave the directory
+# it started from alone.
 #
 # Usage: scripts/clickhouse-config-guard.test.sh
 set -euo pipefail
@@ -10,7 +14,15 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 guard="$repo/scripts/clickhouse-config-guard.sh"
 
-work="$(mktemp -d)"
+# A failed mktemp stops the run before the cleanup trap exists: with an empty
+# work, the trap would delete the caller's directory (the guard's own
+# test-scratch-safety coverage requires the fail-closed pattern).
+work="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-clickhouse-guard-test.XXXXXX")" \
+  || { echo "FATAL: mktemp failed" >&2; exit 2; }
+if [ -z "$work" ] || [ ! -d "$work" ]; then
+  echo "FATAL: mktemp did not create a directory: '$work'" >&2
+  exit 2
+fi
 trap 'rm -rf "$work"' EXIT
 
 failed=0
@@ -173,6 +185,8 @@ fe_limits_prod='          memory: 256M
           cpus: "0.5"
 
 volumes:'
+be_probe="fetch('http://127.0.0.1:4000/api/v1/health')"
+be_localhost="fetch('http://localhost:4000/api/v1/health')"
 
 fresh_copy
 replace docker-compose.prod.yml 'max-size: "10m"' 'max-size: "20m"'
@@ -260,6 +274,18 @@ replace docker-compose.traefik.yml '      start_period: 30s
     networks:'
 expect_fail "frontend start_period differs (traefik only)" "healthcheck of service frontend differs between docker-compose.prod.yml and docker-compose.traefik.yml"
 
+# The backend probe host: localhost resolves to ::1 first and the backend
+# listens on 0.0.0.0 only, so the probe must address 127.0.0.1. The second
+# case mutates both composes identically, so only the host check can catch it.
+fresh_copy
+replace docker-compose.prod.yml "$be_probe" "$be_localhost"
+expect_fail "backend probe host is localhost (prod)" "docker-compose.prod.yml: service backend healthcheck must probe http://127.0.0.1:4000/api/v1/health"
+
+fresh_copy
+replace docker-compose.prod.yml "$be_probe" "$be_localhost"
+replace docker-compose.traefik.yml "$be_probe" "$be_localhost"
+expect_fail "backend probe host is localhost in both composes" "docker-compose.traefik.yml: service backend healthcheck must probe http://127.0.0.1:4000/api/v1/health"
+
 # A service behind a compose profile is rendered only with --profile '*', so
 # without it this one would skip every per-service check.
 fresh_copy
@@ -273,5 +299,46 @@ volumes:
 volumes:
   pgdata:"
 expect_fail "unbounded service behind a profile (prod)" "docker-compose.prod.yml: service debugger has no bounded log"
+
+# The guard's own fail-closed mktemp: run the guard itself with TMPDIR set to a
+# directory that does not exist, started from a decoy directory holding a
+# canary. mktemp must fail before the cleanup trap exists, so the guard exits 1
+# with its mktemp message and the decoy (the checkout, in CI) is left alone.
+# Exit code and message are both checked: neutralising the `|| { ...; exit 1; }`
+# of the mktemp line leaves the empty-directory check reporting its own
+# message, and neutralising that check lets the run fall through to docker
+# compose with an empty path, so neither mutation may pass unnoticed.
+decoy="$work/decoy"
+mkdir -p "$decoy"
+touch "$decoy/canary.txt"
+rc=0
+out="$( ( cd "$decoy" && TMPDIR="$work/no-such-tmpdir" bash "$guard" "$repo" 2>&1 ) )" || rc=$?
+if [ "$rc" -eq 1 ] && grep -qF -- "clickhouse-config-guard: FAIL: mktemp failed" <<<"$out" \
+  && [ -d "$decoy" ] && [ -f "$decoy/canary.txt" ]; then
+  echo "ok   unusable TMPDIR: guard exits 1 with its mktemp message, decoy directory intact"
+else
+  echo "FAIL unusable TMPDIR: rc=$rc (want 1), decoy exists=$([ -d "$decoy" ] && echo yes || echo no), canary exists=$([ -f "$decoy/canary.txt" ] && echo yes || echo no), out=$out"
+  failed=1
+fi
+
+# The second half of the same fail-closed block: the empty/missing-directory
+# check. A mktemp that succeeds and prints nothing never reaches the `|| exit 1`
+# above, so only that check keeps the guard from arming its cleanup trap on an
+# empty path (which would remove the directory it was started from). mktemp is
+# shadowed through PATH by a stub inside the scratch directory that succeeds
+# with empty output.
+stub="$work/stub"
+mkdir -p "$stub"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$stub/mktemp"
+chmod +x "$stub/mktemp"
+rc=0
+out="$( ( cd "$decoy" && PATH="$stub:$PATH" bash "$guard" "$repo" 2>&1 ) )" || rc=$?
+if [ "$rc" -eq 1 ] && grep -qF -- "clickhouse-config-guard: FAIL: mktemp did not create a directory" <<<"$out" \
+  && [ -d "$decoy" ] && [ -f "$decoy/canary.txt" ]; then
+  echo "ok   mktemp succeeds with no directory: guard exits 1 with its empty-path message, decoy directory intact"
+else
+  echo "FAIL mktemp succeeds with no directory: rc=$rc (want 1), decoy exists=$([ -d "$decoy" ] && echo yes || echo no), canary exists=$([ -f "$decoy/canary.txt" ] && echo yes || echo no), out=$out"
+  failed=1
+fi
 
 exit "$failed"
