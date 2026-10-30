@@ -138,7 +138,9 @@ main() {
   echo "  3. Run the log collector:"
   echo "     ./scripts/collect-docker-logs.sh"
   echo ""
-  echo "  4. Or set up as a cron job (every minute, flock keeps runs from overlapping):"
+  echo "  4. Or set up as a cron job: put the line below in /etc/cron.d/telerithm-collector"
+  echo "     (the 'root' user field is part of the /etc/cron.d format; a user crontab"
+  echo "     has no such field). Every minute; flock keeps runs from overlapping:"
   echo "     * * * * * root flock -n /var/lock/telerithm-collector.lock /path/to/collect-docker-logs.sh >> /var/log/telerithm-collector.log 2>&1"
   echo ""
 }

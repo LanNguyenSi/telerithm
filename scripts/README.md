@@ -62,19 +62,30 @@ sent, so a per-minute cron run sends each line once and a follow run resumes
 where it stopped instead of replaying the container history:
 
 - One small state file per source and container lives under `TELERITHM_STATE_DIR`
-  (directory `0700`, files `0600`), holding the last RFC3339Nano timestamp whose
-  batch the ingest API accepted (HTTP 202). The API key is never stored.
+  (directory `0700`; a directory that already exists is `chmod 700` on every
+  run too, when the running user owns it, so a pre-existing one with looser
+  permissions is tightened; files `0600`), holding the
+  last RFC3339Nano timestamp whose lines the ingest API accepted (HTTP 202).
+  The API key is never stored.
 - The next one-shot run reads with `docker logs --since <that timestamp>` (no
   `--tail` cap) and skips the boundary line, because `--since` is inclusive.
   Without state it falls back to `--tail $TELERITHM_TAIL_LINES`.
 - The contract is at-least-once: a batch whose send failed does not advance the
-  state, so its lines are re-sent by the next run. An empty, truncated or
-  non-timestamp state file is treated as no state with a `[WARN]` (recent lines
-  may be re-sent).
+  state, so its lines are re-sent by the next run. And because a later accepted
+  batch says nothing about the lines of an earlier failed one, the state is
+  frozen for the whole rest of the run once any send has failed: the next run
+  re-reads from the last good timestamp, so a failure costs duplicates, never
+  loss. An empty, truncated or non-timestamp state file is treated as no state
+  with a `[WARN]` (recent lines may be re-sent).
+- The state never moves to a timestamp that still has lines in a later batch:
+  batches are cut by count while docker sorts by timestamp, so a full batch is
+  held back until the next timestamped line has a different timestamp. A saved
+  timestamp therefore always has all of its lines accepted.
 - Follow mode (`TELERITHM_FOLLOW=true`, the systemd setup below) passes
   `--follow --since <state>` and writes the state after every accepted batch,
   so `systemctl restart` resumes; a first start with no state reads only the
-  last `TELERITHM_TAIL_LINES` lines.
+  last `TELERITHM_TAIL_LINES` lines. After a failed send the follow run exits
+  non-zero immediately (see the systemd section below).
 - A container recreated under the same name starts its log at a new time: the
   stored timestamp is then newer than the new log, and `--since` returns
   nothing until the new log passes it. Delete the container's state file to
@@ -89,7 +100,10 @@ where it stopped instead of replaying the container history:
 For periodic log collection:
 
 ```bash
-# Create a cron job config file
+# Create a cron job config file. The line below is an /etc/cron.d file line:
+# the "root" field is the user column, which exists only in /etc/cron.d files
+# (a user crontab opened with crontab -e has no user field and would treat
+# "root" as part of the command).
 cat > /etc/cron.d/telerithm-collector <<EOF
 # Collect Docker logs every minute. The state file (see "State and Duplicates")
 # makes each line go once even though the run repeats; flock -n skips a run
@@ -110,7 +124,13 @@ For continuous log streaming. The service resumes after a restart: the state
 file is written after every accepted batch (see "State and Duplicates"), so
 `systemctl restart` continues where the collector stopped instead of replaying
 the container history, and a first start reads only the last
-`TELERITHM_TAIL_LINES` lines:
+`TELERITHM_TAIL_LINES` lines. A failed send makes the follow run exit non-zero
+immediately, without waiting for the log stream to end: the state is frozen
+for the rest of the run either way, so continuing could only send duplicates,
+and exiting lets `Restart=always` restart the collector a few seconds later,
+where it resumes from the last good timestamp and can save state again (the
+duplicated window is bounded by `RestartSec` instead of growing for as long as
+a frozen process would keep running):
 
 ```bash
 # Create systemd service

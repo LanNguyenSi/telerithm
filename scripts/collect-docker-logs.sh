@@ -5,8 +5,12 @@
 # Remembers, per source and container, the last log line that was accepted by
 # the ingest API, so a one-shot (cron) run only sends new lines and a follow
 # (systemd) run resumes where it stopped instead of replaying the container
-# history. The contract is at-least-once: a batch whose send failed does not
-# advance the state, so its lines are re-sent by the next run.
+# history. The contract is at-least-once: the state only moves to a timestamp
+# all of whose lines were accepted, and once any send in a run has failed the
+# state is frozen for the rest of that run, so the next run re-reads from the
+# last good timestamp (a failure costs duplicates, never loss). A follow run
+# exits non-zero right after a failed send, so a Restart=always unit restarts
+# into the last good state.
 
 set -euo pipefail
 
@@ -24,6 +28,11 @@ FOLLOW="${TELERITHM_FOLLOW:-false}"
 # An empty TELERITHM_STATE_DIR or XDG_STATE_HOME counts as unset (same style as
 # the variables above); the state never goes anywhere near the API key.
 STATE_DIR="${TELERITHM_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/telerithm-collector}"
+
+# Set once any send in this run has failed; from then on save_state refuses to
+# write, because a later accepted batch says nothing about the lines of the
+# failed one (they sit at older timestamps the state would move past).
+SEND_FAILED=0
 
 # Colors
 RED='\033[0;31m'
@@ -105,6 +114,22 @@ send_logs() {
   fi
 }
 
+# Remember that a send failed: the state is frozen for the rest of the run
+# (save_state refuses to write while SEND_FAILED is set), because a later accepted
+# batch says nothing about the failed batch's lines, and saving past them
+# would skip them for good. A follow run has no next run of its own to lean
+# on, so it exits non-zero right away instead of waiting for a stream that may
+# never end: continuing could only send duplicates (the state cannot advance),
+# and a systemd unit with Restart=always restarts the collector, which resumes
+# from the last good timestamp.
+note_send_failure() {
+  SEND_FAILED=1
+  if [ "$FOLLOW" = "true" ]; then
+    log_error "Follow mode exits after a failed send; the restart resumes from the last good state"
+    exit 1
+  fi
+}
+
 # Turn a state key (source id + container) into a safe file name: only
 # A-Za-z0-9_.- survive, everything else becomes "_", so a container named
 # "../x" can never put the state file outside the state directory.
@@ -131,15 +156,22 @@ load_state() {
   fi
 }
 
-# Record the last accepted timestamp for a container (file mode 0600).
-# Only ever called after send_logs returned success.
+# Record the timestamp for a container (file mode 0600). Only ever called
+# after send_logs returned success, and only with a timestamp all of whose
+# lines were accepted (see the batch loop). The state stays frozen for the
+# rest of the run once any send has failed (see note_send_failure).
 save_state() {
+  if [ "$SEND_FAILED" -ne 0 ]; then
+    return 0
+  fi
   local file="$1"
   local ts="$2"
   (
     umask 077
     printf '%s\n' "$ts" > "$file"
   )
+  # Not redundant with the umask: the redirect truncates a file that already
+  # exists, and a pre-existing file keeps whatever mode it had.
   chmod 600 "$file"
 }
 
@@ -153,6 +185,15 @@ process_container_logs() {
   # once the batch itself was accepted (per batch, not per line: the loop runs
   # in this shell, but a failed send must roll the whole batch back).
   local batch_last_ts=""
+  # A batch may never end on a timestamp that has lines in a later batch:
+  # batches are cut by count, but docker sorts by timestamp, so one timestamp
+  # can span the cut, and a state at that timestamp would make the next run's
+  # --since skip the rest of the group for good. A full batch is therefore
+  # held back until a timestamped line with a different timestamp arrives
+  # (lines without a timestamp join the held batch; they are not docker log
+  # lines and cannot split a group); at the stream end the last group is
+  # complete by definition.
+  local batch_full=0
   
   log_info "Collecting logs from: $container"
   
@@ -195,6 +236,24 @@ process_container_logs() {
       if [ -n "$since_ts" ] && [[ ! "$timestamp" > "$since_ts" ]]; then
         continue
       fi
+      # A held-back full batch ends only here: this timestamped line has a
+      # different timestamp, so the last timestamp of the batch is complete
+      # and saving it cannot skip lines that belong to a later batch.
+      if [ "$batch_full" -eq 1 ] && [ "$timestamp" != "$batch_last_ts" ]; then
+        payload=$(jq -n --argjson logs "$logs_array" '{logs: $logs}')
+        if send_logs "$payload"; then
+          log_info "Sent $count logs from $container"
+          if [ -n "$batch_last_ts" ]; then
+            save_state "$state_file" "$batch_last_ts"
+          fi
+        else
+          note_send_failure
+        fi
+        logs_array="[]"
+        count=0
+        batch_last_ts=""
+        batch_full=0
+      fi
       batch_last_ts="$timestamp"
     else
       # No timestamp, use current time (such lines never advance the state:
@@ -223,22 +282,16 @@ EOF
     logs_array=$(echo "$logs_array" | jq ". += [$log_entry]")
     count=$((count + 1))
     
-    # Send batch when size reached
+    # The batch is full once the size is reached; it is sent when the next
+    # timestamped line proves the trailing timestamp group complete (above),
+    # so a saved timestamp never splits a group across batches.
     if [ $count -ge $batch_size ]; then
-      payload=$(jq -n --argjson logs "$logs_array" '{logs: $logs}')
-      if send_logs "$payload"; then
-        log_info "Sent $count logs from $container"
-        if [ -n "$batch_last_ts" ]; then
-          save_state "$state_file" "$batch_last_ts"
-        fi
-      fi
-      logs_array="[]"
-      count=0
-      batch_last_ts=""
+      batch_full=1
     fi
   done < <(eval "$docker_cmd")
   
-  # Send remaining logs
+  # Send remaining logs: the stream ended, so the last timestamp seen is
+  # complete and safe to save.
   if [ $count -gt 0 ]; then
     payload=$(jq -n --argjson logs "$logs_array" '{logs: $logs}')
     if send_logs "$payload"; then
@@ -246,6 +299,8 @@ EOF
       if [ -n "$batch_last_ts" ]; then
         save_state "$state_file" "$batch_last_ts"
       fi
+    else
+      note_send_failure
     fi
   fi
 }
@@ -275,12 +330,17 @@ main() {
     exit 1
   fi
   
-  # State directory: 0700, it holds one small file per source and container
+  # State directory: 0700, it holds one small file per source and container.
+  # A directory that already exists is tightened on every run (an older run
+  # or a hand-made directory may have looser permissions); only when the
+  # running user owns it, so a chmod that could not work is not attempted.
   if [ ! -d "$STATE_DIR" ]; then
     if ! mkdir -p "$STATE_DIR"; then
       log_error "Cannot create state directory $STATE_DIR"
       exit 1
     fi
+    chmod 700 "$STATE_DIR"
+  elif [ -O "$STATE_DIR" ]; then
     chmod 700 "$STATE_DIR"
   fi
   

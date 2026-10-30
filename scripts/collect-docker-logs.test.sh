@@ -58,6 +58,13 @@ case "${1:-}" in
 esac
 exit 0
 STUB
+# The curl stub answers STUB_HTTP (default 202) to every POST, except that
+# STUB_FAIL_CALL=<n> makes the n-th POST alone answer 500 (a POST-numbered
+# failure, so a scenario can fail one batch mid-run and accept the others).
+# Every POST is appended to $STUB_CURL_LOG and every ACCEPTED payload to
+# $STUB_CURL_OK (which is only reset when a scenario says so, so acceptance
+# can be checked across runs); the call number is kept in $STUB_CURL_N
+# (reset per run_collector).
 cat > "${STUB_DIR}/curl" <<'STUB'
 #!/bin/bash
 payload=""
@@ -67,16 +74,26 @@ for a in "$@"; do
   prev="$a"
 done
 printf '%s\n' "$payload" >> "${STUB_CURL_LOG}"
+n=1
+if [ -s "${STUB_CURL_N}" ]; then n=$(($(cat "${STUB_CURL_N}") + 1)); fi
+printf '%s\n' "$n" > "${STUB_CURL_N}"
+code="${STUB_HTTP:-202}"
+if [ -n "${STUB_FAIL_CALL:-}" ] && [ "$n" -eq "${STUB_FAIL_CALL}" ]; then code=500; fi
+if [ "${code}" != "500" ]; then printf '%s\n' "$payload" >> "${STUB_CURL_OK}"; fi
 printf 'accepted\n'
-printf '\n%s\n' "${STUB_HTTP:-202}"
+printf '\n%s\n' "$code"
 exit 0
 STUB
 chmod +x "${STUB_DIR}/docker" "${STUB_DIR}/curl"
 export PATH="${STUB_DIR}:${PATH}"
 export STUB_DOCKER_LOG="${SCRATCH}/docker.log"
 export STUB_CURL_LOG="${SCRATCH}/curl.log"
+export STUB_CURL_N="${SCRATCH}/curl.n"
+export STUB_CURL_OK="${SCRATCH}/curl-accepted.log"
 : > "${STUB_DOCKER_LOG}"
 : > "${STUB_CURL_LOG}"
+: > "${STUB_CURL_N}"
+: > "${STUB_CURL_OK}"
 export STUB_LOG_FILE="${SCRATCH}/logs.txt"
 export STUB_RUNNING="c1"
 
@@ -94,15 +111,18 @@ bad() { FAIL=$((FAIL + 1)); echo "FAIL - $1"; }
 run_collector() {
   : > "${STUB_DOCKER_LOG}"
   : > "${STUB_CURL_LOG}"
+  : > "${STUB_CURL_N}"
+  RC=0
   OUT="$(env -u XDG_STATE_HOME -u TELERITHM_STATE_DIR -u TELERITHM_FOLLOW \
-    -u TELERITHM_TAIL_LINES -u STUB_HTTP \
+    -u TELERITHM_TAIL_LINES -u STUB_HTTP -u STUB_FAIL_CALL \
     TELERITHM_API="http://stub.invalid/api/v1" \
     TELERITHM_SOURCE_ID="src_test" \
     TELERITHM_API_KEY="${API_KEY_USED}" \
     TELERITHM_CONTAINERS="c1" \
     "$@" \
-    bash "${COLLECT_SH}" 2>&1)"
-  RC=$?
+    bash "${COLLECT_SH}" 2>&1)" || RC=$?
+  # The "|| RC=$?" keeps a non-zero collector exit (follow mode stops on a
+  # failed send) from tripping the CI step's "bash -e"; RC holds it either way.
 }
 
 # logs_lines <file> <ts1> <text1> [<ts2> <text2> ...]: write docker log output
@@ -118,6 +138,11 @@ logs_lines() {
 # messages: comma-joined message field of every payload received since reset
 messages() {
   jq -s -r '[.[].logs[].message] | join(",")' "${STUB_CURL_LOG}" 2>/dev/null
+}
+
+# first_batch_len: number of log entries in the first POST payload received
+first_batch_len() {
+  jq -s '[.[0].logs[]] | length' "${STUB_CURL_LOG}" 2>/dev/null
 }
 
 batches() {
@@ -332,6 +357,102 @@ run_collector XDG_STATE_HOME="${P9A}"
 if [ -f "${P9A}/telerithm-collector/src_test__c1" ]; then
   ok "precedence: XDG_STATE_HOME wins over \$HOME/.local/state"
 else bad "precedence xdg: $(find "${P9A}" 2>/dev/null)"; fi
+
+# --- 10. failed send mid-run: state frozen, next run resends -----------------
+# 60 lines (two batches), the FIRST POST alone fails. If the accepted second
+# batch still advanced the state, the lines of the failed first batch would be
+# skipped for good; the state must stay where it was and the next run must
+# resend everything (duplicates, never loss).
+STATE10="${SCRATCH}/state10"
+LOGS60C="${SCRATCH}/logs60c.txt"
+: > "${LOGS60C}"
+i=0
+while [ "$i" -lt 60 ]; do
+  printf '2026-04-01T00:%02d:%02d.000000000Z l%d\n' "$((i / 60))" "$((i % 60))" "${i}" >> "${LOGS60C}"
+  i=$((i + 1))
+done
+STUB_LOG_FILE="${LOGS60C}" run_collector TELERITHM_STATE_DIR="${STATE10}" STUB_FAIL_CALL=1
+if [ "$(batches)" = "2" ] && [ ! -f "${STATE10}/src_test__c1" ]; then
+  ok "failed first batch, accepted second: the accepted batch saves no state (the run is frozen)"
+else bad "failed first batch: rc=${RC} batches=$(batches) state=$(cat "${STATE10}/src_test__c1" 2>/dev/null) out=${OUT}"; fi
+STUB_LOG_FILE="${LOGS60C}" run_collector TELERITHM_STATE_DIR="${STATE10}"
+i=0; EXPECT10=""
+while [ "$i" -lt 60 ]; do EXPECT10="${EXPECT10:+${EXPECT10},}l${i}"; i=$((i + 1)); done
+if [ "$(messages)" = "${EXPECT10}" ] \
+  && [ "$(cat "${STATE10}/src_test__c1")" = "2026-04-01T00:00:59.000000000Z" ]; then
+  ok "failed first batch: next run re-sends all 60 lines (only duplicates, no loss) and records the state"
+else bad "failed first batch recovery: first=$(messages | cut -d, -f1-3) state=$(cat "${STATE10}/src_test__c1" 2>/dev/null)"; fi
+
+# --- 11. timestamp groups are never split by a batch border -------------------
+# 60 lines: 59 distinct timestamps, m49 and m50 share one timestamp (the
+# border of the first count-based batch). POST 2 fails: if the accepted first
+# batch had saved the shared timestamp while leaving m50 for the failed one,
+# the next run would skip m50 forever.
+STATE11="${SCRATCH}/state11"
+LOGS60D="${SCRATCH}/logs60d.txt"
+: > "${LOGS60D}"
+i=0
+while [ "$i" -lt 60 ]; do
+  if [ "${i}" -lt 50 ]; then s="${i}"; else s=$((i - 1)); fi
+  printf '2026-04-01T00:00:%02d.000000000Z m%d\n' "${s}" "${i}" >> "${LOGS60D}"
+  i=$((i + 1))
+done
+: > "${STUB_CURL_OK}"
+STUB_LOG_FILE="${LOGS60D}" run_collector TELERITHM_STATE_DIR="${STATE11}" STUB_FAIL_CALL=2
+if [ "$(batches)" = "2" ] && [ "$(first_batch_len)" = "51" ]; then
+  ok "shared timestamp across the batch border: the group is held back, first batch has 51 lines"
+else bad "shared timestamp: batches=$(batches) first_batch_len=$(first_batch_len) out=${OUT}"; fi
+if [ "$(cat "${STATE11}/src_test__c1")" = "2026-04-01T00:00:49.000000000Z" ]; then
+  ok "shared timestamp: state saved at the shared timestamp only because both lines were in the accepted batch"
+else bad "shared timestamp: state=$(cat "${STATE11}/src_test__c1" 2>/dev/null)"; fi
+STUB_LOG_FILE="${LOGS60D}" run_collector TELERITHM_STATE_DIR="${STATE11}"
+# every line must end up ACCEPTED by some run (the stub logs a payload even
+# when it answers 500, so only STUB_CURL_OK proves acceptance, not sending)
+ACCEPTED11="$(jq -s -r '[.[].logs[].message] | unique | join(",")' "${STUB_CURL_OK}" 2>/dev/null)"
+if printf '%s\n' "${ACCEPTED11}" | tr ',' '\n' | grep -qx "m50" \
+  && [ "$(printf '%s\n' "${ACCEPTED11}" | tr ',' '\n' | grep -c '^m')" = "60" ]; then
+  ok "shared timestamp with a failure between the batches: every line is accepted by some run, m50 included, nothing is lost"
+else bad "shared timestamp recovery: accepted=${ACCEPTED11}"; fi
+# the failure in the other order: the batch holding the shared group fails,
+# the next run re-sends the 51st line (m50) and loses nothing either
+: > "${STUB_CURL_OK}"
+STATE11B="${SCRATCH}/state11b"
+STUB_LOG_FILE="${LOGS60D}" run_collector TELERITHM_STATE_DIR="${STATE11B}" STUB_FAIL_CALL=1
+STUB_LOG_FILE="${LOGS60D}" run_collector TELERITHM_STATE_DIR="${STATE11B}"
+if messages | tr ',' '\n' | grep -qx "m50" \
+  && [ "$(jq -s -r '[.[].logs[].message] | unique | length' "${STUB_CURL_OK}" 2>/dev/null)" = "60" ]; then
+  ok "shared timestamp, failed first batch: the next run sends the 51st line (m50) and every line is accepted"
+else bad "shared timestamp order B: messages=$(messages | cut -d, -f1-3) accepted=$(jq -s -r '[.[].logs[].message] | unique | length' "${STUB_CURL_OK}" 2>/dev/null)"; fi
+
+# --- 12. follow mode exits non-zero on a failed send --------------------------
+STATE12="${SCRATCH}/state12"
+logs_lines "${STUB_LOG_FILE}" "${TS1}" "live1" "${TS2}" "live2"
+run_collector TELERITHM_STATE_DIR="${STATE12}" TELERITHM_FOLLOW=true STUB_HTTP=500
+if [ "${RC}" -ne 0 ]; then
+  ok "follow mode, failed send: exits non-zero so a Restart=always unit restarts into the last good state"
+else bad "follow failed send: rc=${RC} out=${OUT}"; fi
+if [ ! -f "${STATE12}/src_test__c1" ]; then ok "follow failed send: no state written"; else bad "follow failed send: state written"; fi
+# exits right away: after the failed first batch of a 60-line stream no second
+# batch is POSTed, the stream is abandoned, not drained
+STUB_LOG_FILE="${LOGS60}" run_collector TELERITHM_STATE_DIR="${STATE12}" TELERITHM_FOLLOW=true STUB_FAIL_CALL=1
+if [ "${RC}" -ne 0 ] && [ "$(batches)" = "1" ]; then
+  ok "follow mode: exits at the first failed send without draining the stream"
+else bad "follow immediate: rc=${RC} batches=$(batches)"; fi
+# a follow run whose sends are all accepted still exits 0 (test 8 covers state
+# advancement; this pins that the non-zero exit is tied to the failure only)
+logs_lines "${STUB_LOG_FILE}" "${TS1}" "live1"
+run_collector TELERITHM_STATE_DIR="${STATE12}" TELERITHM_FOLLOW=true
+if [ "${RC}" -eq 0 ]; then ok "follow mode, accepted sends: exit stays 0"; else bad "follow ok run: rc=${RC} out=${OUT}"; fi
+
+# --- 13. a pre-existing state dir is tightened on every run -------------------
+STATE13="${SCRATCH}/state13"
+mkdir -p "${STATE13}"
+chmod 755 "${STATE13}"
+logs_lines "${STUB_LOG_FILE}" "${TS1}" "tight"
+run_collector TELERITHM_STATE_DIR="${STATE13}"
+if [ "$(mode_of "${STATE13}")" = "700" ]; then
+  ok "pre-existing 0755 state dir is chmod 700 by the run"
+else bad "pre-existing state dir: mode=$(mode_of "${STATE13}")"; fi
 
 echo
 echo "passed: ${PASS}, failed: ${FAIL}"
