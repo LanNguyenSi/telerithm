@@ -239,8 +239,8 @@ else bad "60 lines failed send: state=$(cat "${STATE3C}/src_test__c1")"; fi
 STATE4="${SCRATCH}/state4"
 logs_lines "${STUB_LOG_FILE}" "${TS1}" "first" "${TS2}" "second" "${TS3}" "third"
 run_collector TELERITHM_STATE_DIR="${STATE4}" STUB_HTTP=500
-if [ "${RC}" -eq 0 ] && [ ! -d "${STATE4}/src_test__c1" ] && [ ! -f "${STATE4}/src_test__c1" ]; then
-  ok "failed send (HTTP 500): exit 0, state not written"
+if [ "${RC}" -ne 0 ] && [ ! -d "${STATE4}/src_test__c1" ] && [ ! -f "${STATE4}/src_test__c1" ]; then
+  ok "failed send (HTTP 500): cron run exits non-zero (so cron mail or monitoring notices), state not written"
 else bad "failed send: rc=${RC} out=${OUT} files=$(find "${STATE4}" -type f 2>/dev/null)"; fi
 if grep -q "Failed to send logs (HTTP 500)" <<< "${OUT}"; then
   ok "failed send: error is logged"
@@ -453,6 +453,35 @@ run_collector TELERITHM_STATE_DIR="${STATE13}"
 if [ "$(mode_of "${STATE13}")" = "700" ]; then
   ok "pre-existing 0755 state dir is chmod 700 by the run"
 else bad "pre-existing state dir: mode=$(mode_of "${STATE13}")"; fi
+
+# --- 14. per-container freeze: one failed send does not freeze another container
+# Two containers, the FIRST POST (c1's batch) fails and c2's is accepted. The
+# freeze must be per container: c2's state advances even though c1's send failed
+# in the same run, c1's state does not, and the run still exits non-zero so a
+# failed send anywhere is reported. The second run (c1's send fails again, c2 has
+# no new lines) must re-send c1 only; if c2 had been frozen too, c2 would replay
+# a growing history on every run.
+STATE14="${SCRATCH}/state14"
+export STUB_RUNNING="c1 c2"
+logs_lines "${STUB_LOG_FILE}" "${TS1}" "one" "${TS2}" "two"
+run_collector TELERITHM_STATE_DIR="${STATE14}" TELERITHM_CONTAINERS="c1 c2" STUB_FAIL_CALL=1
+if [ "${RC}" -ne 0 ]; then
+  ok "per-container freeze: run with a failed send exits non-zero"
+else bad "per-container freeze rc: rc=${RC} out=${OUT}"; fi
+if [ ! -f "${STATE14}/src_test__c1" ]; then
+  ok "per-container freeze: the container whose send failed keeps no state (frozen)"
+else bad "per-container freeze c1 state: $(cat "${STATE14}/src_test__c1")"; fi
+if [ "$(cat "${STATE14}/src_test__c2" 2>/dev/null)" = "${TS2}" ]; then
+  ok "per-container freeze: the accepted container's state advances despite the other's failure"
+else bad "per-container freeze c2 state: $(cat "${STATE14}/src_test__c2" 2>/dev/null) out=${OUT}"; fi
+run_collector TELERITHM_STATE_DIR="${STATE14}" TELERITHM_CONTAINERS="c1 c2" STUB_FAIL_CALL=1
+if [ "$(messages)" = "one,two" ] && [ "$(cat "${STATE14}/src_test__c2")" = "${TS2}" ]; then
+  ok "per-container freeze: next run re-sends only the failed container, the accepted container does not replay"
+else bad "per-container freeze replay: messages=$(messages) c2state=$(cat "${STATE14}/src_test__c2") out=${OUT}"; fi
+if [ ! -f "${STATE14}/src_test__c1" ]; then
+  ok "per-container freeze: the container with the still-failing send stays frozen (no state)"
+else bad "per-container freeze: c1 advanced while its send kept failing"; fi
+export STUB_RUNNING="c1"
 
 echo
 echo "passed: ${PASS}, failed: ${FAIL}"

@@ -6,11 +6,15 @@
 # the ingest API, so a one-shot (cron) run only sends new lines and a follow
 # (systemd) run resumes where it stopped instead of replaying the container
 # history. The contract is at-least-once: the state only moves to a timestamp
-# all of whose lines were accepted, and once any send in a run has failed the
-# state is frozen for the rest of that run, so the next run re-reads from the
-# last good timestamp (a failure costs duplicates, never loss). A follow run
-# exits non-zero right after a failed send, so a Restart=always unit restarts
-# into the last good state.
+# all of whose lines were accepted, and once a send for a container fails that
+# container's state is frozen for the rest of its processing, so its next run
+# re-reads from the last good timestamp (a failure costs duplicates, never
+# loss); a failure for one container never freezes another container's state. A
+# batch the API keeps rejecting therefore stalls that container's state and its
+# later lines are re-sent on every run until the cause is fixed. A one-shot run
+# exits non-zero if any send in it failed (after all containers were processed),
+# so cron mail or monitoring notices; a follow run exits non-zero right after a
+# failed send, so a Restart=always unit restarts into the last good state.
 
 set -euo pipefail
 
@@ -29,10 +33,17 @@ FOLLOW="${TELERITHM_FOLLOW:-false}"
 # the variables above); the state never goes anywhere near the API key.
 STATE_DIR="${TELERITHM_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/telerithm-collector}"
 
-# Set once any send in this run has failed; from then on save_state refuses to
-# write, because a later accepted batch says nothing about the lines of the
-# failed one (they sit at older timestamps the state would move past).
+# SEND_FAILED freezes ONE container's state for the rest of its processing once
+# one of its sends has failed, because a later accepted batch for the same
+# container says nothing about the failed batch's lines (they sit at older
+# timestamps the state would move past). process_container_logs resets it at the
+# start of every container, so a failure for one container cannot freeze the
+# state of the containers processed after it.
 SEND_FAILED=0
+# Remembers that some send failed anywhere in this run, so a one-shot (cron) run
+# can exit non-zero at the end even though the freeze above is only per
+# container. Never reset during the run.
+RUN_SEND_FAILED=0
 
 # Colors
 RED='\033[0;31m'
@@ -114,16 +125,22 @@ send_logs() {
   fi
 }
 
-# Remember that a send failed: the state is frozen for the rest of the run
-# (save_state refuses to write while SEND_FAILED is set), because a later accepted
-# batch says nothing about the failed batch's lines, and saving past them
-# would skip them for good. A follow run has no next run of its own to lean
-# on, so it exits non-zero right away instead of waiting for a stream that may
-# never end: continuing could only send duplicates (the state cannot advance),
-# and a systemd unit with Restart=always restarts the collector, which resumes
-# from the last good timestamp.
+# Remember that a send failed: that container's state is frozen for the rest of
+# its processing (save_state refuses to write while SEND_FAILED is set), because
+# a later accepted batch for the same container says nothing about the failed
+# batch's lines, and saving past them would skip them for good. RUN_SEND_FAILED
+# records the failure for the whole run so a one-shot run can exit non-zero at
+# the end. A follow run has no next run of its own to lean on, so it exits
+# non-zero right away instead of waiting for a stream that may never end:
+# continuing could only send duplicates (the state cannot advance), and a
+# systemd unit with Restart=always restarts the collector, which resumes from
+# the last good timestamp. The follow run's `docker logs --follow` runs in a
+# process substitution and is left running by this exit; killing it is not
+# reliable across bash versions (see the README systemd section), so the unit
+# must keep the default KillMode=control-group, which takes the child down too.
 note_send_failure() {
   SEND_FAILED=1
+  RUN_SEND_FAILED=1
   if [ "$FOLLOW" = "true" ]; then
     log_error "Follow mode exits after a failed send; the restart resumes from the last good state"
     exit 1
@@ -158,8 +175,9 @@ load_state() {
 
 # Record the timestamp for a container (file mode 0600). Only ever called
 # after send_logs returned success, and only with a timestamp all of whose
-# lines were accepted (see the batch loop). The state stays frozen for the
-# rest of the run once any send has failed (see note_send_failure).
+# lines were accepted (see the batch loop). The state stays frozen for the rest
+# of the container's processing once one of its sends has failed (see
+# note_send_failure); this freeze is per container.
 save_state() {
   if [ "$SEND_FAILED" -ne 0 ]; then
     return 0
@@ -178,6 +196,10 @@ save_state() {
 # Process logs from a container
 process_container_logs() {
   local container="$1"
+  # Freeze is per container: a failed send for another container must not stop
+  # this container's state from advancing (RUN_SEND_FAILED keeps the run-level
+  # record for the end-of-run exit). See note_send_failure and save_state.
+  SEND_FAILED=0
   local batch_size=50
   local logs_array="[]"
   local count=0
@@ -186,13 +208,16 @@ process_container_logs() {
   # in this shell, but a failed send must roll the whole batch back).
   local batch_last_ts=""
   # A batch may never end on a timestamp that has lines in a later batch:
-  # batches are cut by count, but docker sorts by timestamp, so one timestamp
-  # can span the cut, and a state at that timestamp would make the next run's
-  # --since skip the rest of the group for good. A full batch is therefore
-  # held back until a timestamped line with a different timestamp arrives
-  # (lines without a timestamp join the held batch; they are not docker log
-  # lines and cannot split a group); at the stream end the last group is
-  # complete by definition.
+  # batches are cut by count, but docker returns lines in (near) timestamp
+  # order, so one timestamp can span the cut, and a state at that timestamp
+  # would make the next run's --since skip the rest of the group for good. A
+  # full batch is therefore held back until a timestamped line with a different
+  # timestamp arrives (lines without a timestamp join the held batch; they are
+  # not docker log lines and cannot split a group); at the stream end the last
+  # group is complete by definition. This holds while timestamps do not
+  # decrease: docker merges stdout and stderr and can interleave them slightly
+  # out of order, so a saved timestamp guarantees all its lines accepted only
+  # for non-decreasing timestamps.
   local batch_full=0
   
   log_info "Collecting logs from: $container"
@@ -350,6 +375,16 @@ main() {
   done
   
   log_info "Collection complete"
+  
+  # A one-shot (cron) run signals a failed send to cron mail or monitoring by
+  # exiting non-zero, only after every container was processed (a follow run
+  # already exited from note_send_failure). Each container whose send failed had
+  # its own state frozen and will re-read from its last good timestamp next run;
+  # containers whose sends were accepted kept their own state.
+  if [ "$RUN_SEND_FAILED" -ne 0 ]; then
+    log_error "One or more sends failed; the state of those containers did not advance (their lines are re-sent next run)"
+    exit 1
+  fi
 }
 
 # Run

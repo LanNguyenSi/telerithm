@@ -70,17 +70,29 @@ where it stopped instead of replaying the container history:
 - The next one-shot run reads with `docker logs --since <that timestamp>` (no
   `--tail` cap) and skips the boundary line, because `--since` is inclusive.
   Without state it falls back to `--tail $TELERITHM_TAIL_LINES`.
-- The contract is at-least-once: a batch whose send failed does not advance the
-  state, so its lines are re-sent by the next run. And because a later accepted
-  batch says nothing about the lines of an earlier failed one, the state is
-  frozen for the whole rest of the run once any send has failed: the next run
-  re-reads from the last good timestamp, so a failure costs duplicates, never
-  loss. An empty, truncated or non-timestamp state file is treated as no state
-  with a `[WARN]` (recent lines may be re-sent).
+- The contract is at-least-once, per container: a batch whose send failed does
+  not advance that container's state, so its lines are re-sent by the next run.
+  And because a later accepted batch for the same container says nothing about
+  the lines of an earlier failed one, that container's state is frozen for the
+  rest of its processing once one of its sends has failed; one container's
+  failure never freezes another container's state, so a container whose sends
+  are accepted still advances in the same run. The next run re-reads from the
+  last good timestamp, so a failure costs duplicates, never loss. If the API
+  keeps rejecting a batch, that container's state stalls and its later lines are
+  re-sent on every run until the cause is fixed. An empty, truncated or
+  non-timestamp state file is treated as no state with a `[WARN]` (recent lines
+  may be re-sent).
+- A one-shot (cron) run in which any send failed exits non-zero, only after all
+  containers were processed, so cron mail or monitoring notices; a run whose
+  sends are all accepted exits 0. The frozen state is per container, so one
+  container's failure does not stop the others from advancing.
 - The state never moves to a timestamp that still has lines in a later batch:
-  batches are cut by count while docker sorts by timestamp, so a full batch is
-  held back until the next timestamped line has a different timestamp. A saved
-  timestamp therefore always has all of its lines accepted.
+  batches are cut by count while docker returns lines in (near) timestamp order,
+  so a full batch is held back until the next timestamped line has a different
+  timestamp. A saved timestamp therefore has all of its lines accepted for
+  non-decreasing timestamps (docker merges stdout and stderr and can interleave
+  them slightly out of order, but it does not replay a line at an older
+  timestamp).
 - Follow mode (`TELERITHM_FOLLOW=true`, the systemd setup below) passes
   `--follow --since <state>` and writes the state after every accepted batch,
   so `systemctl restart` resumes; a first start with no state reads only the
@@ -125,12 +137,12 @@ file is written after every accepted batch (see "State and Duplicates"), so
 `systemctl restart` continues where the collector stopped instead of replaying
 the container history, and a first start reads only the last
 `TELERITHM_TAIL_LINES` lines. A failed send makes the follow run exit non-zero
-immediately, without waiting for the log stream to end: the state is frozen
-for the rest of the run either way, so continuing could only send duplicates,
-and exiting lets `Restart=always` restart the collector a few seconds later,
-where it resumes from the last good timestamp and can save state again (the
-duplicated window is bounded by `RestartSec` instead of growing for as long as
-a frozen process would keep running):
+immediately, without waiting for the log stream to end: that container's state
+is frozen for the rest of its processing either way, so continuing could only
+send duplicates, and exiting lets `Restart=always` restart the collector a few
+seconds later, where it resumes from the last good timestamp and can save state
+again (nothing more is sent after the failed send, so `RestartSec` is the delay
+before the collector resumes, not a bound on a growing duplicate window):
 
 ```bash
 # Create systemd service
@@ -167,6 +179,16 @@ systemctl status telerithm-collector
 # View logs
 journalctl -u telerithm-collector -f
 ```
+
+Keep the default `KillMode=control-group` (do not set `KillMode=process`). On a
+failed send the follow run exits from inside a `while` loop that reads
+`docker logs --follow` through a process substitution, and it does not kill that
+`docker logs` child itself: killing it reliably across bash 3.2 and 5 is not
+possible, because the process-substitution pid is not the `docker logs` process
+(it runs under an `eval`, so docker is a grandchild) and `$!` names a different
+process between bash versions. With the default `KillMode=control-group` systemd
+stops the whole control group when the service exits, which takes the leftover
+`docker logs --follow` with it; `KillMode=process` would leave it orphaned.
 
 ### Validate Sender Configs
 
