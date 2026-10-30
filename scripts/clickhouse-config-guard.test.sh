@@ -147,4 +147,89 @@ fresh_copy
 printf 'networks:\n  default:\n    name: telerithm_telerithm-internal\n' >>"$work/tree/docker-compose.prod.yml"
 expect_fail "prod compose reuses the production network" "share the networks ['telerithm_telerithm-internal']"
 
+# Logging, limits and healthchecks of every service, and their mirroring.
+# The anchors below are unique within the file they are replaced in.
+fe_probe_head='    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('"'"'http://localhost:3000/'"'"
+fe_limits_traefik='          memory: 256M
+          cpus: "0.5"
+    labels:'
+fe_limits_prod='          memory: 256M
+          cpus: "0.5"
+
+volumes:'
+
+fresh_copy
+replace docker-compose.prod.yml 'max-size: "10m"' 'max-size: "20m"'
+expect_fail "logging max-size differs (prod only)" "logging of service postgres differs between docker-compose.prod.yml and docker-compose.traefik.yml"
+
+fresh_copy
+replace docker-compose.traefik.yml '    logging: *default-logging
+    environment:
+      INTERNAL_API_BASE_URL' '    environment:
+      INTERNAL_API_BASE_URL'
+expect_fail "frontend has no logging (traefik)" "docker-compose.traefik.yml: service frontend has no bounded log"
+
+fresh_copy
+replace docker-compose.prod.yml '    max-file: "3"
+' ''
+replace docker-compose.traefik.yml '    max-file: "3"
+' ''
+expect_fail "log not bounded by max-file in both composes" "docker-compose.prod.yml: service postgres has no bounded log"
+
+fresh_copy
+replace docker-compose.prod.yml '  driver: json-file
+  options:' '  driver: local
+  options:'
+replace docker-compose.traefik.yml '  driver: json-file
+  options:' '  driver: local
+  options:'
+expect_fail "log driver is not json-file in both composes" "docker-compose.traefik.yml: service postgres has no bounded log"
+
+fresh_copy
+replace docker-compose.traefik.yml "$fe_limits_traefik" '          memory: 512M
+          cpus: "0.5"
+    labels:'
+expect_fail "memory limit differs (traefik only)" "deploy.resources.limits.memory of service frontend differs between docker-compose.prod.yml and docker-compose.traefik.yml"
+
+fresh_copy
+replace docker-compose.prod.yml "$fe_limits_prod" '          memory: 256M
+          cpus: "1.5"
+
+volumes:'
+expect_fail "cpus limit differs (prod only)" "deploy.resources.limits.cpus of service frontend differs between docker-compose.prod.yml and docker-compose.traefik.yml"
+
+fresh_copy
+replace docker-compose.prod.yml "    deploy:
+      resources:
+        limits:
+$fe_limits_prod" '
+volumes:'
+expect_fail "limits block removed from frontend (prod)" "docker-compose.prod.yml: service frontend has no deploy.resources.limits.memory"
+
+fresh_copy
+replace docker-compose.traefik.yml "$fe_limits_traefik" '          memory: 256M
+    labels:'
+expect_fail "cpus limit removed from frontend (traefik)" "docker-compose.traefik.yml: service frontend has no deploy.resources.limits.cpus"
+
+fresh_copy
+replace docker-compose.prod.yml "$fe_probe_head" "$(printf '%s' "$fe_probe_head" | sed 's/healthcheck:/x-healthcheck-removed:/')"
+expect_fail "frontend healthcheck removed (prod)" "docker-compose.prod.yml: service frontend has no healthcheck"
+
+fresh_copy
+replace docker-compose.traefik.yml "$fe_probe_head" "$(printf '%s' "$fe_probe_head" | sed 's/healthcheck:/x-healthcheck-removed:/')"
+expect_fail "frontend healthcheck removed (traefik)" "docker-compose.traefik.yml: service frontend has no healthcheck"
+
+fresh_copy
+replace docker-compose.traefik.yml '      start_period: 30s
+    networks:' '      start_period: 30s
+      disable: true
+    networks:'
+expect_fail "frontend healthcheck disabled (traefik)" "docker-compose.traefik.yml: service frontend has no healthcheck"
+
 exit "$failed"

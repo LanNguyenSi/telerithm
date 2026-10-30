@@ -180,6 +180,25 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    # The probe asks / without following the redirect: the middleware answers
+    # 307 to /login without calling the backend, so it says "the Next.js server
+    # answers", not "the backend is up". /login itself renders server-side with
+    # a call to the backend and answers 500 while the backend is unreachable.
+    # Traefik's docker provider routes only to containers that are healthy (or
+    # have no healthcheck): after each (re)start the frontend is not routed
+    # until the first probe succeeds. The image has no curl or wget, hence node.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/', {redirect: 'manual', signal: AbortSignal.timeout(5000)}).then(r => process.exit(r.status < 400 ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     networks:
       - traefik
       - telerithm-internal
