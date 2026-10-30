@@ -138,8 +138,8 @@ main() {
   echo "  3. Run the log collector:"
   echo "     ./scripts/collect-docker-logs.sh"
   echo ""
-  echo "  4. Or set up as a cron job (every minute):"
-  echo "     * * * * * /path/to/collect-docker-logs.sh >> /var/log/telerithm-collector.log 2>&1"
+  echo "  4. Or set up as a cron job (every minute, flock keeps runs from overlapping):"
+  echo "     * * * * * root flock -n /var/lock/telerithm-collector.lock /path/to/collect-docker-logs.sh >> /var/log/telerithm-collector.log 2>&1"
   echo ""
 }
 

@@ -55,6 +55,35 @@ export TELERITHM_FOLLOW=true
 ./scripts/collect-docker-logs.sh
 ```
 
+### State and Duplicates
+
+The collector remembers per source and container which log lines it has already
+sent, so a per-minute cron run sends each line once and a follow run resumes
+where it stopped instead of replaying the container history:
+
+- One small state file per source and container lives under `TELERITHM_STATE_DIR`
+  (directory `0700`, files `0600`), holding the last RFC3339Nano timestamp whose
+  batch the ingest API accepted (HTTP 202). The API key is never stored.
+- The next one-shot run reads with `docker logs --since <that timestamp>` (no
+  `--tail` cap) and skips the boundary line, because `--since` is inclusive.
+  Without state it falls back to `--tail $TELERITHM_TAIL_LINES`.
+- The contract is at-least-once: a batch whose send failed does not advance the
+  state, so its lines are re-sent by the next run. An empty, truncated or
+  non-timestamp state file is treated as no state with a `[WARN]` (recent lines
+  may be re-sent).
+- Follow mode (`TELERITHM_FOLLOW=true`, the systemd setup below) passes
+  `--follow --since <state>` and writes the state after every accepted batch,
+  so `systemctl restart` resumes; a first start with no state reads only the
+  last `TELERITHM_TAIL_LINES` lines.
+- A container recreated under the same name starts its log at a new time: the
+  stored timestamp is then newer than the new log, and `--since` returns
+  nothing until the new log passes it. Delete the container's state file to
+  start from now.
+- Lines from stdout and stderr are merged and the order inside one timestamp is
+  not guaranteed; at-least-once is the contract.
+- Overlapping runs would double-send; the cron example below guards against
+  them with `flock`.
+
 ### Automated Collection (Cron)
 
 For periodic log collection:
@@ -62,8 +91,10 @@ For periodic log collection:
 ```bash
 # Create a cron job config file
 cat > /etc/cron.d/telerithm-collector <<EOF
-# Collect Docker logs every minute
-* * * * * root TELERITHM_API="http://localhost:4000/api/v1" TELERITHM_SOURCE_ID="src_abc123" TELERITHM_API_KEY="lf_xyz..." TELERITHM_CONTAINERS="triologue-api traefik" /root/git/telerithm/scripts/collect-docker-logs.sh >> /var/log/telerithm-collector.log 2>&1
+# Collect Docker logs every minute. The state file (see "State and Duplicates")
+# makes each line go once even though the run repeats; flock -n skips a run
+# that would overlap the previous one (an overlapping run would double-send).
+* * * * * root TELERITHM_API="http://localhost:4000/api/v1" TELERITHM_SOURCE_ID="src_abc123" TELERITHM_API_KEY="lf_xyz..." TELERITHM_CONTAINERS="triologue-api traefik" flock -n /var/lock/telerithm-collector.lock /root/git/telerithm/scripts/collect-docker-logs.sh >> /var/log/telerithm-collector.log 2>&1
 EOF
 
 # Restart cron
@@ -75,7 +106,11 @@ tail -f /var/log/telerithm-collector.log
 
 ### Systemd Service (Recommended for Production)
 
-For continuous log streaming:
+For continuous log streaming. The service resumes after a restart: the state
+file is written after every accepted batch (see "State and Duplicates"), so
+`systemctl restart` continues where the collector stopped instead of replaying
+the container history, and a first start reads only the last
+`TELERITHM_TAIL_LINES` lines:
 
 ```bash
 # Create systemd service
@@ -207,14 +242,15 @@ bash scripts/relay-config.test.sh path/to/.relay.yml
 
 ### collect-docker-logs.sh
 
-| Variable               | Default                        | Description                                  |
-| ---------------------- | ------------------------------ | -------------------------------------------- |
-| `TELERITHM_API`        | `http://localhost:4000/api/v1` | Telerithm API base URL                       |
-| `TELERITHM_SOURCE_ID`  | (required)                     | Log source ID from Telerithm                 |
-| `TELERITHM_API_KEY`    | (required)                     | API key for the source                       |
-| `TELERITHM_CONTAINERS` | (required)                     | Space-separated list of containers           |
-| `TELERITHM_TAIL_LINES` | `100`                          | Number of log lines to fetch (one-time mode) |
-| `TELERITHM_FOLLOW`     | `false`                        | Follow logs continuously                     |
+| Variable               | Default                                                  | Description                                           |
+| ---------------------- | --------------------------------------------------------- | ----------------------------------------------------- |
+| `TELERITHM_API`        | `http://localhost:4000/api/v1`                           | Telerithm API base URL                                |
+| `TELERITHM_SOURCE_ID`  | (required)                                               | Log source ID from Telerithm                          |
+| `TELERITHM_API_KEY`    | (required)                                               | API key for the source                                |
+| `TELERITHM_CONTAINERS` | (required)                                               | Space-separated list of containers                    |
+| `TELERITHM_TAIL_LINES` | `100`                                                    | Number of log lines to fetch (one-time mode)          |
+| `TELERITHM_FOLLOW`     | `false`                                                  | Follow logs continuously                              |
+| `TELERITHM_STATE_DIR`  | `${XDG_STATE_HOME:-$HOME/.local/state}/telerithm-collector` | Directory for the per-container state files (see "State and Duplicates"); an empty value counts as unset |
 
 ### setup-sources.sh
 
@@ -226,17 +262,30 @@ bash scripts/relay-config.test.sh path/to/.relay.yml
 
 ## Dependencies
 
-Both scripts require:
+`collect-docker-logs.sh` requires:
 
 - `docker` - Docker CLI
+- `jq` - JSON processor
+- `curl` - HTTP client
+
+`setup-sources.sh` only calls the API and needs no Docker:
+
 - `jq` - JSON processor
 - `curl` - HTTP client
 
 Install on Ubuntu/Debian:
 
 ```bash
+# collect-docker-logs.sh
 apt-get install -y docker.io jq curl
+
+# setup-sources.sh only
+apt-get install -y jq curl
 ```
+
+The cron example above additionally uses `flock` (from util-linux, standard on
+Linux hosts that run cron). macOS has no `flock`, which is why the lock lives
+in the cron line and not inside the script.
 
 ## Log Format
 
