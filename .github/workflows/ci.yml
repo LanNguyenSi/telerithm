@@ -296,6 +296,12 @@ jobs:
       - name: Make deploy tests
         run: bash scripts/make-deploy.test.sh
 
+      # Every published port of the dev compose bound to the loopback
+      # interface, plus controls on mutated copies. Parses the compose file
+      # with python3, no Docker needed.
+      - name: Dev compose loopback ports
+        run: bash scripts/dev-compose-loopback.test.sh
+
   clickhouse-config:
     name: ClickHouse config
     runs-on: ubuntu-latest
