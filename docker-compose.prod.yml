@@ -160,13 +160,15 @@ services:
     # Traefik's docker provider routes only to containers that are healthy (or
     # have no healthcheck): after each (re)start the frontend is not routed
     # until the first probe succeeds. The image has no curl or wget, hence node.
+    # 127.0.0.1, not localhost: localhost resolves to ::1 first, and Next
+    # listens on 0.0.0.0 only.
     healthcheck:
       test:
         [
           "CMD",
           "node",
           "-e",
-          "fetch('http://localhost:3000/', {redirect: 'manual', signal: AbortSignal.timeout(5000)}).then(r => process.exit(r.status < 400 ? 0 : 1)).catch(() => process.exit(1))",
+          "fetch('http://127.0.0.1:3000/', {redirect: 'manual', signal: AbortSignal.timeout(5000)}).then(r => process.exit(r.status < 400 ? 0 : 1)).catch(() => process.exit(1))",
         ]
       interval: 30s
       timeout: 10s

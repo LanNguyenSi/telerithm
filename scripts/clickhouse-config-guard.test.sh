@@ -155,7 +155,17 @@ fe_probe_head='    healthcheck:
           "CMD",
           "node",
           "-e",
-          "fetch('"'"'http://localhost:3000/'"'"
+          "fetch('"'"'http://127.0.0.1:3000/'"'"
+fe_test_block=$(cat <<'EOF_BLOCK'
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/', {redirect: 'manual', signal: AbortSignal.timeout(5000)}).then(r => process.exit(r.status < 400 ? 0 : 1)).catch(() => process.exit(1))",
+        ]
+EOF_BLOCK
+)
 fe_limits_traefik='          memory: 256M
           cpus: "0.5"
     labels:'
@@ -231,5 +241,37 @@ replace docker-compose.traefik.yml '      start_period: 30s
       disable: true
     networks:'
 expect_fail "frontend healthcheck disabled (traefik)" "docker-compose.traefik.yml: service frontend has no healthcheck"
+
+fresh_copy
+replace docker-compose.traefik.yml "$fe_test_block" '      test: ["NONE"]'
+expect_fail "frontend healthcheck test is NONE (traefik)" "docker-compose.traefik.yml: service frontend has no healthcheck"
+
+fresh_copy
+replace docker-compose.prod.yml "$fe_test_block" '      test: ["NONE"]'
+expect_fail "frontend healthcheck test is NONE (prod)" "docker-compose.prod.yml: service frontend has no healthcheck"
+
+fresh_copy
+replace docker-compose.traefik.yml "fetch('http://127.0.0.1:3000/'," "fetch('http://127.0.0.1:3000/health',"
+expect_fail "frontend probe path differs (traefik only)" "healthcheck of service frontend differs between docker-compose.prod.yml and docker-compose.traefik.yml"
+
+fresh_copy
+replace docker-compose.traefik.yml '      start_period: 30s
+    networks:' '      start_period: 60s
+    networks:'
+expect_fail "frontend start_period differs (traefik only)" "healthcheck of service frontend differs between docker-compose.prod.yml and docker-compose.traefik.yml"
+
+# A service behind a compose profile is rendered only with --profile '*', so
+# without it this one would skip every per-service check.
+fresh_copy
+replace docker-compose.prod.yml "
+volumes:
+  pgdata:" "
+  debugger:
+    image: busybox:1.37
+    profiles: [debug]
+
+volumes:
+  pgdata:"
+expect_fail "unbounded service behind a profile (prod)" "docker-compose.prod.yml: service debugger has no bounded log"
 
 exit "$failed"
