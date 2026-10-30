@@ -24,6 +24,8 @@ if [ ! -f "${COMPOSE_FILE}" ]; then
   echo "FAIL - ${COMPOSE_FILE} not found"
   exit 1
 fi
+# Absolute, so control k can hand it to a child started in another directory.
+COMPOSE_FILE="$(CDPATH='' cd -- "$(dirname -- "${COMPOSE_FILE}")" && pwd)/$(basename -- "${COMPOSE_FILE}")"
 
 # check <file>: run the embedded checker, set OUT and RC. The status is
 # captured inside the command (|| RC=$?) so the script also survives the
@@ -202,13 +204,25 @@ else bad "missing PyYAML fails the checker: ${JOUT}"; fi
 SACRIFICE="${SCRATCH}/sacrifice"
 mkdir -p "${SACRIFICE}"
 touch "${SACRIFICE}/canary.txt"
-RC=0
-OUT="$( (cd "${SACRIFICE}" && TMPDIR="${SCRATCH}/no-such-tmpdir" \
-  bash "${SCRIPT_DIR}/dev-compose-loopback.test.sh" "${COMPOSE_FILE}") 2>&1 )" || RC=$?
-if [ "${RC}" -ne 0 ] && grep -qF "FAIL - mktemp failed" <<< "${OUT}" \
-  && [ -d "${SACRIFICE}" ] && [ -f "${SACRIFICE}/canary.txt" ]; then
-  ok "unusable TMPDIR exits non-zero and leaves the caller's directory intact"
-else bad "unusable TMPDIR: rc=${RC} out=${OUT} sacrifice dir exists=$([ -d "${SACRIFICE}" ] && echo yes || echo no) canary exists=$([ -f "${SACRIFICE}/canary.txt" ] && echo yes || echo no)"; fi
+# The child runs under the same bash as this script, skips this control
+# (DEV_COMPOSE_LOOPBACK_CHILD) so a regression cannot recurse, and is bounded
+# by a 30 s limit, after which it is killed and the control fails.
+if [ "${DEV_COMPOSE_LOOPBACK_CHILD:-}" != "1" ]; then
+  RC=0
+  ( cd "${SACRIFICE}" && TMPDIR="${SCRATCH}/no-such-tmpdir" DEV_COMPOSE_LOOPBACK_CHILD=1 \
+    "${BASH}" "${SCRIPT_DIR}/dev-compose-loopback.test.sh" "${COMPOSE_FILE}" ) > "${SCRATCH}/child.out" 2>&1 &
+  CHILD=$!
+  WAITED=0
+  while kill -0 "${CHILD}" 2>/dev/null && [ "${WAITED}" -lt 30 ]; do sleep 1; WAITED=$((WAITED + 1)); done
+  TIMED_OUT=0
+  if kill -0 "${CHILD}" 2>/dev/null; then kill -KILL "${CHILD}" 2>/dev/null; TIMED_OUT=1; fi
+  wait "${CHILD}" || RC=$?
+  OUT="$(cat "${SCRATCH}/child.out")"
+  if [ "${TIMED_OUT}" -eq 0 ] && [ "${RC}" -ne 0 ] && grep -qF "FAIL - mktemp failed" <<< "${OUT}" \
+    && [ -d "${SACRIFICE}" ] && [ -f "${SACRIFICE}/canary.txt" ]; then
+    ok "unusable TMPDIR exits non-zero and leaves the caller's directory intact"
+  else bad "unusable TMPDIR: rc=${RC} timed_out=${TIMED_OUT} out=${OUT} sacrifice dir exists=$([ -d "${SACRIFICE}" ] && echo yes || echo no) canary exists=$([ -f "${SACRIFICE}/canary.txt" ] && echo yes || echo no)"; fi
+fi
 
 echo
 echo "passed: ${PASS}, failed: ${FAIL}"
