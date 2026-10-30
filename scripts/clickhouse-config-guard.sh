@@ -21,6 +21,14 @@
 #      telerithm_* volumes (the live stack's volumes derive from that name), so
 #      `docker compose -f docker-compose.prod.yml up` on the production
 #      checkout cannot recreate the production containers
+#   5. every service of each prod compose has a bounded json-file log
+#      (max-size and max-file), memory and cpu limits and a healthcheck, and a
+#      service present in both composes has the same rendered logging block,
+#      the same limits and the same rendered healthcheck in both (the composes
+#      are mirrors, and nothing but this check tells when one drifts: the
+#      x-logging anchor, the per-service deploy blocks and the healthchecks are
+#      plain YAML that compose never compares). Services behind a compose
+#      profile are rendered and checked too (--profile '*').
 #
 # Usage: scripts/clickhouse-config-guard.sh [repo-root]
 # Needs docker compose and python3. No .env is read: the compose variables get
@@ -38,8 +46,10 @@ for f in "${composes[@]}"; do
   out="$tmp/${f%.yml}.json"
   # --env-file /dev/null: never read a real .env next to the compose file.
   # env -u COMPOSE_PROJECT_NAME: the name check below must see the file's own name.
+  # --profile '*': compose renders only the active profiles, so a service behind
+  # a profile would otherwise skip every per-service check below.
   if ! env -u COMPOSE_PROJECT_NAME POSTGRES_PASSWORD=ci-dummy OPENAI_API_KEY=ci-dummy \
-    docker compose --env-file /dev/null -f "$root/$f" config --format json >"$out"; then
+    docker compose --env-file /dev/null --profile '*' -f "$root/$f" config --format json >"$out"; then
     echo "clickhouse-config-guard: FAIL: docker compose config failed for $f" >&2
     exit 1
   fi
@@ -76,9 +86,11 @@ forbidden_env = [
 
 mount_sets = {}
 identities = {}
+all_services = {}
 for name, path in rendered:
     with open(path) as fh:
         doc = json.load(fh)
+    all_services[name] = doc.get("services") or {}
     service = doc.get("services", {}).get("clickhouse")
     identities[name] = {
         "project": doc.get("name"),
@@ -147,6 +159,47 @@ if prod_file in identities and live_file in identities:
     if shared_networks:
         fail(f"{prod_file} and {live_file} share the networks {sorted(shared_networks)}")
 
+# 5. logging, limits and healthchecks of every service, and their mirroring.
+# Compared on the rendered config: compose resolves the *default-logging alias
+# and normalises memory to bytes, so the YAML text does not matter. Services
+# are taken from the files, not from a fixed list.
+def log_bound(service):
+    logging = service.get("logging") or {}
+    options = logging.get("options") or {}
+    return logging.get("driver") == "json-file" and bool(options.get("max-size")) and bool(options.get("max-file"))
+
+
+def limit(service, key):
+    return (((service.get("deploy") or {}).get("resources") or {}).get("limits") or {}).get(key)
+
+
+def has_healthcheck(service):
+    check = service.get("healthcheck") or {}
+    return bool(check.get("test")) and not check.get("disable") and check.get("test") != ["NONE"]
+
+
+for name, services in all_services.items():
+    for svc, service in sorted(services.items()):
+        if not log_bound(service):
+            fail(f"{name}: service {svc} has no bounded log: logging is {service.get('logging')!r}, must be driver json-file with max-size and max-file (use logging: *default-logging)")
+        for key in ("memory", "cpus"):
+            if limit(service, key) is None:
+                fail(f"{name}: service {svc} has no deploy.resources.limits.{key}")
+        if not has_healthcheck(service):
+            fail(f"{name}: service {svc} has no healthcheck (Compose never restarts an unhealthy container, but docker compose ps and Traefik's docker provider read it)")
+
+if len(all_services) == 2:
+    (name_a, services_a), (name_b, services_b) = all_services.items()
+    for svc in sorted(set(services_a) & set(services_b)):
+        if services_a[svc].get("logging") != services_b[svc].get("logging"):
+            fail(f"logging of service {svc} differs between {name_a} and {name_b}: {services_a[svc].get('logging')!r} vs {services_b[svc].get('logging')!r}")
+        if services_a[svc].get("healthcheck") != services_b[svc].get("healthcheck"):
+            fail(f"healthcheck of service {svc} differs between {name_a} and {name_b}: {services_a[svc].get('healthcheck')!r} vs {services_b[svc].get('healthcheck')!r}")
+        for key in ("memory", "cpus"):
+            value_a, value_b = limit(services_a[svc], key), limit(services_b[svc], key)
+            if value_a is not None and value_b is not None and str(value_a) != str(value_b):
+                fail(f"deploy.resources.limits.{key} of service {svc} differs between {name_a} and {name_b}: {value_a!r} vs {value_b!r}")
+
 # 2. XML files
 for sub in ("config.d", "users.d"):
     directory = os.path.join(root, "backend", "clickhouse", sub)
@@ -176,5 +229,5 @@ if failures:
     for msg in failures:
         print(f"clickhouse-config-guard: FAIL: {msg}", file=sys.stderr)
     sys.exit(1)
-print("clickhouse-config-guard: OK (mounts, XML roots, entrypoint variables, project names)")
+print("clickhouse-config-guard: OK (mounts, XML roots, entrypoint variables, project names, logging, limits, healthchecks)")
 PY

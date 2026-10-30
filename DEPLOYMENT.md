@@ -156,6 +156,12 @@ Expected memory usage (8GB VPS):
 
 A deploy through deploy-panel / agent-relay builds the pulled commit once, from the build cache (the old pre-pull `--no-cache` rebuild in `.relay.yml`'s `pre_update` built the previous commit and is gone). The cache therefore decides what a deploy contains: after a security update in the base image, or when you suspect a stale layer, run on the server after the deploy `docker compose -f docker-compose.traefik.yml --env-file .env.production build --pull --no-cache` then `docker compose -f docker-compose.traefik.yml --env-file .env.production up -d` (`--pull` fetches the newer base image; `make deploy` runs the same build, so it already does both). That is a manual step, not part of the relay flow.
 
+A relay deploy reads a different env file than the commands above. agent-relay runs plain `docker compose -f <compose_file> build` and `docker compose -f <compose_file> up -d` in the app directory, with no `--env-file`, and its app config has no env-file option (an `env_file:` key in `.relay.yml` is not an accepted key and is silently dropped). Docker Compose therefore reads the checkout's `.env` there and never looks at `.env.production`. `make deploy` and the manual commands in this file read `.env.production` via `--env-file` instead.
+
+Both files feed the same containers, so they must hold the same values. On a relay-managed host, treat `.env` as the file that counts: relay deploys read it, and the deploy-panel env editor and its secret provisioning write it. Keep `.env.production` as an identical copy for `make deploy` and the manual commands, and copy `.env` over it after every change made through the panel. A `.env -> .env.production` symlink does not keep them together: the env editor and secret provisioning replace `.env` with a regular file (write to a temp file, then rename), so the link is gone after the first save.
+
+On a rebuilt host, and after an env change, validate from the checkout with `docker compose -f docker-compose.traefik.yml config --quiet` and `cmp .env .env.production`: the first must print no `variable is not set` warning (a checkout with only `.env.production` fails it on every variable the compose file references, for example `POSTGRES_PASSWORD`, because relay deploys would see them unset), the second must report no difference.
+
 By hand (the same steps; `make deploy` additionally builds with `--pull --no-cache` and recreates the containers with `--force-recreate`, so it always picks up a changed dependency and a newer base image):
 
 ```bash
@@ -330,6 +336,14 @@ docker compose -f docker-compose.traefik.yml logs -f backend
 # Resource usage
 docker stats
 ```
+
+### Frontend health
+
+The `frontend` service has a healthcheck, so `docker compose -f docker-compose.traefik.yml ps` shows `(healthy)` for it like for the backend. The probe asks `http://127.0.0.1:3000/` from inside the container without following the redirect and passes on any status below 400: the Next.js middleware answers `/` with a 307 to `/login` without calling the backend, so the probe says the frontend server answers, not that the backend is up (`/login` itself renders on the server with a call to the backend and answers 500 while the backend is unreachable, so it is not used as the probe). The image has no `curl` or `wget`, hence `node`. The address is `127.0.0.1`, not `localhost`: inside the container `localhost` resolves to `::1` first while Next listens on `0.0.0.0` only, so a `localhost` probe passes only through Node's network-family autoselection (measured: `node --no-network-family-autoselection` exits 1 for `localhost` and 0 for `127.0.0.1`).
+
+- A container that is `starting` or `unhealthy` gets no traffic from Traefik: the docker provider (Traefik v2.11, `pkg/provider/docker/config.go`) skips a container whose health status is not `healthy` unless it has no healthcheck, and re-reads the routes on every `health_status` event. `demo.telerithm.cloud` answers 404 for the frontend routes (the `/api` routes belong to the backend, which has its own healthcheck) from a recreate of the frontend until its first probe succeeds. Docker Engine 25 and later probes every 5 s during the 30 s start period (measured on 29.5: healthy 5 s after the start); older engines probe first after the 30 s interval.
+- Compose never restarts an unhealthy container: `restart: unless-stopped` acts on exit only. `unhealthy` takes three failed probes after the start period (measured about 90 s from the start for a frontend that never answered). The site stays dark until a probe succeeds again, which is at most one interval after a frontend that recovers on its own, or until someone restarts a frontend that does not recover (`docker compose -f docker-compose.traefik.yml restart frontend`), so alert on it.
+- The relay's own deploy check hits `/api/v1/health` (the backend), so a frontend that never becomes healthy does not roll the deploy back. After a deploy check that `ps` lists the frontend as `healthy` and that the site answers.
 
 ### Prometheus metrics
 

@@ -1,6 +1,11 @@
 name: telerithm
 health: /api/v1/health
 compose_file: docker-compose.traefik.yml
+# Env files: the relay runs compose in this checkout without --env-file, so a
+# relay deploy reads the .env here, never .env.production, while make deploy
+# and the manual commands in DEPLOYMENT.md read .env.production via --env-file.
+# The two files must agree; which one counts, how to keep them equal and the
+# `config --quiet` check are in DEPLOYMENT.md, "Updating".
 # No post_update hook: the backend container applies the database migrations
 # itself before it starts the server (backend/entrypoint.sh), and that
 # entrypoint is the only writer of the schema. A hook running prisma db push
