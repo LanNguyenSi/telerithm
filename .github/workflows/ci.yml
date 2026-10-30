@@ -273,8 +273,9 @@ jobs:
 
           out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/value-text.conf 2>&1) || { echo "$out"; echo "value-text.conf failed but must pass"; exit 1; }
 
-      # Warnings and errors fail the job; style notes (for example the ls
-      # globs in backup.sh) are reported but do not.
+      # Warnings and errors fail the job; info and style notes (for example
+      # SC2016 on text the test scripts single-quote on purpose) are not
+      # reported at this severity.
       - name: Shellcheck
         run: shellcheck --severity=warning scripts/*.sh backend/entrypoint.sh backend/scripts/*.sh
 
@@ -302,6 +303,19 @@ jobs:
       # Needs only bash and jq.
       - name: Docker log collector tests
         run: bash scripts/collect-docker-logs.test.sh
+
+      # Every published port of the dev compose bound to the loopback
+      # interface, plus controls on mutated copies. Parses the compose file
+      # with python3, no Docker needed.
+      - name: Dev compose loopback ports
+        run: bash scripts/dev-compose-loopback.test.sh
+
+      # Every scripts/*.test.sh started with a TMPDIR that does not exist, from
+      # a directory holding one canary file: it must stop without deleting or
+      # writing anything there (an unchecked mktemp let a cleanup trap delete
+      # the directory a test was started from).
+      - name: Test scratch directory safety
+        run: bash scripts/test-scratch-safety.test.sh
 
   clickhouse-config:
     name: ClickHouse config
