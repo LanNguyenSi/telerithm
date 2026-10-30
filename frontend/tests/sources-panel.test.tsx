@@ -189,6 +189,7 @@ describe("SourcesPanel: key masking in the list", () => {
 
   it.each([
     ["short", "lf_abcd_", "****"],
+    ["one below the threshold", "lf_abcd_123", "****"],
     ["exactly 12", "lf_abcd_1234", "lf_****1234"],
     ["no underscore", "abcdefgh12345678", "****5678"],
     ["long prefix", "abcdefghij_klmnopqrstabcd", "abcdefgh****abcd"],
