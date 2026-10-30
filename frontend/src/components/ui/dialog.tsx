@@ -108,10 +108,6 @@ export function Dialog(props: DialogProps) {
   const titleId = useId();
   const bodyId = useId();
 
-  // A watcher running while the dialog unmounts has to end with it; the open
-  // effect's own cleanup ran already when the dialog closed.
-  useEffect(() => () => stopRemovalWatch.current?.(), []);
-
   useEffect(() => {
     if (!open) return;
     if (props.variant === "prompt") {
@@ -156,6 +152,12 @@ export function Dialog(props: DialogProps) {
       stopRemovalWatch.current = watchOpenerRemoval(opener, ancestors);
     };
   }, [open]);
+
+  // A watcher running while the dialog unmounts has to end with it. Declared
+  // after the open effect on purpose: on unmount React runs cleanups in
+  // declaration order, so a dialog that unmounts while still open first runs
+  // the open effect's cleanup (which may install the watcher) and then this one.
+  useEffect(() => () => stopRemovalWatch.current?.(), []);
 
   // Tab and Shift+Tab wrap inside the dialog; focus that sits outside is pulled in.
   useEffect(() => {

@@ -394,6 +394,50 @@ describe("Dialog focus when the confirmed action removes the opener later", () =
     expect(document.activeElement).toBe(document.body);
   });
 
+  it("leaves no watcher behind when only the dialog unmounts while it is still open", async () => {
+    const observes = vi.spyOn(MutationObserver.prototype, "observe");
+    const disconnects = vi.spyOn(MutationObserver.prototype, "disconnect");
+    try {
+      const { rerender } = render(
+        <main>
+          <section data-testid="host">
+            <button type="button">Opener</button>
+          </section>
+          <Dialog open={false} variant="confirm" title="Sure?" onClose={vi.fn()} onConfirm={vi.fn()} />
+        </main>,
+      );
+      const opener = screen.getByRole("button", { name: "Opener" });
+      opener.focus();
+      rerender(
+        <main>
+          <section data-testid="host">
+            <button type="button">Opener</button>
+          </section>
+          <Dialog open variant="confirm" title="Sure?" onClose={vi.fn()} onConfirm={vi.fn()} />
+        </main>,
+      );
+      // Unmount only the dialog, still open; the opener stays connected.
+      rerender(
+        <main>
+          <section data-testid="host">
+            <button type="button">Opener</button>
+          </section>
+        </main>,
+      );
+      expect(disconnects.mock.calls.length).toBeGreaterThanOrEqual(observes.mock.calls.length);
+      const host = screen.getByTestId("host");
+      act(() => {
+        opener.remove();
+      });
+      await act(async () => {});
+      expect(host.hasAttribute("tabindex")).toBe(false);
+      expect(document.querySelector("main")?.hasAttribute("tabindex")).toBe(false);
+    } finally {
+      observes.mockRestore();
+      disconnects.mockRestore();
+    }
+  });
+
   it("stops watching after the timeout so a late removal moves no focus", async () => {
     vi.useFakeTimers();
     try {
