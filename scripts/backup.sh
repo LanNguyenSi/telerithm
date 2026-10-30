@@ -12,6 +12,28 @@ set -euo pipefail
 # clickhouse services of that stack are not running, so a cron job cannot report
 # success for a stack that is not the one in production.
 #
+# Retention: after a successful backup it keeps the newest 10 backups and removes
+# those older than 10 days, but only directories named YYYYMMDD_HHMMSS that hold
+# both dumps (the ones this script writes). Anything else in <backup_dir> is left
+# alone, with one note saying how many entries. An old backup that cannot be
+# removed is a WARNING on stderr and does not stop the run (the loop goes on and
+# the off-host hook still runs), but the run then exits 2 after the hook block
+# with an ERROR line: housekeeping that silently stops working would fill the
+# disk unnoticed. The new backup is complete and kept in that case. The exit 2
+# for a partly removed backup comes only from the run whose removal failed: an
+# old backup that rm could only partly remove (its dumps gone, a locked
+# subdirectory left) is no longer a complete backup, so later runs leave it
+# alone and exit 0, and from then on only the "left alone" note reports it. An
+# old backup rm cannot remove at all stays complete, so every later run warns
+# and exits 2 again until it is removed.
+#
+# Exit codes: 0 success; 1 any other failure (checks before the dumps, a failed
+# dump, a failed off-host hook, any other command that fails, whatever its own
+# exit status); 2 only the retention step could not remove old backups. When
+# the hook fails as well, 1 wins (the off-host copy is missing, which is the
+# worse state); the retention ERROR line is printed before the hook runs, so it
+# shows in that case too.
+#
 # Output (in <backup_dir>/<timestamp>/):
 #   postgres.sql.gz            pg_dump, restore with psql (DEPLOYMENT.md, Backup)
 #   clickhouse_logs.native.gz  logs table in Native format, restore with
@@ -29,7 +51,7 @@ set -euo pipefail
 #                         the backup stays local. The dumps hold source API keys
 #                         in clear text: encrypt them in the hook before they
 #                         leave the host. A hook that fails makes this script
-#                         exit non-zero; the local backup is kept.
+#                         exit 1; the local backup is kept.
 
 # Every `cd` below is prefixed with an empty CDPATH: an exported CDPATH would
 # otherwise resolve a relative directory against it (and print it), so the
@@ -45,6 +67,12 @@ fail() {
   echo "[backup] ERROR: $*" >&2
   exit 1
 }
+# Any other command that stops the script under `set -e` exits 1 as well, not
+# with its own status: 2 means only that retention failed (see Exit codes), and
+# a command's own 2 (or 137 after a kill) must not read as that. The trap
+# covers top-level commands only (no errtrace): code added inside a function or
+# a subshell must map its own failure with `|| fail`.
+trap 'echo "[backup] ERROR: command failed with exit $? (line ${LINENO})" >&2; exit 1' ERR
 
 [ -f "${COMPOSE_FILE}" ] || fail "compose file not found: ${COMPOSE_FILE}"
 if [ -n "${OFFHOST_HOOK}" ]; then
@@ -104,27 +132,87 @@ echo "[backup] Starting backup at ${TIMESTAMP} (stack: ${COMPOSE_FILE})"
 # PostgreSQL backup
 echo "[backup] Dumping PostgreSQL..."
 "${COMPOSE[@]}" exec -T postgres pg_dump -U telerithm telerithm \
-  | gzip > "${BACKUP_PATH}/postgres.sql.gz.partial"
-mv "${BACKUP_PATH}/postgres.sql.gz.partial" "${BACKUP_PATH}/postgres.sql.gz"
+  | gzip > "${BACKUP_PATH}/postgres.sql.gz.partial" \
+  || fail "PostgreSQL dump failed; the incomplete backup directory is removed"
+mv "${BACKUP_PATH}/postgres.sql.gz.partial" "${BACKUP_PATH}/postgres.sql.gz" \
+  || fail "could not rename the PostgreSQL dump; the incomplete backup directory is removed"
 echo "[backup] PostgreSQL dump complete"
 
 # ClickHouse backup (Native format, the format DEPLOYMENT.md restores from)
 echo "[backup] Dumping ClickHouse logs table..."
 "${COMPOSE[@]}" exec -T clickhouse clickhouse-client \
   --query "SELECT * FROM logs FORMAT Native" \
-  | gzip > "${BACKUP_PATH}/clickhouse_logs.native.gz.partial"
-mv "${BACKUP_PATH}/clickhouse_logs.native.gz.partial" "${BACKUP_PATH}/clickhouse_logs.native.gz"
+  | gzip > "${BACKUP_PATH}/clickhouse_logs.native.gz.partial" \
+  || fail "ClickHouse dump failed; the incomplete backup directory is removed"
+mv "${BACKUP_PATH}/clickhouse_logs.native.gz.partial" "${BACKUP_PATH}/clickhouse_logs.native.gz" \
+  || fail "could not rename the ClickHouse dump; the incomplete backup directory is removed"
 echo "[backup] ClickHouse dump complete"
 DUMPS_COMPLETE=1
 
-# Cleanup old backups (keep last 10 by count, max 10 days)
+# Retention: keep the newest 10 backups and drop those older than 10 days.
+# Only entries this script wrote are candidates: a real directory (not a
+# symlink) named YYYYMMDD_HHMMSS that holds both finished dumps. Everything
+# else in the backup directory (other applications' directories, files,
+# symlinks, a timestamp-named directory without both dumps) is left alone and
+# only counted in one note, so pointing the script at a shared directory such
+# as /backups instead of /backups/telerithm cannot delete anything unrelated.
+# "Newest" is decided by the timestamp in the name; the age rule uses the
+# directory's modification time. The backup written by this run is never
+# removed.
 CDPATH='' cd -- "${BACKUP_DIR}" >/dev/null
-BACKUP_COUNT=$(ls -d */ 2>/dev/null | wc -l)
-if [ "${BACKUP_COUNT}" -gt 10 ]; then
-  ls -dt */ | tail -n +11 | xargs rm -rf
+# Explicit digit class, not [0-9]: under glibc with a UTF-8 locale a range can
+# match other digits (fullwidth ones, for example), so a foreign directory with
+# such a name would count as a backup.
+TIMESTAMP_RE='^[0123456789]{8}_[0123456789]{6}$'
+RETAINABLE=()
+LEFT_ALONE=0
+RETENTION_FAILED=0
+# The three globs cover every name (plain, one dot, two dots) without matching
+# . or ..; a glob that matches nothing stays literal and is skipped below.
+for entry in "${BACKUP_DIR}"/* "${BACKUP_DIR}"/.[!.]* "${BACKUP_DIR}"/..?*; do
+  if [ ! -e "${entry}" ] && [ ! -L "${entry}" ]; then
+    continue
+  fi
+  entry_name="${entry##*/}"
+  if [[ "${entry_name}" =~ ${TIMESTAMP_RE} ]] \
+    && [ -d "${entry}" ] && [ ! -L "${entry}" ] \
+    && [ -f "${entry}/postgres.sql.gz" ] \
+    && [ -f "${entry}/clickhouse_logs.native.gz" ]; then
+    RETAINABLE+=("${entry_name}")
+  else
+    LEFT_ALONE=$((LEFT_ALONE + 1))
+  fi
+done
+if [ "${LEFT_ALONE}" -gt 0 ]; then
+  NOUN=entries
+  if [ "${LEFT_ALONE}" -eq 1 ]; then
+    NOUN=entry
+  fi
+  echo "[backup] Retention left ${LEFT_ALONE} ${NOUN} in ${BACKUP_DIR} alone (not a complete YYYYMMDD_HHMMSS backup directory written by this script)" >&2
 fi
-# Also remove anything older than 10 days
-find "${BACKUP_DIR}" -maxdepth 1 -type d -mtime +10 -exec rm -rf {} \;
+if [ "${#RETAINABLE[@]}" -gt 0 ]; then
+  RANK=0
+  # Newest name first; every name here matched TIMESTAMP_RE, so it holds no
+  # newline and no character that could be read as an option or a path.
+  while IFS= read -r entry_name; do
+    RANK=$((RANK + 1))
+    if [ "${entry_name}" = "${TIMESTAMP}" ]; then
+      continue
+    fi
+    entry="${BACKUP_DIR}/${entry_name}"
+    if [ "${RANK}" -gt 10 ] || [ -n "$(find "${entry}" -maxdepth 0 -mtime +10 2>/dev/null)" ]; then
+      if ! rm -rf -- "${entry}"; then
+        echo "[backup] WARNING: could not remove the old backup ${entry}" >&2
+        RETENTION_FAILED=$((RETENTION_FAILED + 1))
+      fi
+    fi
+  done < <(printf '%s\n' "${RETAINABLE[@]}" | LC_ALL=C sort -r)
+fi
+# Reported now, acted on (exit 2) after the off-host hook, so the hook still
+# gets the good backup. The EXIT trap keeps it: the dumps are complete.
+if [ "${RETENTION_FAILED}" -gt 0 ]; then
+  echo "[backup] ERROR: retention could not remove ${RETENTION_FAILED} old backup(s); the backup is complete" >&2
+fi
 
 echo "[backup] Backup complete: ${BACKUP_PATH}"
 ls -lh "${BACKUP_PATH}"
@@ -136,4 +224,8 @@ if [ -n "${OFFHOST_HOOK}" ]; then
   echo "[backup] Off-host hook complete"
 else
   echo "[backup] BACKUP_OFFHOST_HOOK not set: backup stays on this host only"
+fi
+
+if [ "${RETENTION_FAILED}" -gt 0 ]; then
+  exit 2
 fi
