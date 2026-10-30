@@ -22,6 +22,7 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ### Security
 
+- **The dev stack's backend and frontend ports are published on the loopback interface only.** `docker-compose.yml` published `4000:4000` and `3000:3000` without a host IP, so with the stack up anyone on the same network could open http://<host>:3000, and, because the dev stack registers `admin@telerithm.local` as instance admin with open signup by default, register that address first and own the instance. Both entries are now `127.0.0.1:4000:4000` and `127.0.0.1:3000:3000` (the datastore ports were already loopback), so nothing is reachable from another machine; reach the stack from one with an SSH tunnel (`ssh -L 3000:localhost:3000 -L 4000:localhost:4000 <host>`) or a compose override that republishes the ports (README, DEPLOYMENT.md). `docker-compose.prod.yml` keeps its all-interface `4000`/`3000` publishes by design: it is the non-Traefik reference variant, fronted by a firewall or reverse proxy of the operator's choosing. `scripts/dev-compose-loopback.test.sh` (a step in the CI job "Shell script tests") fails when any published port of `docker-compose.yml` is not bound to `127.0.0.1` (long syntax needs `host_ip: 127.0.0.1`), with controls on mutated copies.
 - Lockfile-only bumps for GHSA-6pq8-jhm2-2vcw (`qs.stringify` with `arrayFormat: 'comma'` throws on array elements with a non-callable own `toString`): `backend/package-lock.json` qs 6.16.0 -> 6.16.2, `frontend/package-lock.json` qs 6.16.0 -> 6.17.0 (dev only), within the existing manifest ranges.
 
 ### Added
