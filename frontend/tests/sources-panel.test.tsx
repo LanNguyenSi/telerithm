@@ -55,14 +55,19 @@ describe("SourcesPanel", () => {
       expect(screen.getByText("HTTP")).toBeInTheDocument();
       expect(screen.getByText("DOCKER")).toBeInTheDocument();
       expect(container.querySelector("span.font-mono")).toBeNull();
+      expect(screen.queryByRole("button", { name: /API key of/ })).toBeNull();
       expect(container.textContent).not.toMatch(/undefined/);
     },
   );
 
-  it.each(["OWNER", "ADMIN"] as const)("shows the existing key of a listed source to %s", (role) => {
-    renderPanel(role);
-    expect(screen.getByText("lf_existing")).toBeInTheDocument();
-  });
+  it.each(["OWNER", "ADMIN"] as const)(
+    "shows the existing key of a listed source masked to %s, with the full key out of the DOM",
+    (role) => {
+      const { container } = renderPanel(role);
+      expect(screen.getByText("lf_****ting")).toBeInTheDocument();
+      expect(container.textContent).not.toMatch(/lf_existing/);
+    },
+  );
 
   it.each(["OWNER", "ADMIN", "MEMBER"] as const)("shows the create control for %s", (role) => {
     renderPanel(role);
@@ -159,6 +164,63 @@ describe("SourcesPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mocks.refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("SourcesPanel: key masking in the list", () => {
+  const withKey = (apiKey: string): Source => ({ ...source, apiKey });
+
+  it.each([
+    ["lf_abcd", "****"],
+    ["lf_abcd_", "lf_****bcd_"],
+    ["abcdefgh1234", "****1234"],
+    ["lf__abcd", "lf_****abcd"],
+  ])("masks %s as %s", (apiKey, masked) => {
+    const { container } = renderPanel("OWNER", [withKey(apiKey)]);
+    expect(screen.getByText(masked)).toBeInTheDocument();
+    expect(container.textContent).not.toMatch(new RegExp(apiKey));
+  });
+
+  it("reveals and hides the full key with the per-row toggle", () => {
+    const { container } = renderPanel("OWNER");
+    const reveal = screen.getByRole("button", { name: "Reveal API key of web" });
+    expect(reveal).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(reveal);
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_existing");
+    const hide = screen.getByRole("button", { name: "Hide API key of web" });
+    expect(hide).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(hide);
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_****ting");
+    expect(screen.getByRole("button", { name: "Reveal API key of web" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(container.textContent).not.toMatch(/lf_existing/);
+  });
+
+  it("copies the full key to the clipboard without revealing it", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const { container } = renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("lf_existing"));
+    expect(container.textContent).not.toMatch(/lf_existing/);
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_****ting");
+    expect(await screen.findByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+  });
+
+  it("reports a failed copy of a listed key", async () => {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: vi.fn().mockRejectedValue(new Error("denied")) },
+      configurable: true,
+    });
+    renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Copy failed/);
   });
 });
 
