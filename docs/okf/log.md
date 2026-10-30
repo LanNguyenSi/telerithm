@@ -2,6 +2,7 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-30T06:35:17Z, backup retention review fixes: a failed removal of an old backup warns per entry, the off-host hook still runs, then the script exits 2 (1 wins when the hook fails); the timestamp pattern uses an explicit digit class; `CHANGELOG.md` and `DEPLOYMENT.md` (`## Backup`) describe it. `clickhouse-retention-and-memory-limits.md` and `compose-file-topology-and-drift.md` make no backup claim; re-read, unchanged, re-stamped.
 - 2026-10-30T06:10:53Z, `CHANGELOG.md` and `DEPLOYMENT.md` (`## Backup`) describe the backup retention fix: retention prunes only complete `YYYYMMDD_HHMMSS` directories and leaves every other entry of the backup directory alone with a note (`scripts/backup.sh`, `scripts/backup.test.sh`). `clickhouse-retention-and-memory-limits.md` and `compose-file-topology-and-drift.md` cite these files for ClickHouse retention, memory limits and compose topology; neither makes a claim about backups, re-read, unchanged. Both re-stamped.
 - 2026-10-29T15:56:02Z, `CHANGELOG.md` gained the table-region tab stop and dark muted contrast pin entry (frontend only: `frontend/src/components/ui/use-overflow-tabindex.ts`, `log-table.tsx`, `issues/screen.tsx`, two tests). `clickhouse-retention-and-memory-limits.md` and `compose-file-topology-and-drift.md` cite `CHANGELOG.md` for ClickHouse retention and compose topology; the new entry says nothing about either, re-read, unchanged. Both re-stamped.
 
