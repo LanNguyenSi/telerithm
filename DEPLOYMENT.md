@@ -156,6 +156,12 @@ Expected memory usage (8GB VPS):
 
 A deploy through deploy-panel / agent-relay builds the pulled commit once, from the build cache (the old pre-pull `--no-cache` rebuild in `.relay.yml`'s `pre_update` built the previous commit and is gone). The cache therefore decides what a deploy contains: after a security update in the base image, or when you suspect a stale layer, run on the server after the deploy `docker compose -f docker-compose.traefik.yml --env-file .env.production build --pull --no-cache` then `docker compose -f docker-compose.traefik.yml --env-file .env.production up -d` (`--pull` fetches the newer base image; `make deploy` runs the same build, so it already does both). That is a manual step, not part of the relay flow.
 
+A relay deploy reads a different env file than the commands above. agent-relay runs plain `docker compose -f <compose_file> build` and `docker compose -f <compose_file> up -d` in the app directory, with no `--env-file`, and its app config has no env-file option (an `env_file:` key in `.relay.yml` is not an accepted key and is silently dropped). Docker Compose therefore reads the checkout's `.env` there and never looks at `.env.production`. `make deploy` and the manual commands in this file read `.env.production` via `--env-file` instead.
+
+Both files feed the same containers, so they must hold the same values. On a relay-managed host, treat `.env` as the file that counts: relay deploys read it, and the deploy-panel env editor and its secret provisioning write it. Keep `.env.production` as an identical copy for `make deploy` and the manual commands, and copy `.env` over it after every change made through the panel. A `.env -> .env.production` symlink does not keep them together: the env editor and secret provisioning replace `.env` with a regular file (write to a temp file, then rename), so the link is gone after the first save.
+
+On a rebuilt host, and after an env change, validate from the checkout with `docker compose -f docker-compose.traefik.yml config --quiet` and `cmp .env .env.production`: the first must print no `variable is not set` warning (a checkout with only `.env.production` fails it on every variable the compose file references, for example `POSTGRES_PASSWORD`, because relay deploys would see them unset), the second must report no difference.
+
 By hand (the same steps; `make deploy` additionally builds with `--pull --no-cache` and recreates the containers with `--force-recreate`, so it always picks up a changed dependency and a newer base image):
 
 ```bash

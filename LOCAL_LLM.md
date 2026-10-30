@@ -35,11 +35,13 @@ curl http://localhost:8000/v1/models
 
 ### 2. Configure Telerithm
 
+Set `OPENAI_MODEL` to exactly the model id your server serves. Take it from the `curl http://localhost:8000/v1/models` check above: the id is the `data[0].id` field of the response, and that is what goes into `OPENAI_MODEL`, character for character. Do not guess or reformat the name; if `OPENAI_MODEL` differs from the served id the server returns an error and the AI Query Engine falls back to heuristic parsing (see Fallback Behavior).
+
 Add these environment variables to your `.env.production`:
 
 ```bash
 OPENAI_API_KEY=sk-local-dummy
-OPENAI_MODEL=qwen3.5-4b   # the model name your local server serves
+OPENAI_MODEL=qwen3.5-4b   # placeholder: put the exact data[0].id from /v1/models here
 ```
 
 Set `OPENAI_MODEL`: without it the backend uses the Groq default `openai/gpt-oss-120b`, which a local server does not serve. The traefik compose already passes `OPENAI_MODEL` through, so do not add a second `OPENAI_MODEL` key to it (a duplicate key breaks the compose file).
@@ -111,7 +113,7 @@ docker compose -f docker-compose.traefik.yml exec backend \
       baseURL: process.env.OPENAI_BASE_URL
     });
     client.chat.completions.create({
-      model: 'Qwen3.5-4B-Q4_K_M.gguf',
+      model: process.env.OPENAI_MODEL,
       messages: [{ role: 'user', content: 'Reply with the single word OK.' }],
       max_tokens: 10
     }).then(r => console.log('LLM OK:', r.choices[0].message.content))
