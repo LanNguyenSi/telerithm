@@ -470,6 +470,22 @@ if [ "${RC}" -eq 0 ] && gone "${D17}/20010101_000000" && present "${D17}/2001010
   ok "age rule: the backup older than 10 days is removed, recent ones stay"
 else bad "age rule: rc=${RC} valid=$(valid_count "${D17}") out=${OUT}"; fi
 
+# The age boundary: `-mtime +10` means at least 11 whole days. Stamps are taken
+# from the epoch in hours (not calendar days), so a DST change cannot move them.
+# hours_ago <n>: touch -t stamp n hours back (BSD date first, then GNU date)
+hours_ago() {
+  local t=$(( $(date +%s) - $1 * 3600 ))
+  date -r "${t}" +%Y%m%d%H%M 2>/dev/null || date -d "@${t}" +%Y%m%d%H%M
+}
+D17B="${SCRATCH}/b17b"
+mkdir -p "${D17B}"
+mk_backup "${D17B}" 20010101_000000 "$(hours_ago 276)"
+mk_backup "${D17B}" 20010102_000000 "$(hours_ago 252)"
+run_backup ageboundary "${D17B}"
+if [ "${RC}" -eq 0 ] && gone "${D17B}/20010101_000000" && present "${D17B}/20010102_000000"; then
+  ok "age rule boundary: 11.5 days old is removed, 10.5 days old stays"
+else bad "age rule boundary: rc=${RC} valid=$(valid_count "${D17B}") out=${OUT}"; fi
+
 # --- 6e. the backup written by this run is never removed ------------------------
 # A clock that is far behind the existing names makes the new backup the oldest
 # by name (rank 13 of 13): the count rule would remove it.
