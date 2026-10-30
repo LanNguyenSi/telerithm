@@ -55,15 +55,72 @@ export TELERITHM_FOLLOW=true
 ./scripts/collect-docker-logs.sh
 ```
 
+### State and Duplicates
+
+The collector remembers per source and container which log lines it has already
+sent, so a per-minute cron run sends each line once and a follow run resumes
+where it stopped instead of replaying the container history:
+
+- One small state file per source and container lives under `TELERITHM_STATE_DIR`
+  (directory `0700`; a directory that already exists is `chmod 700` on every
+  run too, when the running user owns it, so a pre-existing one with looser
+  permissions is tightened; files `0600`), holding the
+  last RFC3339Nano timestamp whose lines the ingest API accepted (HTTP 202).
+  The API key is never stored.
+- The next one-shot run reads with `docker logs --since <that timestamp>` (no
+  `--tail` cap) and skips the boundary line, because `--since` is inclusive.
+  Without state it falls back to `--tail $TELERITHM_TAIL_LINES`.
+- The contract is at-least-once, per container: a batch whose send failed does
+  not advance that container's state, so its lines are re-sent by the next run.
+  And because a later accepted batch for the same container says nothing about
+  the lines of an earlier failed one, that container's state is frozen for the
+  rest of its processing once one of its sends has failed; one container's
+  failure never freezes another container's state, so a container whose sends
+  are accepted still advances in the same run. The next run re-reads from the
+  last good timestamp, so a failure costs duplicates, never loss. If the API
+  keeps rejecting a batch, that container's state stalls and its later lines are
+  re-sent on every run until the cause is fixed. An empty, truncated or
+  non-timestamp state file is treated as no state with a `[WARN]` (recent lines
+  may be re-sent).
+- A one-shot (cron) run in which any send failed exits non-zero, only after all
+  containers were processed, so cron mail or monitoring notices; a run whose
+  sends are all accepted exits 0. The frozen state is per container, so one
+  container's failure does not stop the others from advancing.
+- The state never moves to a timestamp that still has lines in a later batch:
+  batches are cut by count while docker returns lines in (near) timestamp order,
+  so a full batch is held back until the next timestamped line has a different
+  timestamp. A saved timestamp therefore has all of its lines accepted for
+  non-decreasing timestamps (docker merges stdout and stderr and can interleave
+  them slightly out of order, but it does not replay a line at an older
+  timestamp).
+- Follow mode (`TELERITHM_FOLLOW=true`, the systemd setup below) passes
+  `--follow --since <state>` and writes the state after every accepted batch,
+  so `systemctl restart` resumes; a first start with no state reads only the
+  last `TELERITHM_TAIL_LINES` lines. After a failed send the follow run exits
+  non-zero immediately (see the systemd section below).
+- A container recreated under the same name starts its log at a new time: the
+  stored timestamp is then newer than the new log, and `--since` returns
+  nothing until the new log passes it. Delete the container's state file to
+  start from now.
+- Lines from stdout and stderr are merged and the order inside one timestamp is
+  not guaranteed; at-least-once is the contract.
+- Overlapping runs would double-send; the cron example below guards against
+  them with `flock`.
+
 ### Automated Collection (Cron)
 
 For periodic log collection:
 
 ```bash
-# Create a cron job config file
+# Create a cron job config file. The line below is an /etc/cron.d file line:
+# the "root" field is the user column, which exists only in /etc/cron.d files
+# (a user crontab opened with crontab -e has no user field and would treat
+# "root" as part of the command).
 cat > /etc/cron.d/telerithm-collector <<EOF
-# Collect Docker logs every minute
-* * * * * root TELERITHM_API="http://localhost:4000/api/v1" TELERITHM_SOURCE_ID="src_abc123" TELERITHM_API_KEY="lf_xyz..." TELERITHM_CONTAINERS="triologue-api traefik" /root/git/telerithm/scripts/collect-docker-logs.sh >> /var/log/telerithm-collector.log 2>&1
+# Collect Docker logs every minute. The state file (see "State and Duplicates")
+# makes each line go once even though the run repeats; flock -n skips a run
+# that would overlap the previous one (an overlapping run would double-send).
+* * * * * root TELERITHM_API="http://localhost:4000/api/v1" TELERITHM_SOURCE_ID="src_abc123" TELERITHM_API_KEY="lf_xyz..." TELERITHM_CONTAINERS="triologue-api traefik" flock -n /var/lock/telerithm-collector.lock /root/git/telerithm/scripts/collect-docker-logs.sh >> /var/log/telerithm-collector.log 2>&1
 EOF
 
 # Restart cron
@@ -75,7 +132,17 @@ tail -f /var/log/telerithm-collector.log
 
 ### Systemd Service (Recommended for Production)
 
-For continuous log streaming:
+For continuous log streaming. The service resumes after a restart: the state
+file is written after every accepted batch (see "State and Duplicates"), so
+`systemctl restart` continues where the collector stopped instead of replaying
+the container history, and a first start reads only the last
+`TELERITHM_TAIL_LINES` lines. A failed send makes the follow run exit non-zero
+immediately, without waiting for the log stream to end: that container's state
+is frozen for the rest of its processing either way, so continuing could only
+send duplicates, and exiting lets `Restart=always` restart the collector a few
+seconds later, where it resumes from the last good timestamp and can save state
+again (nothing more is sent after the failed send, so `RestartSec` is the delay
+before the collector resumes, not a bound on a growing duplicate window):
 
 ```bash
 # Create systemd service
@@ -112,6 +179,16 @@ systemctl status telerithm-collector
 # View logs
 journalctl -u telerithm-collector -f
 ```
+
+Keep the default `KillMode=control-group` (do not set `KillMode=process`). On a
+failed send the follow run exits from inside a `while` loop that reads
+`docker logs --follow` through a process substitution, and it does not kill that
+`docker logs` child itself: killing it reliably across bash 3.2 and 5 is not
+possible, because the process-substitution pid is not the `docker logs` process
+(it runs under an `eval`, so docker is a grandchild) and `$!` names a different
+process between bash versions. With the default `KillMode=control-group` systemd
+stops the whole control group when the service exits, which takes the leftover
+`docker logs --follow` with it; `KillMode=process` would leave it orphaned.
 
 ### Validate Sender Configs
 
@@ -207,14 +284,15 @@ bash scripts/relay-config.test.sh path/to/.relay.yml
 
 ### collect-docker-logs.sh
 
-| Variable               | Default                        | Description                                  |
-| ---------------------- | ------------------------------ | -------------------------------------------- |
-| `TELERITHM_API`        | `http://localhost:4000/api/v1` | Telerithm API base URL                       |
-| `TELERITHM_SOURCE_ID`  | (required)                     | Log source ID from Telerithm                 |
-| `TELERITHM_API_KEY`    | (required)                     | API key for the source                       |
-| `TELERITHM_CONTAINERS` | (required)                     | Space-separated list of containers           |
-| `TELERITHM_TAIL_LINES` | `100`                          | Number of log lines to fetch (one-time mode) |
-| `TELERITHM_FOLLOW`     | `false`                        | Follow logs continuously                     |
+| Variable               | Default                                                  | Description                                           |
+| ---------------------- | --------------------------------------------------------- | ----------------------------------------------------- |
+| `TELERITHM_API`        | `http://localhost:4000/api/v1`                           | Telerithm API base URL                                |
+| `TELERITHM_SOURCE_ID`  | (required)                                               | Log source ID from Telerithm                          |
+| `TELERITHM_API_KEY`    | (required)                                               | API key for the source                                |
+| `TELERITHM_CONTAINERS` | (required)                                               | Space-separated list of containers                    |
+| `TELERITHM_TAIL_LINES` | `100`                                                    | Number of log lines to fetch (one-time mode)          |
+| `TELERITHM_FOLLOW`     | `false`                                                  | Follow logs continuously                              |
+| `TELERITHM_STATE_DIR`  | `${XDG_STATE_HOME:-$HOME/.local/state}/telerithm-collector` | Directory for the per-container state files (see "State and Duplicates"); an empty value counts as unset |
 
 ### setup-sources.sh
 
@@ -226,17 +304,30 @@ bash scripts/relay-config.test.sh path/to/.relay.yml
 
 ## Dependencies
 
-Both scripts require:
+`collect-docker-logs.sh` requires:
 
 - `docker` - Docker CLI
+- `jq` - JSON processor
+- `curl` - HTTP client
+
+`setup-sources.sh` only calls the API and needs no Docker:
+
 - `jq` - JSON processor
 - `curl` - HTTP client
 
 Install on Ubuntu/Debian:
 
 ```bash
+# collect-docker-logs.sh
 apt-get install -y docker.io jq curl
+
+# setup-sources.sh only
+apt-get install -y jq curl
 ```
+
+The cron example above additionally uses `flock` (from util-linux, standard on
+Linux hosts that run cron). macOS has no `flock`, which is why the lock lives
+in the cron line and not inside the script.
 
 ## Log Format
 

@@ -297,6 +297,13 @@ jobs:
       - name: Make deploy tests
         run: bash scripts/make-deploy.test.sh
 
+      # collect-docker-logs.sh against a stub docker and a stub curl: the
+      # per-container state file, the --since boundary skip, a failed send not
+      # advancing the state, follow restart resuming, state dir precedence.
+      # Needs only bash and jq.
+      - name: Docker log collector tests
+        run: bash scripts/collect-docker-logs.test.sh
+
       # Every published port of the dev compose bound to the loopback
       # interface, plus controls on mutated copies. Parses the compose file
       # with python3, no Docker needed.
