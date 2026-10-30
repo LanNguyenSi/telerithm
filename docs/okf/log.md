@@ -2,6 +2,7 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-30T06:33:28Z, review fix of the env-file contract (DEPLOYMENT.md "Updating", CHANGELOG, `.relay.yml` comment): `.env` is the file that counts on a relay-managed host, `.env.production` an identical copy, no symlink advice (the env editor replaces `.env` by rename). Both docs re-read again: no claim about env files; re-stamped.
 - 2026-10-30T06:31:30Z, docs only: DEPLOYMENT.md ("Updating") states which env file a relay deploy reads (the checkout's `.env`; `make deploy` and the manual commands read `.env.production`), `.relay.yml` gains a comment pointing there, LOCAL_LLM.md takes the served model id from `/v1/models`, `docs/api.md` names the alert-rule and incident-list routes. `compose-file-topology-and-drift.md` re-read against the `.relay.yml` comment and the new DEPLOYMENT.md paragraph: its `.relay.yml` claims (pins `compose_file`, no hooks) still hold. `clickhouse-retention-and-memory-limits.md`: the CHANGELOG and DEPLOYMENT.md edits make no ClickHouse claim. Both re-stamped.
 - 2026-10-29T15:56:02Z, `CHANGELOG.md` gained the table-region tab stop and dark muted contrast pin entry (frontend only: `frontend/src/components/ui/use-overflow-tabindex.ts`, `log-table.tsx`, `issues/screen.tsx`, two tests). `clickhouse-retention-and-memory-limits.md` and `compose-file-topology-and-drift.md` cite `CHANGELOG.md` for ClickHouse retention and compose topology; the new entry says nothing about either, re-read, unchanged. Both re-stamped.
 
