@@ -7,6 +7,13 @@
 # "4000", or long syntax without host_ip) or with 0.0.0.0: is reachable, and
 # on the open-signup stack registerable, from the whole local network.
 #
+# One more thing in the same file gets checked, because it is easy to break
+# silently: the host the backend healthcheck probes must be 127.0.0.1, because
+# inside the container localhost resolves to ::1 first while the backend listens
+# on 0.0.0.0 only. A published-port check says nothing about a probe URL, and a
+# localhost probe only shows up as a permanently unhealthy container, so it
+# gets its own check below (check_probe).
+#
 # No Docker needed: the file is parsed with PyYAML, which is required; the
 # check fails (exit non-zero) when python3 cannot import yaml, because a
 # plain-text parser would miss flow sequences and anchors and could pass a
@@ -89,6 +96,43 @@ PY
 )" || RC=$?
 }
 
+# check_probe <file>: the backend healthcheck must probe 127.0.0.1; sets RC and
+# OUT exactly as check() does, so the controls below treat both checkers alike.
+# Same parser and same fail-closed rule: no PyYAML, no pass.
+check_probe() {
+  RC=0
+  OUT="$(python3 - "$1" <<'PY' 2>&1
+import sys
+
+path = sys.argv[1]
+probe_url = "http://127.0.0.1:4000/api/v1/health"
+
+try:
+    import yaml
+except ImportError:
+    print("FAIL: PyYAML (python3 -c 'import yaml') is required")
+    sys.exit(1)
+
+with open(path) as fh:
+    doc = yaml.safe_load(fh)
+
+service = ((doc or {}).get("services") or {}).get("backend") or {}
+test = (service.get("healthcheck") or {}).get("test")
+if not test:
+    print("FAIL: no backend healthcheck test parsed from %s (the check would "
+          "be a no-op)" % path)
+    sys.exit(1)
+text = " ".join(test) if isinstance(test, list) else str(test)
+if probe_url not in text:
+    print("FAIL: service backend healthcheck must probe %s, not localhost "
+          "(localhost resolves to ::1 first and the backend listens on "
+          "0.0.0.0 only): %r" % (probe_url, text))
+    sys.exit(1)
+print("ok: the backend healthcheck in %s probes %s" % (path, probe_url))
+PY
+)" || RC=$?
+}
+
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); echo "ok   - $1"; }
@@ -100,6 +144,11 @@ if [ "${RC}" -eq 0 ] && grep -q "all published ports" <<< "${OUT}"; then
   ok "shipped docker-compose.yml passes the loopback check"
 else bad "shipped docker-compose.yml: rc=${RC} out=${OUT}"; fi
 
+check_probe "${COMPOSE_FILE}"
+if [ "${RC}" -eq 0 ] && grep -qF "probes http://127.0.0.1:4000/api/v1/health" <<< "${OUT}"; then
+  ok "shipped docker-compose.yml passes the backend probe-host check"
+else bad "shipped docker-compose.yml probe host: rc=${RC} out=${OUT}"; fi
+
 # --- negative controls on mutated temp copies -------------------------------
 # SCRATCH is never reassigned after this: the EXIT trap below removes exactly
 # the directory mktemp created, and a failed mktemp exits here before the trap
@@ -109,8 +158,10 @@ SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-loopback-test.XXXXXX")" || { ech
 trap 'rm -rf "${SCRATCH}"' EXIT
 
 expect_fail() {
-  # $1: file, $2: expectation name, $3: substring the message must contain
-  check "$1"
+  # $1: file, $2: expectation name, $3: substring the message must contain,
+  # $4: checker to run, default the published-ports check above (check_probe
+  # for the probe host); both report through RC and OUT.
+  "${4:-check}" "$1"
   if [ "${RC}" -ne 0 ] && grep -qF "$3" <<< "${OUT}"; then
     ok "$2"
   else bad "$2: rc=${RC} out=${OUT}"; fi
@@ -223,6 +274,31 @@ if [ "${DEV_COMPOSE_LOOPBACK_CHILD:-}" != "1" ]; then
     ok "unusable TMPDIR exits non-zero and leaves the caller's directory intact"
   else bad "unusable TMPDIR: rc=${RC} timed_out=${TIMED_OUT} out=${OUT} sacrifice dir exists=$([ -d "${SACRIFICE}" ] && echo yes || echo no) canary exists=$([ -f "${SACRIFICE}/canary.txt" ] && echo yes || echo no)"; fi
 fi
+
+# l. the backend probe host: a copy whose backend probes localhost must fail the
+#    probe check. The published-port check passes on exactly this copy (nothing
+#    about a probe URL is a published port), so these two together show the
+#    probe check is not covered by the checks above.
+mutate 's|http://127\.0\.0\.1:4000/api/v1/health|http://localhost:4000/api/v1/health|' backend-probe-localhost.yml
+check "${SCRATCH}/backend-probe-localhost.yml"
+if [ "${RC}" -eq 0 ]; then
+  ok "backend probe localhost stays invisible to the published-port check (so the probe check is needed)"
+else bad "backend probe localhost unexpectedly failed the published-port check: rc=${RC} out=${OUT}"; fi
+expect_fail "${SCRATCH}/backend-probe-localhost.yml" "backend probe host localhost is rejected" \
+  "must probe http://127.0.0.1:4000/api/v1/health" check_probe
+expect_fail "${SCRATCH}/backend-probe-localhost.yml" "backend probe host localhost names the test it found" \
+  "localhost:4000" check_probe
+
+# m. the probe check must not be a no-op: a backend with no healthcheck at all
+#    is rejected too, so deleting the probe cannot pass a check that only looks
+#    at the text of an existing one
+cat > "${SCRATCH}/no-backend-healthcheck.yml" <<'YML'
+services:
+  backend:
+    ports: ["127.0.0.1:4000:4000"]
+YML
+expect_fail "${SCRATCH}/no-backend-healthcheck.yml" "backend without a healthcheck is rejected by the probe check" \
+  "no backend healthcheck test parsed" check_probe
 
 echo
 echo "passed: ${PASS}, failed: ${FAIL}"

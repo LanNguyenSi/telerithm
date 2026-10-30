@@ -2,7 +2,11 @@
 # Controls for scripts/clickhouse-config-guard.sh: the guard must pass on a copy
 # of the shipped files and must fail, with the message of its own branch, for
 # each mutation below. A bare non-zero exit is not enough (the guard would also
-# "fail" if it broke for another reason), so every case greps the message.
+# "fail" if it broke for another reason), so every case greps the message. The
+# last two cases are not mutations of the files but the two halves of the
+# guard's own fail-closed mktemp: the guard must exit 1 on the message of the
+# half that caught it, before its cleanup trap exists, and leave the directory
+# it started from alone.
 #
 # Usage: scripts/clickhouse-config-guard.test.sh
 set -euo pipefail
@@ -295,5 +299,46 @@ volumes:
 volumes:
   pgdata:"
 expect_fail "unbounded service behind a profile (prod)" "docker-compose.prod.yml: service debugger has no bounded log"
+
+# The guard's own fail-closed mktemp: run the guard itself with TMPDIR set to a
+# directory that does not exist, started from a decoy directory holding a
+# canary. mktemp must fail before the cleanup trap exists, so the guard exits 1
+# with its mktemp message and the decoy (the checkout, in CI) is left alone.
+# Exit code and message are both checked: neutralising the `|| { ...; exit 1; }`
+# of the mktemp line leaves the empty-directory check reporting its own
+# message, and neutralising that check lets the run fall through to docker
+# compose with an empty path, so neither mutation may pass unnoticed.
+decoy="$work/decoy"
+mkdir -p "$decoy"
+touch "$decoy/canary.txt"
+rc=0
+out="$( ( cd "$decoy" && TMPDIR="$work/no-such-tmpdir" bash "$guard" "$repo" 2>&1 ) )" || rc=$?
+if [ "$rc" -eq 1 ] && grep -qF -- "clickhouse-config-guard: FAIL: mktemp failed" <<<"$out" \
+  && [ -d "$decoy" ] && [ -f "$decoy/canary.txt" ]; then
+  echo "ok   unusable TMPDIR: guard exits 1 with its mktemp message, decoy directory intact"
+else
+  echo "FAIL unusable TMPDIR: rc=$rc (want 1), decoy exists=$([ -d "$decoy" ] && echo yes || echo no), canary exists=$([ -f "$decoy/canary.txt" ] && echo yes || echo no), out=$out"
+  failed=1
+fi
+
+# The second half of the same fail-closed block: the empty/missing-directory
+# check. A mktemp that succeeds and prints nothing never reaches the `|| exit 1`
+# above, so only that check keeps the guard from arming its cleanup trap on an
+# empty path (which would remove the directory it was started from). mktemp is
+# shadowed through PATH by a stub inside the scratch directory that succeeds
+# with empty output.
+stub="$work/stub"
+mkdir -p "$stub"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$stub/mktemp"
+chmod +x "$stub/mktemp"
+rc=0
+out="$( ( cd "$decoy" && PATH="$stub:$PATH" bash "$guard" "$repo" 2>&1 ) )" || rc=$?
+if [ "$rc" -eq 1 ] && grep -qF -- "clickhouse-config-guard: FAIL: mktemp did not create a directory" <<<"$out" \
+  && [ -d "$decoy" ] && [ -f "$decoy/canary.txt" ]; then
+  echo "ok   mktemp succeeds with no directory: guard exits 1 with its empty-path message, decoy directory intact"
+else
+  echo "FAIL mktemp succeeds with no directory: rc=$rc (want 1), decoy exists=$([ -d "$decoy" ] && echo yes || echo no), canary exists=$([ -f "$decoy/canary.txt" ] && echo yes || echo no), out=$out"
+  failed=1
+fi
 
 exit "$failed"
