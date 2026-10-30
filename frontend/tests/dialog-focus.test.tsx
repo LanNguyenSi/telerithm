@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { Dialog, useDialog } from "@/components/ui/dialog";
 
@@ -152,15 +152,17 @@ describe("Dialog focus restore on close", () => {
     expect(document.activeElement).toBe(document.body);
   });
 
-  it("restores focus before the opener is removed after Confirm", async () => {
+  it("moves focus to the captured ancestor when the opener is removed after Confirm", async () => {
     render(<ConfirmHarness removeOpenerOnConfirm />);
     const opener = openFrom("Remove");
     await screen.findByRole("dialog");
+    const ancestor = opener.parentElement as HTMLElement;
     fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
     await act(async () => {});
     expect(dialogEl()).toBeNull();
     expect(opener.isConnected).toBe(false);
-    expect(document.activeElement).toBe(document.body);
+    await waitFor(() => expect(document.activeElement).toBe(ancestor));
+    expect(ancestor.getAttribute("tabindex")).toBe("-1");
   });
 
   it("restores when the open prop turns false without unmounting", () => {
@@ -279,5 +281,183 @@ describe("Dialog Tab trap", () => {
   it("does not intercept Tab while closed", () => {
     render(<ConfirmHarness />);
     expect(fireEvent.keyDown(document, { key: "Tab" })).toBe(true);
+  });
+});
+
+/** A page whose Remove button leaves the document only when the resolved
+ * confirm's state update lands, the way the real consumers remove openers. */
+function LateRemovalHarness({ removeRegion = false }: { removeRegion?: boolean }) {
+  const { confirm, dialogProps } = useDialog();
+  const [gone, setGone] = useState(false);
+  return (
+    <main>
+      {gone && removeRegion ? null : (
+        <div data-testid="region">
+          {gone ? null : (
+            <button
+              type="button"
+              onClick={async () => {
+                const ok = await confirm("Remove Ada?", "She will lose access.");
+                if (ok) setGone(true);
+              }}
+            >
+              Remove
+            </button>
+          )}
+        </div>
+      )}
+      <button type="button">Other</button>
+      <Dialog {...dialogProps} />
+    </main>
+  );
+}
+
+describe("Dialog focus when the confirmed action removes the opener later", () => {
+  it("moves focus to the nearest captured ancestor once the removal lands", async () => {
+    render(<LateRemovalHarness />);
+    const opener = openFrom("Remove");
+    await screen.findByRole("dialog");
+    const region = screen.getByTestId("region");
+    fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+    expect(document.activeElement).toBe(opener);
+    await waitFor(() => expect(opener.isConnected).toBe(false));
+    await act(async () => {});
+    expect(document.activeElement).toBe(region);
+    expect(region.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("keeps focus on the opener when nothing is removed, even after later DOM changes", async () => {
+    render(<ConfirmHarness />);
+    const opener = openFrom("Remove");
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+    expect(document.activeElement).toBe(opener);
+    const other = document.createElement("p");
+    act(() => {
+      document.body.appendChild(other);
+    });
+    await act(async () => {});
+    expect(document.activeElement).toBe(opener);
+    other.remove();
+  });
+
+  it("does not steal focus the user moved elsewhere before the removal", async () => {
+    render(<LateRemovalHarness />);
+    const opener = openFrom("Remove");
+    await screen.findByRole("dialog");
+    const region = screen.getByTestId("region");
+    fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+    const other = screen.getByRole("button", { name: "Other" });
+    other.focus();
+    await waitFor(() => expect(opener.isConnected).toBe(false));
+    await act(async () => {});
+    expect(document.activeElement).toBe(other);
+    expect(region.hasAttribute("tabindex")).toBe(false);
+  });
+
+  it("falls back to the main landmark when the captured ancestors are removed too", async () => {
+    render(<LateRemovalHarness removeRegion />);
+    const opener = openFrom("Remove");
+    await screen.findByRole("dialog");
+    const main = document.querySelector("main") as HTMLElement;
+    fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+    await waitFor(() => expect(opener.isConnected).toBe(false));
+    await act(async () => {});
+    expect(document.activeElement).toBe(main);
+    expect(main.getAttribute("tabindex")).toBe("-1");
+  });
+
+  it("leaves the new dialog's focus alone when the dialog reopens before the removal lands", async () => {
+    render(<LateRemovalHarness />);
+    const opener = openFrom("Remove");
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: "Bestätigen" }));
+    fireEvent.click(opener);
+    await screen.findByRole("dialog");
+    const cancel = screen.getByRole("button", { name: "Abbrechen" });
+    expect(document.activeElement).toBe(cancel);
+    await waitFor(() => expect(opener.isConnected).toBe(false));
+    await act(async () => {});
+    expect(document.activeElement).toBe(cancel);
+  });
+
+  it("ends the watcher and moves no focus when the component unmounts while it is watching", () => {
+    render(<LateRemovalHarness />);
+    openFrom("Remove");
+    fireEvent.keyDown(document, { key: "Escape" });
+    const main = document.querySelector("main") as HTMLElement;
+    const disconnects = vi.spyOn(MutationObserver.prototype, "disconnect");
+    cleanup();
+    expect(disconnects).toHaveBeenCalled();
+    disconnects.mockRestore();
+    expect(main.hasAttribute("tabindex")).toBe(false);
+    expect(document.activeElement).toBe(document.body);
+  });
+
+  it("leaves no watcher behind when only the dialog unmounts while it is still open", async () => {
+    const observes = vi.spyOn(MutationObserver.prototype, "observe");
+    const disconnects = vi.spyOn(MutationObserver.prototype, "disconnect");
+    try {
+      const { rerender } = render(
+        <main>
+          <section data-testid="host">
+            <button type="button">Opener</button>
+          </section>
+          <Dialog open={false} variant="confirm" title="Sure?" onClose={vi.fn()} onConfirm={vi.fn()} />
+        </main>,
+      );
+      const opener = screen.getByRole("button", { name: "Opener" });
+      opener.focus();
+      rerender(
+        <main>
+          <section data-testid="host">
+            <button type="button">Opener</button>
+          </section>
+          <Dialog open variant="confirm" title="Sure?" onClose={vi.fn()} onConfirm={vi.fn()} />
+        </main>,
+      );
+      // Unmount only the dialog, still open; the opener stays connected.
+      rerender(
+        <main>
+          <section data-testid="host">
+            <button type="button">Opener</button>
+          </section>
+        </main>,
+      );
+      expect(disconnects.mock.calls.length).toBeGreaterThanOrEqual(observes.mock.calls.length);
+      const host = screen.getByTestId("host");
+      act(() => {
+        opener.remove();
+      });
+      await act(async () => {});
+      expect(host.hasAttribute("tabindex")).toBe(false);
+      expect(document.querySelector("main")?.hasAttribute("tabindex")).toBe(false);
+    } finally {
+      observes.mockRestore();
+      disconnects.mockRestore();
+    }
+  });
+
+  it("stops watching after the timeout so a late removal moves no focus", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<LateRemovalHarness />);
+      const opener = openFrom("Remove");
+      expect(screen.getByRole("dialog")).toBeInTheDocument();
+      const region = screen.getByTestId("region");
+      fireEvent.click(screen.getByRole("button", { name: "Abbrechen" }));
+      expect(document.activeElement).toBe(opener);
+      act(() => {
+        vi.advanceTimersByTime(3001);
+      });
+      act(() => {
+        opener.remove();
+      });
+      await act(async () => {});
+      expect(document.activeElement).toBe(document.body);
+      expect(region.hasAttribute("tabindex")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

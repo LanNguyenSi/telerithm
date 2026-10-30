@@ -1,8 +1,8 @@
 # Local development stack. The project name is fixed and differs from the
 # production stack's (telerithm), so running `docker compose up` on a machine
-# that also hosts the production stack cannot replace its containers. The
-# datastore ports are published on the loopback interface only (no credentials
-# beyond the defaults below).
+# that also hosts the production stack cannot replace its containers. Every
+# published port (datastores and apps) is bound to the loopback interface only
+# (no credentials beyond the defaults below); reach the stack remotely by SSH.
 name: telerithm-dev
 
 services:
@@ -77,7 +77,7 @@ services:
       retries: 5
       start_period: 30s
     ports:
-      - "4000:4000"
+      - "127.0.0.1:4000:4000"
 
   frontend:
     build:
@@ -103,4 +103,4 @@ services:
     depends_on:
       - backend
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"

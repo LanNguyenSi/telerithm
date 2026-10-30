@@ -37,6 +37,65 @@ type DialogProps = {
 const DIALOG_FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+/** How long the after-close watcher for a removed opener stays installed. */
+const REMOVAL_WATCH_TIMEOUT_MS = 3000;
+
+/**
+ * Focus target after the opener turned out to be gone: the nearest captured
+ * ancestor of the opener that is still connected (a replaced subtree moves the
+ * walk up the captured chain), else the main landmark. A no-op when focus has
+ * already gone somewhere else than the removed opener or the body, so focus
+ * the user moved is not stolen.
+ */
+function focusSurvivingTarget(opener: HTMLElement, ancestors: HTMLElement[]) {
+  const active = document.activeElement;
+  if (active !== document.body && active !== opener) return;
+  let target: HTMLElement | null = null;
+  for (const node of ancestors) {
+    if (node.isConnected) {
+      target = node;
+      break;
+    }
+  }
+  if (!target) target = document.querySelector<HTMLElement>("main");
+  if (!target) return;
+  if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+  target.focus();
+}
+
+/**
+ * Watch briefly for the opener being removed after the dialog closed. A
+ * confirmed action removes the opener only when its awaited API call
+ * resolves, which is after this dialog's effect cleanup restored focus to
+ * it. The watcher ends on the first of: the removal handled, any user
+ * focus, keyboard or pointer activity, the timeout, or the caller's stop
+ * (unmount), and moves focus at most once.
+ */
+function watchOpenerRemoval(opener: HTMLElement, ancestors: HTMLElement[]): () => void {
+  let observer: MutationObserver | null = null;
+  let timer = 0;
+  const stop = () => {
+    observer?.disconnect();
+    observer = null;
+    window.clearTimeout(timer);
+    document.removeEventListener("focusin", stop);
+    document.removeEventListener("keydown", stop);
+    document.removeEventListener("pointerdown", stop);
+  };
+  observer = new MutationObserver(() => {
+    if (!opener.isConnected) {
+      stop();
+      focusSurvivingTarget(opener, ancestors);
+    }
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  timer = window.setTimeout(stop, REMOVAL_WATCH_TIMEOUT_MS);
+  document.addEventListener("focusin", stop);
+  document.addEventListener("keydown", stop);
+  document.addEventListener("pointerdown", stop);
+  return stop;
+}
+
 export function Dialog(props: DialogProps) {
   const { open, title, description, onClose } = props;
   const [inputValue, setInputValue] = useState("");
@@ -45,6 +104,7 @@ export function Dialog(props: DialogProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const stopRemovalWatch = useRef<(() => void) | null>(null);
   const titleId = useId();
   const bodyId = useId();
 
@@ -63,10 +123,23 @@ export function Dialog(props: DialogProps) {
   // Keyed on `open` alone: `onClose` changes identity with the dialog state, and
   // a cleanup tied to it would restore focus on every render. The cleanup runs
   // for every way of closing (Cancel, Confirm, Escape, backdrop) because they
-  // all end in `open` turning false.
+  // all end in `open` turning false. A confirmed action may still remove the
+  // opener moments later, once its API call resolves, so on close the ancestors
+  // captured on open are handed to a short-lived watcher (see
+  // watchOpenerRemoval) that moves focus to a surviving one if that happens.
   useEffect(() => {
     if (!open) return;
+    stopRemovalWatch.current?.();
+    stopRemovalWatch.current = null;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const ancestors: HTMLElement[] = [];
+    for (
+      let node: HTMLElement | null = (opener?.parentElement as HTMLElement | null) ?? null;
+      node && node !== document.body;
+      node = node.parentElement as HTMLElement | null
+    ) {
+      ancestors.push(node);
+    }
     if (inputRef.current) {
       inputRef.current.focus();
       inputRef.current.select();
@@ -74,9 +147,17 @@ export function Dialog(props: DialogProps) {
       cancelRef.current?.focus();
     }
     return () => {
-      if (opener?.isConnected) opener.focus();
+      if (!opener?.isConnected) return;
+      opener.focus();
+      stopRemovalWatch.current = watchOpenerRemoval(opener, ancestors);
     };
   }, [open]);
+
+  // A watcher running while the dialog unmounts has to end with it. Declared
+  // after the open effect on purpose: on unmount React runs cleanups in
+  // declaration order, so a dialog that unmounts while still open first runs
+  // the open effect's cleanup (which may install the watcher) and then this one.
+  useEffect(() => () => stopRemovalWatch.current?.(), []);
 
   // Tab and Shift+Tab wrap inside the dialog; focus that sits outside is pulled in.
   useEffect(() => {
