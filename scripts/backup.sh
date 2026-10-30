@@ -19,13 +19,18 @@ set -euo pipefail
 # removed is a WARNING on stderr and does not stop the run (the loop goes on and
 # the off-host hook still runs), but the run then exits 2 after the hook block
 # with an ERROR line: housekeeping that silently stops working would fill the
-# disk unnoticed. The new backup is complete and kept in that case.
+# disk unnoticed. The new backup is complete and kept in that case. The exit 2
+# comes only from the run whose removal failed: an old backup that rm could
+# only partly remove (its dumps gone, a locked subdirectory left) is no longer a
+# complete backup, so later runs leave it alone and exit 0, and from then on
+# only the "left alone" note reports it.
 #
 # Exit codes: 0 success; 1 any other failure (checks before the dumps, a failed
-# dump, a failed off-host hook); 2 only the retention step could not remove old
-# backups. When the hook fails as well, 1 wins (the off-host copy is missing,
-# which is the worse state); the retention ERROR line is printed before the hook
-# runs, so it shows in that case too.
+# dump, a failed off-host hook, any other command that fails, whatever its own
+# exit status); 2 only the retention step could not remove old backups. When
+# the hook fails as well, 1 wins (the off-host copy is missing, which is the
+# worse state); the retention ERROR line is printed before the hook runs, so it
+# shows in that case too.
 #
 # Output (in <backup_dir>/<timestamp>/):
 #   postgres.sql.gz            pg_dump, restore with psql (DEPLOYMENT.md, Backup)
@@ -60,6 +65,10 @@ fail() {
   echo "[backup] ERROR: $*" >&2
   exit 1
 }
+# Any other command that stops the script under `set -e` exits 1 as well, not
+# with its own status: 2 means only that retention failed (see Exit codes), and
+# a command's own 2 (or 137 after a kill) must not read as that.
+trap 'echo "[backup] ERROR: command failed with exit $? (line ${LINENO})" >&2; exit 1' ERR
 
 [ -f "${COMPOSE_FILE}" ] || fail "compose file not found: ${COMPOSE_FILE}"
 if [ -n "${OFFHOST_HOOK}" ]; then
@@ -119,16 +128,20 @@ echo "[backup] Starting backup at ${TIMESTAMP} (stack: ${COMPOSE_FILE})"
 # PostgreSQL backup
 echo "[backup] Dumping PostgreSQL..."
 "${COMPOSE[@]}" exec -T postgres pg_dump -U telerithm telerithm \
-  | gzip > "${BACKUP_PATH}/postgres.sql.gz.partial"
-mv "${BACKUP_PATH}/postgres.sql.gz.partial" "${BACKUP_PATH}/postgres.sql.gz"
+  | gzip > "${BACKUP_PATH}/postgres.sql.gz.partial" \
+  || fail "PostgreSQL dump failed; the incomplete backup directory is removed"
+mv "${BACKUP_PATH}/postgres.sql.gz.partial" "${BACKUP_PATH}/postgres.sql.gz" \
+  || fail "could not rename the PostgreSQL dump; the incomplete backup directory is removed"
 echo "[backup] PostgreSQL dump complete"
 
 # ClickHouse backup (Native format, the format DEPLOYMENT.md restores from)
 echo "[backup] Dumping ClickHouse logs table..."
 "${COMPOSE[@]}" exec -T clickhouse clickhouse-client \
   --query "SELECT * FROM logs FORMAT Native" \
-  | gzip > "${BACKUP_PATH}/clickhouse_logs.native.gz.partial"
-mv "${BACKUP_PATH}/clickhouse_logs.native.gz.partial" "${BACKUP_PATH}/clickhouse_logs.native.gz"
+  | gzip > "${BACKUP_PATH}/clickhouse_logs.native.gz.partial" \
+  || fail "ClickHouse dump failed; the incomplete backup directory is removed"
+mv "${BACKUP_PATH}/clickhouse_logs.native.gz.partial" "${BACKUP_PATH}/clickhouse_logs.native.gz" \
+  || fail "could not rename the ClickHouse dump; the incomplete backup directory is removed"
 echo "[backup] ClickHouse dump complete"
 DUMPS_COMPLETE=1
 

@@ -12,11 +12,30 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP_SH="${SCRIPT_DIR}/backup.sh"
 
-SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-backup-test.XXXXXX")"
-SCRATCH="$(cd "${SCRATCH}" && pwd -P)"
-# Permissions come back first: the retention-failure cases leave directories
-# that cannot be removed while they are read-only.
-trap 'chmod -R u+rwx "${SCRATCH}" 2>/dev/null; rm -rf "${SCRATCH}"' EXIT
+# A failed mktemp stops the test before anything runs: with an empty SCRATCH,
+# `cd ""` stays in the current directory (bash 3.2 and 5.2), so the cleanup
+# would delete the directory the test was started from. The path is resolved
+# (macOS /tmp and TMPDIR are symlinks) only once it is known to be a directory.
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-backup-test.XXXXXX")" \
+  || { echo "FATAL: mktemp failed" >&2; exit 2; }
+if [ -z "${SCRATCH}" ] || [ ! -d "${SCRATCH}" ]; then
+  echo "FATAL: mktemp did not create a directory: '${SCRATCH}'" >&2
+  exit 2
+fi
+SCRATCH="$(CDPATH='' cd -- "${SCRATCH}" && pwd -P)" \
+  || { echo "FATAL: cannot resolve the scratch directory" >&2; exit 2; }
+# remove_scratch <dir>: deletes <dir> only when it is a directory made from this
+# script's mktemp template (an absolute path whose last component is
+# telerithm-backup-test.<suffix>); any other value is left alone. Permissions
+# come back first: the retention-failure cases leave directories that cannot
+# be removed while they are read-only.
+remove_scratch() {
+  case "$1" in /*) ;; *) return 0 ;; esac
+  case "${1##*/}" in telerithm-backup-test.?*) ;; *) return 0 ;; esac
+  chmod -R u+rwx "$1" 2>/dev/null
+  rm -rf "$1"
+}
+trap 'remove_scratch "${SCRATCH}"' EXIT
 
 export HOME="${SCRATCH}/home"
 mkdir -p "${HOME}"
@@ -30,8 +49,10 @@ unset CLAUDE_CONFIG_DIR CODEX_HOME BACKUP_COMPOSE_FILE BACKUP_ENV_FILE BACKUP_OF
 # Behaviour is steered by environment variables:
 #   STUB_RUNNING   services `ps --status running --services` lists (newline separated)
 #   STUB_PS_FAIL   non-empty: `ps` exits 1
-#   STUB_PG_FAIL   non-empty: `exec ... postgres` exits 1 after printing nothing
-#   STUB_CH_FAIL   non-empty: `exec ... clickhouse` prints some bytes, then exits 1
+#   STUB_PG_FAIL   non-empty: `exec ... postgres` prints nothing and exits with
+#                  this value as its status (the cases below use 1, 2 and 137)
+#   STUB_CH_FAIL   non-empty: `exec ... clickhouse` prints some bytes, then exits
+#                  with this value as its status
 # Every invocation is appended to $STUB_LOG.
 STUB_DIR="${SCRATCH}/stubbin"
 mkdir -p "${STUB_DIR}"
@@ -46,12 +67,12 @@ case " $* " in
     printf '%b' "${STUB_RUNNING:-}"
     exit 0 ;;
   *" exec "*postgres*)
-    [ -z "${STUB_PG_FAIL:-}" ] || exit 1
+    [ -z "${STUB_PG_FAIL:-}" ] || exit "${STUB_PG_FAIL}"
     echo "-- fake pg_dump"
     exit 0 ;;
   *" exec "*clickhouse*)
     echo "fake-native-bytes"
-    [ -z "${STUB_CH_FAIL:-}" ] || exit 1
+    [ -z "${STUB_CH_FAIL:-}" ] || exit "${STUB_CH_FAIL}"
     exit 0 ;;
 esac
 exit 98
@@ -182,6 +203,63 @@ if [ "${RC}" -ne 0 ] \
   && ! find "${D4B}" -name '*.partial' | grep -q .; then
   ok "failed clickhouse dump: non-zero, no directory and no .partial file remain"
 else bad "failed clickhouse dump: rc=${RC} dirs=$(count_dirs "${D4B}") files=$(find "${D4B}" -type f 2>/dev/null)"; fi
+
+# --- 4a. every failure other than retention exits 1, whatever its own status ---
+# Exit 2 means only that retention failed, so a dump that exits 2, or 137 as
+# after a kill, must still make the script exit 1; the step is named and no
+# backup directory is left.
+for dump_case in "PG 2 PostgreSQL" "PG 137 PostgreSQL" "CH 2 ClickHouse" "CH 137 ClickHouse"; do
+  read -r which code label <<< "${dump_case}"
+  DX="${SCRATCH}/b4x-${which}-${code}"
+  if [ "${which}" = PG ]; then
+    STUB_PG_FAIL="${code}" run_backup "pg${code}" "${DX}"
+  else
+    STUB_CH_FAIL="${code}" run_backup "ch${code}" "${DX}"
+  fi
+  if [ "${RC}" -eq 1 ] \
+    && grep -qF "[backup] ERROR: ${label} dump failed; the incomplete backup directory is removed" <<< "${OUT}" \
+    && [ "$(count_dirs "${DX}")" = "0" ] \
+    && ! find "${DX}" -name '*.partial' | grep -q .; then
+    ok "${label} dump exits ${code}: the script exits 1, names the dump, leaves no directory"
+  else bad "${label} dump exits ${code}: rc=${RC} dirs=$(count_dirs "${DX}") out=${OUT}"; fi
+done
+
+# a failed rename of a finished dump: a stub mv exits 2 for that one target
+MV_STUB="${SCRATCH}/mvstub"
+mkdir -p "${MV_STUB}"
+cat > "${MV_STUB}/mv" <<'MVSTUB'
+#!/usr/bin/env bash
+case "${2:-}" in
+  */"${STUB_MV_FAIL_ON}") exit 2 ;;
+esac
+exec "${STUB_REAL_MV}" "$@"
+MVSTUB
+chmod +x "${MV_STUB}/mv"
+REAL_MV="$(command -v mv)"
+for mv_case in "postgres.sql.gz PostgreSQL" "clickhouse_logs.native.gz ClickHouse"; do
+  read -r target label <<< "${mv_case}"
+  DX="${SCRATCH}/b4y-${label}"
+  PATH="${MV_STUB}:${PATH}" STUB_REAL_MV="${REAL_MV}" STUB_MV_FAIL_ON="${target}" run_backup "mv-${label}" "${DX}"
+  if [ "${RC}" -eq 1 ] \
+    && grep -qF "[backup] ERROR: could not rename the ${label} dump; the incomplete backup directory is removed" <<< "${OUT}" \
+    && [ "$(count_dirs "${DX}")" = "0" ]; then
+    ok "${label} dump rename exits 2: the script exits 1, names the rename, leaves no directory"
+  else bad "${label} dump rename exits 2: rc=${RC} dirs=$(count_dirs "${DX}") out=${OUT}"; fi
+done
+
+# any other command that stops the script exits 1 as well: here `ls -lh` of the
+# finished backup exits 2 (GNU ls does for a path it cannot access); the
+# backup is complete and kept
+LS_STUB="${SCRATCH}/lsstub"
+mkdir -p "${LS_STUB}"
+printf '#!/usr/bin/env bash\nexit 2\n' > "${LS_STUB}/ls"
+chmod +x "${LS_STUB}/ls"
+DZ="${SCRATCH}/b4z"
+PATH="${LS_STUB}:${PATH}" run_backup lsfail "${DZ}"
+if [ "${RC}" -eq 1 ] && grep -qF "[backup] ERROR: command failed with exit 2" <<< "${OUT}" \
+  && [ "$(valid_count "${DZ}")" = "1" ]; then
+  ok "another command exits 2 after the dumps: the script exits 1, the complete backup is kept"
+else bad "another command exits 2: rc=${RC} valid=$(valid_count "${DZ}") out=${OUT}"; fi
 
 # --- 4b. two runs in the same second: the second must not delete the first
 DATE_STUB="${SCRATCH}/datestub"
@@ -576,11 +654,15 @@ else
   # prune fail / hook fail: exit 1 wins, both reported, backup kept
   DF4="${SCRATCH}/b19d"; mk_age_fixture "${DF4}" 1; : > "${HOOK_LOG}"
   HOOK_FAIL=1 BACKUP_OFFHOST_HOOK="${HOOK}" run_backup prunefail_hookfail "${DF4}"
+  # the hook got the new backup, and after the run it is still the one complete
+  # backup with real dumps (the fixtures' dumps are empty files)
   if [ "${RC}" -eq 1 ] && grep -q "off-host hook failed" <<< "${OUT}" \
     && grep -qF "ERROR: retention could not remove 1 old backup(s)" <<< "${OUT}" \
-    && hook_ran_on "${DF4}"; then
+    && hook_ran_on "${DF4}" \
+    && [ "$(find "${DF4}" -mindepth 2 -maxdepth 2 -name postgres.sql.gz -size +0 | wc -l | tr -d ' ')" = "1" ] \
+    && [ "$(find "${DF4}" -mindepth 2 -maxdepth 2 -name clickhouse_logs.native.gz -size +0 | wc -l | tr -d ' ')" = "1" ]; then
     ok "retention removal: prune fail / hook fail: exit 1 wins, both errors printed, backup kept"
-  else bad "prune fail / hook fail: rc=${RC} out=${OUT}"; fi
+  else bad "prune fail / hook fail: rc=${RC} out=${OUT} files=$(find "${DF4}" -type f)"; fi
 
   # prune fail, no hook configured: exit 2, says the backup stays local
   DF5="${SCRATCH}/b19e"; mk_age_fixture "${DF5}" 1; : > "${HOOK_LOG}"
@@ -591,6 +673,21 @@ else
     && [ "$(find "${DF5}" -mindepth 2 -maxdepth 2 -name postgres.sql.gz -size +0 | wc -l | tr -d ' ')" = "1" ]; then
     ok "retention removal: prune fail, no hook: exit 2, backup kept"
   else bad "prune fail, no hook: rc=${RC} out=${OUT}"; fi
+
+  # The next run: rm removed the stuck backup's dumps but not its locked
+  # subdirectory, so the entry is no longer a complete backup. It is left alone
+  # and only the note reports it; the run exits 0 (the exit 2 came only from the
+  # run whose removal failed).
+  sleep 1
+  run_backup prunefail_nextrun "${DF5}"
+  if [ "${RC}" -eq 0 ] \
+    && grep -qF "Retention left 1 entry in ${DF5} alone" <<< "${OUT}" \
+    && ! grep -q "WARNING" <<< "${OUT}" && ! grep -q "ERROR" <<< "${OUT}" \
+    && [ -f "${DF5}/20010102_000000/locked/file" ] \
+    && gone "${DF5}/20010102_000000/postgres.sql.gz" "${DF5}/20010102_000000/clickhouse_logs.native.gz" \
+    && [ "$(find "${DF5}" -mindepth 2 -maxdepth 2 -name postgres.sql.gz -size +0 | wc -l | tr -d ' ')" = "2" ]; then
+    ok "retention removal: the run after a partial removal exits 0, the half-removed entry shows only in the note"
+  else bad "run after a partial removal: rc=${RC} out=${OUT} files=$(find "${DF5}")"; fi
 
   # count path: 12 recent backups plus the new one; ranks 11 to 13 (names 03, 02, 01) are over the
   # limit, 02 is stuck, 03 and 01 are removed around it. A second case below has two stuck entries.
@@ -629,11 +726,20 @@ mkdir -p "${D22}"
 # UTF-8 bytes of U+FF10..U+FF19 spelled out, so the name does not depend on the locale
 FULLWIDTH=$'\xef\xbc\x92\xef\xbc\x90\xef\xbc\x90\xef\xbc\x91\xef\xbc\x90\xef\xbc\x91\xef\xbc\x90\xef\xbc\x91_\xef\xbc\x90\xef\xbc\x90\xef\xbc\x90\xef\xbc\x90\xef\xbc\x90\xef\xbc\x90'
 mk_backup "${D22}" "${FULLWIDTH}" 201901010000
+# The locale case proves something only in a locale where [0-9] does match a
+# fullwidth digit (not every UTF-8 locale does: C.UTF-8 on glibc and the macOS
+# locales do not), so each installed candidate is probed with the bash that
+# runs backup.sh, and the case is skipped when none matches.
 UTF8_LOCALE=""
+FULLWIDTH_TWO=$'\xef\xbc\x92'
 # captured first: `grep -q` closing the pipe early would fail the pipeline under pipefail
 INSTALLED_LOCALES="$(locale -a 2>/dev/null)"
 for cand in en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
-  if grep -qxF "${cand}" <<< "${INSTALLED_LOCALES}"; then UTF8_LOCALE="${cand}"; break; fi
+  grep -qxF "${cand}" <<< "${INSTALLED_LOCALES}" || continue
+  if LC_ALL="${cand}" bash -c '[[ "$1" =~ ^[0-9]$ ]]' probe "${FULLWIDTH_TWO}" 2>/dev/null; then
+    UTF8_LOCALE="${cand}"
+    break
+  fi
 done
 run_backup fullwidth_default "${D22}"
 if [ "${RC}" -eq 0 ] && present "${D22}/${FULLWIDTH}/postgres.sql.gz" "${D22}/${FULLWIDTH}/clickhouse_logs.native.gz" \
@@ -648,7 +754,7 @@ if [ -n "${UTF8_LOCALE}" ]; then
     ok "fullwidth-digit directory with both dumps survives under ${UTF8_LOCALE}"
   else bad "fullwidth digits under ${UTF8_LOCALE}: rc=${RC} out=${OUT}"; fi
 else
-  echo "skip - fullwidth digits under a UTF-8 locale (no en_US.UTF-8 or C.UTF-8 installed)"
+  echo "skip - fullwidth digits under a UTF-8 locale (no installed en_US.UTF-8 or C.UTF-8 locale in which [0-9] matches a fullwidth digit)"
 fi
 
 # --- 7. mkdir failures other than a collision -----------------------------------
@@ -702,6 +808,22 @@ else bad "CDPATH set, hook: rc=${RC} out=$(cat "${SCRATCH}/cdpath2.out")"; fi
 ( cd "${REPO2}" && env -u BACKUP_COMPOSE_FILE -u BACKUP_ENV_FILE CDPATH="${DECOY}" bash scripts/backup.sh "${SCRATCH}/b13" > "${SCRATCH}/cdpath3.out" 2>&1 ); RC=$?
 if [ "${RC}" -eq 0 ]; then ok "CDPATH set: script directory resolves to the repository's scripts/"
 else bad "CDPATH set, script dir: rc=${RC} out=$(cat "${SCRATCH}/cdpath3.out")"; fi
+
+# --- 9. the scratch cleanup removes only a directory made from its template ----
+# (scripts/test-scratch-safety.test.sh covers the failed mktemp itself)
+CLEAN="${SCRATCH}/cleanup"
+mkdir -p "${CLEAN}/cwd-decoy" "${CLEAN}/rel/telerithm-backup-test.rel" "${CLEAN}/telerithm-backup-test.own"
+for d in "${CLEAN}/cwd-decoy" "${CLEAN}/rel/telerithm-backup-test.rel" "${CLEAN}/telerithm-backup-test.own"; do echo keep > "${d}/canary"; done
+remove_scratch "${CLEAN}/cwd-decoy"
+( cd "${CLEAN}/rel" && remove_scratch "telerithm-backup-test.rel" )
+remove_scratch ""
+if present "${CLEAN}/cwd-decoy/canary" "${CLEAN}/rel/telerithm-backup-test.rel/canary"; then
+  ok "scratch cleanup: a directory with another name, or a relative path, is left alone"
+else bad "scratch cleanup removed a directory that is not its own: $(find "${CLEAN}")"; fi
+remove_scratch "${CLEAN}/telerithm-backup-test.own"
+if gone "${CLEAN}/telerithm-backup-test.own"; then
+  ok "scratch cleanup: a directory made from the template is removed"
+else bad "scratch cleanup left its own directory: $(find "${CLEAN}")"; fi
 
 echo
 echo "passed: ${PASS}, failed: ${FAIL}"

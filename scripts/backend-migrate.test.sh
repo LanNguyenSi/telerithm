@@ -18,9 +18,27 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BACKEND="${REPO_ROOT}/backend"
 BASELINE=20261027132152_baseline
 
-SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-migrate-test.XXXXXX")"
-SCRATCH="$(cd "${SCRATCH}" && pwd -P)"
-trap 'rm -rf "${SCRATCH}"' EXIT
+# A failed mktemp stops the test before anything runs: with an empty SCRATCH,
+# `cd ""` stays in the current directory (bash 3.2 and 5.2), so the cleanup
+# would delete the directory the test was started from. The path is resolved
+# (macOS /tmp and TMPDIR are symlinks) only once it is known to be a directory.
+SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-migrate-test.XXXXXX")" \
+  || { echo "FATAL: mktemp failed" >&2; exit 2; }
+if [ -z "${SCRATCH}" ] || [ ! -d "${SCRATCH}" ]; then
+  echo "FATAL: mktemp did not create a directory: '${SCRATCH}'" >&2
+  exit 2
+fi
+SCRATCH="$(CDPATH='' cd -- "${SCRATCH}" && pwd -P)" \
+  || { echo "FATAL: cannot resolve the scratch directory" >&2; exit 2; }
+# remove_scratch <dir>: deletes <dir> only when it is a directory made from this
+# script's mktemp template (an absolute path whose last component is
+# telerithm-migrate-test.<suffix>); any other value is left alone.
+remove_scratch() {
+  case "$1" in /*) ;; *) return 0 ;; esac
+  case "${1##*/}" in telerithm-migrate-test.?*) ;; *) return 0 ;; esac
+  rm -rf "$1"
+}
+trap 'remove_scratch "${SCRATCH}"' EXIT
 
 # --- stubs -------------------------------------------------------------------
 # The prisma stub answers by the exact command line the script must use, and
@@ -315,6 +333,21 @@ if [ -x "${BACKEND}/node_modules/.bin/prisma" ]; then
 else
   echo "skip - baseline.prisma vs ${BASELINE}/migration.sql: backend/node_modules/.bin/prisma not installed (the CI job Backend runs this check)"
 fi
+
+# the scratch cleanup removes only a directory made from its template
+# (scripts/test-scratch-safety.test.sh covers the failed mktemp itself)
+CLEAN="${SCRATCH}/cleanup"
+mkdir -p "${CLEAN}/cwd-decoy" "${CLEAN}/rel/telerithm-migrate-test.rel" "${CLEAN}/telerithm-migrate-test.own"
+for d in "${CLEAN}/cwd-decoy" "${CLEAN}/rel/telerithm-migrate-test.rel" "${CLEAN}/telerithm-migrate-test.own"; do echo keep > "${d}/canary"; done
+remove_scratch "${CLEAN}/cwd-decoy"
+( cd "${CLEAN}/rel" && remove_scratch "telerithm-migrate-test.rel" )
+if [ -f "${CLEAN}/cwd-decoy/canary" ] && [ -f "${CLEAN}/rel/telerithm-migrate-test.rel/canary" ]; then
+  ok "scratch cleanup: a directory with another name, or a relative path, is left alone"
+else bad "scratch cleanup removed a directory that is not its own: $(find "${CLEAN}")"; fi
+remove_scratch "${CLEAN}/telerithm-migrate-test.own"
+if [ ! -e "${CLEAN}/telerithm-migrate-test.own" ]; then
+  ok "scratch cleanup: a directory made from the template is removed"
+else bad "scratch cleanup left its own directory: $(find "${CLEAN}")"; fi
 
 echo
 echo "shells: ${SHELLS[*]}"
