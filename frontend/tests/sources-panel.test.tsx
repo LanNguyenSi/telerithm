@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+  type RenderResult,
+} from "@testing-library/react";
 
 const mocks = vi.hoisted(() => ({
   createSource: vi.fn(),
@@ -26,16 +35,24 @@ const source: Source = {
   name: "web",
   type: "HTTP",
   retentionDays: 7,
-  apiKey: "lf_existing",
+  apiKey: "lf_existing_key",
 };
+
+/** Mask of the fixture key under the list rule (`lf_` prefix, last 4, `****` between). */
+const MASKED = "lf_****_key";
 
 function renderPanel(role: TeamRole, sources: Source[] = [source]) {
   return render(<SourcesPanel sources={sources} teamId="team-1" token="tok" role={role} />);
 }
 
+function renderWithKey(apiKey: string): RenderResult {
+  return renderPanel("OWNER", [{ ...source, apiKey }]);
+}
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.useRealTimers();
 });
 
 describe("SourcesPanel", () => {
@@ -64,8 +81,8 @@ describe("SourcesPanel", () => {
     "shows the existing key of a listed source masked to %s, with the full key out of the DOM",
     (role) => {
       const { container } = renderPanel(role);
-      expect(screen.getByText("lf_****ting")).toBeInTheDocument();
-      expect(container.textContent).not.toMatch(/lf_existing/);
+      expect(screen.getByText(MASKED)).toBeInTheDocument();
+      expect(container.textContent).not.toMatch(/lf_existing_key/);
     },
   );
 
@@ -171,11 +188,12 @@ describe("SourcesPanel: key masking in the list", () => {
   const withKey = (apiKey: string): Source => ({ ...source, apiKey });
 
   it.each([
-    ["lf_abcd", "****"],
-    ["lf_abcd_", "lf_****bcd_"],
-    ["abcdefgh1234", "****1234"],
-    ["lf__abcd", "lf_****abcd"],
-  ])("masks %s as %s", (apiKey, masked) => {
+    ["short", "lf_abcd_", "****"],
+    ["exactly 12", "lf_abcd_1234", "lf_****1234"],
+    ["no underscore", "abcdefgh12345678", "****5678"],
+    ["long prefix", "abcdefghij_klmnopqrstabcd", "abcdefgh****abcd"],
+    ["real looking", "tlm_2f8d1a9c4b7e6053a1d8c2f5b9e4a7c1", "tlm_****a7c1"],
+  ])("masks the %s key %s as %s", (_shape, apiKey, masked) => {
     const { container } = renderPanel("OWNER", [withKey(apiKey)]);
     expect(screen.getByText(masked)).toBeInTheDocument();
     expect(container.textContent).not.toMatch(new RegExp(apiKey));
@@ -186,16 +204,16 @@ describe("SourcesPanel: key masking in the list", () => {
     const reveal = screen.getByRole("button", { name: "Reveal API key of web" });
     expect(reveal).toHaveAttribute("aria-pressed", "false");
     fireEvent.click(reveal);
-    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_existing");
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_existing_key");
     const hide = screen.getByRole("button", { name: "Hide API key of web" });
     expect(hide).toHaveAttribute("aria-pressed", "true");
     fireEvent.click(hide);
-    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_****ting");
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(MASKED);
     expect(screen.getByRole("button", { name: "Reveal API key of web" })).toHaveAttribute(
       "aria-pressed",
       "false",
     );
-    expect(container.textContent).not.toMatch(/lf_existing/);
+    expect(container.textContent).not.toMatch(/lf_existing_key/);
   });
 
   it("copies the full key to the clipboard without revealing it", async () => {
@@ -205,9 +223,9 @@ describe("SourcesPanel: key masking in the list", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
 
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("lf_existing"));
-    expect(container.textContent).not.toMatch(/lf_existing/);
-    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_****ting");
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("lf_existing_key"));
+    expect(container.textContent).not.toMatch(/lf_existing_key/);
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(MASKED);
     expect(await screen.findByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
   });
 
@@ -221,6 +239,158 @@ describe("SourcesPanel: key masking in the list", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/Copy failed/);
+  });
+});
+
+describe("SourcesPanel: the copy feedback of a listed key is transient and single sided", () => {
+  const copyButton = () => screen.getByRole("button", { name: /Copy API key of web/ });
+  const status = () => screen.getByTestId("source-key-status");
+
+  function stubClipboard(...results: ("ok" | "denied")[]) {
+    const writeText = vi.fn();
+    for (const result of results) {
+      if (result === "ok") writeText.mockResolvedValueOnce(undefined);
+      else writeText.mockRejectedValueOnce(new Error("denied"));
+    }
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    return writeText;
+  }
+
+  /** Flushes the clipboard promise and the state it sets, for use with fake timers. */
+  async function settle() {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+  }
+
+  it("reverts Copied on a timer and copies again on the next click", async () => {
+    vi.useFakeTimers();
+    const writeText = stubClipboard("ok", "ok");
+    renderPanel("OWNER");
+
+    fireEvent.click(copyButton());
+    await settle();
+    expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(screen.getByRole("button", { name: "Copy API key of web" })).toBeInTheDocument();
+    expect(status()).toBeEmptyDOMElement();
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
+    await settle();
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(writeText).toHaveBeenNthCalledWith(2, "lf_existing_key");
+    expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+  });
+
+  it("clears the failure note when a later copy succeeds", async () => {
+    const writeText = stubClipboard("denied", "ok");
+    renderPanel("OWNER");
+
+    fireEvent.click(copyButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Copy failed/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+  });
+
+  it("clears Copied when a later copy fails", async () => {
+    const writeText = stubClipboard("ok", "denied");
+    renderPanel("OWNER");
+    const button = screen.getByRole("button", { name: "Copy API key of web" });
+
+    fireEvent.click(button);
+    expect(await screen.findByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+
+    fireEvent.click(button);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Copy failed/);
+    expect(screen.queryByRole("button", { name: "Copied API key of web" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Copy API key of web" })).toBeInTheDocument();
+  });
+
+  it("clears its pending Copied timer when the row unmounts", async () => {
+    vi.useFakeTimers();
+    stubClipboard("ok");
+    const view = renderPanel("OWNER");
+    const timersAfterRender = vi.getTimerCount();
+
+    fireEvent.click(copyButton());
+    await settle();
+    expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+    expect(vi.getTimerCount()).toBeGreaterThan(timersAfterRender);
+
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(timersAfterRender);
+  });
+
+  it("resets a revealed row, its Copied label and its failure note when the key changes", async () => {
+    const writeText = stubClipboard("ok", "denied");
+    const view = renderWithKey("lf_existing_key");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    fireEvent.click(copyButton());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_existing_key");
+
+    view.rerender(
+      <SourcesPanel
+        sources={[{ ...source, apiKey: "lf_rotated_new" }]}
+        teamId="team-1"
+        token="tok"
+        role="OWNER"
+      />,
+    );
+
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_****_new");
+    expect(screen.getByRole("button", { name: "Reveal API key of web" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Copy API key of web" })).toBeInTheDocument();
+    expect(screen.getByTestId("source-key-status")).toBeEmptyDOMElement();
+
+    fireEvent.click(copyButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Copy failed/);
+
+    view.rerender(
+      <SourcesPanel
+        sources={[{ ...source, apiKey: "lf_rotated_again" }]}
+        teamId="team-1"
+        token="tok"
+        role="OWNER"
+      />,
+    );
+
+    expect(writeText).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByTestId("source-key-status")).toBeEmptyDOMElement();
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_****gain");
+  });
+
+  it("announces the copy outcome in a visually hidden polite live region", async () => {
+    const writeText = stubClipboard("denied", "ok");
+    renderPanel("OWNER");
+
+    const region = status();
+    expect(screen.getByRole("status")).toBe(region);
+    expect(region).toHaveAttribute("aria-live", "polite");
+    expect(region).toHaveClass("sr-only");
+    expect(region).toBeEmptyDOMElement();
+
+    fireEvent.click(copyButton());
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Copy failed/);
+    expect(region).toHaveTextContent(/Copy failed/);
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(region).toHaveTextContent("Copied"));
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 
