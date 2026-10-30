@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
@@ -13,6 +13,102 @@ const inputClass =
 
 const rowButtonClass =
   "rounded-lg border border-line px-2.5 py-1 text-xs text-ink transition hover:border-slate-400 disabled:opacity-50";
+
+/** Keys shorter than this reveal too much of themselves when only partly masked. */
+const MIN_PARTIALLY_MASKED_LENGTH = 12;
+
+/** Upper bound on the visible prefix, so a long prefix cannot expose the key. */
+const MAX_MASKED_PREFIX_LENGTH = 8;
+
+/** How long a row keeps the "Copied" label before it falls back to "Copy". */
+const COPIED_RESET_MS = 2000;
+
+/**
+ * Masks an ingest key for the list: the prefix through the first underscore
+ * (at most 8 characters), then `****`, then the last four characters
+ * (e.g. `tlm_****a7c1`). A key shorter than 12 characters is masked whole
+ * (`****`), because 8 prefix characters plus 4 tail characters would leave
+ * little of a short key hidden.
+ */
+function maskApiKey(apiKey: string): string {
+  if (apiKey.length < MIN_PARTIALLY_MASKED_LENGTH) return "****";
+  const underscore = apiKey.indexOf("_");
+  const prefix =
+    underscore >= 0 ? apiKey.slice(0, Math.min(underscore + 1, MAX_MASKED_PREFIX_LENGTH)) : "";
+  return `${prefix}****${apiKey.slice(-4)}`;
+}
+
+/**
+ * A listed source's key, masked until the row's Reveal toggle is pressed. The
+ * row lives as long as the page, so its copy feedback is transient ("Copied"
+ * reverts on a timer) and single sided (a failing copy clears "Copied" and
+ * clears the stale error before each write). A rotation hands this same
+ * instance the new key, so revealing, copying and errors reset with it.
+ */
+function SourceKey({ name, apiKey }: { name: string; apiKey: string }) {
+  const [revealed, setRevealed] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setRevealed(false);
+    setCopied(false);
+    setError(null);
+  }, [apiKey]);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), COPIED_RESET_MS);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  const copyKey = async () => {
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(apiKey);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+      setError("Copy failed. Select the key and copy it manually.");
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+      <span
+        data-testid="source-api-key"
+        className="rounded-full bg-cyan-100 px-3 py-1 font-mono text-xs text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300"
+      >
+        {revealed ? apiKey : maskApiKey(apiKey)}
+      </span>
+      <button
+        type="button"
+        onClick={() => setRevealed((value) => !value)}
+        aria-pressed={revealed}
+        aria-label={`${revealed ? "Hide" : "Reveal"} API key of ${name}`}
+        className={rowButtonClass}
+      >
+        {revealed ? "Hide" : "Reveal"}
+      </button>
+      <button
+        type="button"
+        onClick={() => void copyKey()}
+        aria-label={`${copied ? "Copied" : "Copy"} API key of ${name}`}
+        className={rowButtonClass}
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
+      <p role="status" aria-live="polite" data-testid="source-key-status" className="sr-only">
+        {error ?? (copied ? "Copied" : "")}
+      </p>
+      {error ? (
+        <p role="alert" className="w-full text-xs text-rose-600 dark:text-rose-400">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 /** A key shown exactly once, with a copy button. The page does not log or store it. */
 function ShowOnceKey({
@@ -80,6 +176,9 @@ function ShowOnceKey({
  * key the same way. The key is not logged or stored by the page. The create
  * control is rendered only for roles that may write; the per-source controls
  * only for OWNER and ADMIN (the API refuses everyone else with 403 either way).
+ * A listed key is shown masked (see maskApiKey); the full key enters the DOM
+ * only while the row's Reveal toggle is pressed, and Copy puts it on the
+ * clipboard without revealing it.
  */
 export function SourcesPanel({
   sources,
@@ -255,11 +354,7 @@ export function SourcesPanel({
                   <p className="text-sm font-medium text-ink">{source.name}</p>
                   <p className="mt-0.5 text-xs text-muted">{source.type}</p>
                 </div>
-                {source.apiKey ? (
-                  <span className="self-start rounded-full bg-cyan-100 px-3 py-1 font-mono text-xs text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300 sm:self-auto">
-                    {source.apiKey}
-                  </span>
-                ) : null}
+                {source.apiKey ? <SourceKey name={source.name} apiKey={source.apiKey} /> : null}
               </div>
               {manageable ? (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -430,8 +525,8 @@ export function SourcesPanel({
                   intro={
                     <>
                       Copy the new API key for <span className="font-medium text-ink">{rotated.name}</span>{" "}
-                      now. The old key no longer works. After you close this dialog the key is visible only to
-                      owners and admins in the source list.
+                      now. The old key no longer works. After you close this dialog the key is shown masked to
+                      owners and admins in the source list, where you can reveal or copy it.
                     </>
                   }
                   apiKey={rotated.apiKey}
