@@ -2,6 +2,7 @@
 
 <!-- Add new entries at the top, newest first. -->
 
+- 2026-10-30T07:34:47Z, merge of master (confirm-dialog focus entry in `CHANGELOG.md`) into the dev loopback branch. Both docs re-read against the merged `CHANGELOG.md`, unchanged, re-stamped.
 - 2026-10-30T07:23:56Z, `CHANGELOG.md` gained the confirm-dialog focus entry (frontend only: `frontend/src/components/ui/dialog.tsx`, `frontend/tests/dialog-focus.test.tsx`), merged with master. `clickhouse-retention-and-memory-limits.md` and `compose-file-topology-and-drift.md` cite `CHANGELOG.md` for ClickHouse and compose topology; the entry says nothing about either, re-read, unchanged, re-stamped.
 - 2026-10-30T07:21:34Z, loopback check review fixes (the check fails closed without PyYAML or a scratch dir; README, DEPLOYMENT.md and CHANGELOG drop the compose-override advice) and merge of master (frontend healthcheck, guard check 5, env-file docs). `compose-file-topology-and-drift.md`: the `docker-compose.yml` bullet now carries both the loopback ports with their check and the frontend probe from master (re-verified against the merged file). `clickhouse-retention-and-memory-limits.md` re-read, unchanged. Both re-stamped.
 - 2026-10-30T06:43:00Z, merge of master (env-file contract docs) into the healthcheck branch: `CHANGELOG.md`, `DEPLOYMENT.md` and the `.relay.yml` comment now carry both changes. `compose-file-topology-and-drift.md` (its `.relay.yml` claims: pins `compose_file`, no hooks) and `clickhouse-retention-and-memory-limits.md` re-read against the merged files, unchanged; both re-stamped.
