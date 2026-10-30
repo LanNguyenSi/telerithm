@@ -14,18 +14,23 @@ set -euo pipefail
 #
 # Retention: after a successful backup it keeps the newest 10 backups and removes
 # those older than 10 days, but only directories named YYYYMMDD_HHMMSS that hold
-# both dumps (the ones this script writes). Anything else in <backup_dir> is left
-# alone, with one note saying how many entries. An old backup that cannot be
-# removed is a WARNING on stderr and does not stop the run (the loop goes on and
-# the off-host hook still runs), but the run then exits 2 after the hook block
-# with an ERROR line: housekeeping that silently stops working would fill the
-# disk unnoticed. The new backup is complete and kept in that case. The exit 2
-# for a partly removed backup comes only from the run whose removal failed: an
-# old backup that rm could only partly remove (its dumps gone, a locked
-# subdirectory left) is no longer a complete backup, so later runs leave it
-# alone and exit 0, and from then on only the "left alone" note reports it. An
-# old backup rm cannot remove at all stays complete, so every later run warns
-# and exits 2 again until it is removed.
+# both dumps (the ones this script writes). A real directory with such a name
+# that lacks one of the dumps (a run that was killed before its cleanup could
+# run) is removed once its modification time is more than 2 whole days old
+# (find -mtime +2, so at least 3 days); a younger one stays. Anything else in
+# <backup_dir> (other names, files, symlinks, the directory of this run) is left
+# alone, with one note saying how many entries. An old backup or a stale
+# incomplete directory that cannot be removed is a WARNING on stderr naming the
+# path and does not stop the run (the loop goes on and the off-host hook still
+# runs), but the run then exits 2 after the hook block with an ERROR line:
+# housekeeping that silently stops working would fill the disk unnoticed. The
+# new backup is complete and kept in that case. An old backup that rm could only
+# partly remove (its dumps gone, a locked subdirectory left) is no longer a
+# complete backup: the run whose removal failed exits 2, the runs of the next
+# 2 days leave it alone (its modification time is new) and exit 0, and after
+# that it is a stale incomplete directory, so every run warns and exits 2 again
+# until it is removed. An old backup rm cannot remove at all stays complete, so
+# every later run warns and exits 2 again until it is removed.
 #
 # Exit codes: 0 success; 1 any other failure (checks before the dumps, a failed
 # dump, a failed off-host hook, any other command that fails, whatever its own
@@ -156,6 +161,12 @@ DUMPS_COMPLETE=1
 # symlinks, a timestamp-named directory without both dumps) is left alone and
 # only counted in one note, so pointing the script at a shared directory such
 # as /backups instead of /backups/telerithm cannot delete anything unrelated.
+# The one exception is a stale incomplete directory: a real directory (not a
+# symlink) named YYYYMMDD_HHMMSS, not the one this run wrote, that lacks one of
+# the two dumps and whose modification time is more than 2 whole days old. A
+# run killed before its cleanup trap could run leaves such a directory, and
+# nothing else would ever remove it. A younger incomplete directory is left
+# alone, because another run may still be writing it.
 # "Newest" is decided by the timestamp in the name; the age rule uses the
 # directory's modification time. The backup written by this run is never
 # removed.
@@ -165,6 +176,7 @@ CDPATH='' cd -- "${BACKUP_DIR}" >/dev/null
 # such a name would count as a backup.
 TIMESTAMP_RE='^[0123456789]{8}_[0123456789]{6}$'
 RETAINABLE=()
+STALE_INCOMPLETE=()
 LEFT_ALONE=0
 RETENTION_FAILED=0
 # The three globs cover every name (plain, one dot, two dots) without matching
@@ -179,6 +191,13 @@ for entry in "${BACKUP_DIR}"/* "${BACKUP_DIR}"/.[!.]* "${BACKUP_DIR}"/..?*; do
     && [ -f "${entry}/postgres.sql.gz" ] \
     && [ -f "${entry}/clickhouse_logs.native.gz" ]; then
     RETAINABLE+=("${entry_name}")
+  elif [[ "${entry_name}" =~ ${TIMESTAMP_RE} ]] \
+    && [ -d "${entry}" ] && [ ! -L "${entry}" ] \
+    && [ "${entry_name}" != "${TIMESTAMP}" ] \
+    && [ -n "$(find "${entry}" -maxdepth 0 -mtime +2 2>/dev/null)" ]; then
+    # Not a complete backup (the test above failed on the dumps), not this
+    # run's directory, and older than 2 whole days: stale.
+    STALE_INCOMPLETE+=("${entry_name}")
   else
     LEFT_ALONE=$((LEFT_ALONE + 1))
   fi
@@ -207,6 +226,19 @@ if [ "${#RETAINABLE[@]}" -gt 0 ]; then
       fi
     fi
   done < <(printf '%s\n' "${RETAINABLE[@]}" | LC_ALL=C sort -r)
+fi
+if [ "${#STALE_INCOMPLETE[@]}" -gt 0 ]; then
+  # Every name here matched TIMESTAMP_RE, so it holds no newline and no
+  # character that could be read as an option or a path.
+  for entry_name in "${STALE_INCOMPLETE[@]}"; do
+    entry="${BACKUP_DIR}/${entry_name}"
+    if rm -rf -- "${entry}"; then
+      echo "[backup] Removed the stale incomplete backup directory ${entry}"
+    else
+      echo "[backup] WARNING: could not remove the stale incomplete backup directory ${entry}" >&2
+      RETENTION_FAILED=$((RETENTION_FAILED + 1))
+    fi
+  done
 fi
 # Reported now, acted on (exit 2) after the off-host hook, so the hook still
 # gets the good backup. The EXIT trap keeps it: the dumps are complete.
