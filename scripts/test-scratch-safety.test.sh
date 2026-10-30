@@ -22,6 +22,11 @@
 # ignores SIGTERM must be stopped at the limit with its whole group; and a
 # child that a script leaves running must be killed with the group.
 #
+# Limits: each script's failure path runs for real, outside any sandbox, and
+# only the start directory is checked. A script whose cleanup can reach other
+# paths (for example `rm -rf "$W"/*` with an unchecked W) must be fixed before
+# this guard runs it; run the guard in CI or a disposable container.
+#
 # Usage: bash scripts/test-scratch-safety.test.sh
 
 set -uo pipefail

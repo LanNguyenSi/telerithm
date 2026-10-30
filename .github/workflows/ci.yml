@@ -274,8 +274,8 @@ jobs:
           out=$(bash scripts/validate-sender-configs.sh deploy/vector/vector.toml scripts/fixtures/sender-configs/value-text.conf 2>&1) || { echo "$out"; echo "value-text.conf failed but must pass"; exit 1; }
 
       # Warnings and errors fail the job; info and style notes (for example
-      # SC2016 on text the test scripts single-quote on purpose) are reported
-      # but do not.
+      # SC2016 on text the test scripts single-quote on purpose) are not
+      # reported at this severity.
       - name: Shellcheck
         run: shellcheck --severity=warning scripts/*.sh backend/entrypoint.sh backend/scripts/*.sh
 

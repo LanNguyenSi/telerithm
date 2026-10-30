@@ -20,10 +20,12 @@ set -euo pipefail
 # the off-host hook still runs), but the run then exits 2 after the hook block
 # with an ERROR line: housekeeping that silently stops working would fill the
 # disk unnoticed. The new backup is complete and kept in that case. The exit 2
-# comes only from the run whose removal failed: an old backup that rm could
-# only partly remove (its dumps gone, a locked subdirectory left) is no longer a
-# complete backup, so later runs leave it alone and exit 0, and from then on
-# only the "left alone" note reports it.
+# for a partly removed backup comes only from the run whose removal failed: an
+# old backup that rm could only partly remove (its dumps gone, a locked
+# subdirectory left) is no longer a complete backup, so later runs leave it
+# alone and exit 0, and from then on only the "left alone" note reports it. An
+# old backup rm cannot remove at all stays complete, so every later run warns
+# and exits 2 again until it is removed.
 #
 # Exit codes: 0 success; 1 any other failure (checks before the dumps, a failed
 # dump, a failed off-host hook, any other command that fails, whatever its own
@@ -67,7 +69,9 @@ fail() {
 }
 # Any other command that stops the script under `set -e` exits 1 as well, not
 # with its own status: 2 means only that retention failed (see Exit codes), and
-# a command's own 2 (or 137 after a kill) must not read as that.
+# a command's own 2 (or 137 after a kill) must not read as that. The trap
+# covers top-level commands only (no errtrace): code added inside a function or
+# a subshell must map its own failure with `|| fail`.
 trap 'echo "[backup] ERROR: command failed with exit $? (line ${LINENO})" >&2; exit 1' ERR
 
 [ -f "${COMPOSE_FILE}" ] || fail "compose file not found: ${COMPOSE_FILE}"
