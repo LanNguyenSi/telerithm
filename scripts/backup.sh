@@ -15,7 +15,17 @@ set -euo pipefail
 # Retention: after a successful backup it keeps the newest 10 backups and removes
 # those older than 10 days, but only directories named YYYYMMDD_HHMMSS that hold
 # both dumps (the ones this script writes). Anything else in <backup_dir> is left
-# alone, with one note saying how many entries.
+# alone, with one note saying how many entries. An old backup that cannot be
+# removed is a WARNING on stderr and does not stop the run (the loop goes on and
+# the off-host hook still runs), but the run then exits 2 after the hook block
+# with an ERROR line: housekeeping that silently stops working would fill the
+# disk unnoticed. The new backup is complete and kept in that case.
+#
+# Exit codes: 0 success; 1 any other failure (checks before the dumps, a failed
+# dump, a failed off-host hook); 2 only the retention step could not remove old
+# backups. When the hook fails as well, 1 wins (the off-host copy is missing,
+# which is the worse state); the retention ERROR line is printed before the hook
+# runs, so it shows in that case too.
 #
 # Output (in <backup_dir>/<timestamp>/):
 #   postgres.sql.gz            pg_dump, restore with psql (DEPLOYMENT.md, Backup)
@@ -34,7 +44,7 @@ set -euo pipefail
 #                         the backup stays local. The dumps hold source API keys
 #                         in clear text: encrypt them in the hook before they
 #                         leave the host. A hook that fails makes this script
-#                         exit non-zero; the local backup is kept.
+#                         exit 1; the local backup is kept.
 
 # Every `cd` below is prefixed with an empty CDPATH: an exported CDPATH would
 # otherwise resolve a relative directory against it (and print it), so the
@@ -133,9 +143,13 @@ DUMPS_COMPLETE=1
 # directory's modification time. The backup written by this run is never
 # removed.
 CDPATH='' cd -- "${BACKUP_DIR}" >/dev/null
-TIMESTAMP_RE='^[0-9]{8}_[0-9]{6}$'
+# Explicit digit class, not [0-9]: under glibc with a UTF-8 locale a range can
+# match other digits (fullwidth ones, for example), so a foreign directory with
+# such a name would count as a backup.
+TIMESTAMP_RE='^[0123456789]{8}_[0123456789]{6}$'
 RETAINABLE=()
 LEFT_ALONE=0
+RETENTION_FAILED=0
 # The three globs cover every name (plain, one dot, two dots) without matching
 # . or ..; a glob that matches nothing stays literal and is skipped below.
 for entry in "${BACKUP_DIR}"/* "${BACKUP_DIR}"/.[!.]* "${BACKUP_DIR}"/..?*; do
@@ -170,10 +184,17 @@ if [ "${#RETAINABLE[@]}" -gt 0 ]; then
     fi
     entry="${BACKUP_DIR}/${entry_name}"
     if [ "${RANK}" -gt 10 ] || [ -n "$(find "${entry}" -maxdepth 0 -mtime +10 2>/dev/null)" ]; then
-      rm -rf -- "${entry}" \
-        || echo "[backup] WARNING: could not remove the old backup ${entry}" >&2
+      if ! rm -rf -- "${entry}"; then
+        echo "[backup] WARNING: could not remove the old backup ${entry}" >&2
+        RETENTION_FAILED=$((RETENTION_FAILED + 1))
+      fi
     fi
   done < <(printf '%s\n' "${RETAINABLE[@]}" | LC_ALL=C sort -r)
+fi
+# Reported now, acted on (exit 2) after the off-host hook, so the hook still
+# gets the good backup. The EXIT trap keeps it: the dumps are complete.
+if [ "${RETENTION_FAILED}" -gt 0 ]; then
+  echo "[backup] ERROR: retention could not remove ${RETENTION_FAILED} old backup(s); the backup is complete" >&2
 fi
 
 echo "[backup] Backup complete: ${BACKUP_PATH}"
@@ -186,4 +207,8 @@ if [ -n "${OFFHOST_HOOK}" ]; then
   echo "[backup] Off-host hook complete"
 else
   echo "[backup] BACKUP_OFFHOST_HOOK not set: backup stays on this host only"
+fi
+
+if [ "${RETENTION_FAILED}" -gt 0 ]; then
+  exit 2
 fi

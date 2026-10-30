@@ -14,7 +14,9 @@ BACKUP_SH="${SCRIPT_DIR}/backup.sh"
 
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-backup-test.XXXXXX")"
 SCRATCH="$(cd "${SCRATCH}" && pwd -P)"
-trap 'rm -rf "${SCRATCH}"' EXIT
+# Permissions come back first: the retention-failure cases leave directories
+# that cannot be removed while they are read-only.
+trap 'chmod -R u+rwx "${SCRATCH}" 2>/dev/null; rm -rf "${SCRATCH}"' EXIT
 
 export HOME="${SCRATCH}/home"
 mkdir -p "${HOME}"
@@ -489,6 +491,149 @@ if [ "${RC}" -eq 0 ] \
   && [ "$(valid_count "${D18}")" = "11" ]; then
   ok "new backup is never pruned, even when the clock ranks it oldest; the two oldest others go"
 else bad "old clock: rc=${RC} valid=$(valid_count "${D18}") out=${OUT}"; fi
+
+# --- 6f. a failed removal of an old backup ---------------------------------------
+# A complete old backup that rm cannot remove: a read-only subdirectory with a
+# file in it (unlinking the file needs write permission on the subdirectory).
+# Expected: a WARNING per entry, the loop goes on, the off-host hook still gets
+# the good backup, then exit 2 with an ERROR line. Skipped as root, for whom
+# permissions do not stop rm.
+# mk_stuck <backup_dir> <name> [touch -t stamp]: complete backup that rm -rf cannot remove
+mk_stuck() {
+  mk_backup "$1" "$2"
+  mkdir "$1/$2/locked"
+  echo x > "$1/$2/locked/file"
+  chmod 555 "$1/$2/locked"
+  if [ -n "${3:-}" ]; then touch -t "$3" "$1/$2"; fi
+}
+# hook_ran_on <dir>: the hook ran once, on a backup directory inside <dir> that holds both dumps
+hook_ran_on() {
+  local line path
+  [ "$(grep -c '^hook called with:' "${HOOK_LOG}")" = "1" ] || return 1
+  line="$(grep '^hook called with:' "${HOOK_LOG}")"
+  path="${line#hook called with: }"
+  [ "$(dirname "${path}")" = "$1" ] && [ -s "${path}/postgres.sql.gz" ] && [ -s "${path}/clickhouse_logs.native.gz" ]
+}
+PROBE="${SCRATCH}/probe-locked"
+mkdir -p "${PROBE}/locked"
+chmod 555 "${PROBE}/locked"
+if [ "$(id -u)" = "0" ] || [ -w "${PROBE}/locked" ]; then
+  echo "skip - retention removal failure cases (running as root or the directory stays writable)"
+else
+  OLD_STAMP=202001010000
+  # age path: 20010102 (stuck) is processed before 20010101 (removable), so the
+  # loop must go on after the failure; both are older than 10 days, fewer than 10 backups
+  mk_age_fixture() { # <dir> <stuck 0|1>
+    mkdir -p "$1"
+    mk_backup "$1" 20010101_000000 "${OLD_STAMP}"
+    if [ "$2" = "1" ]; then mk_stuck "$1" 20010102_000000 "${OLD_STAMP}"; else mk_backup "$1" 20010102_000000 "${OLD_STAMP}"; fi
+  }
+
+  # prune ok / hook ok: exit 0
+  DF1="${SCRATCH}/b19a"; mk_age_fixture "${DF1}" 0; : > "${HOOK_LOG}"
+  BACKUP_OFFHOST_HOOK="${HOOK}" run_backup pruneok_hookok "${DF1}"
+  if [ "${RC}" -eq 0 ] && gone "${DF1}/20010101_000000" "${DF1}/20010102_000000" && hook_ran_on "${DF1}" \
+    && ! grep -q "ERROR" <<< "${OUT}" && ! grep -q "WARNING" <<< "${OUT}"; then
+    ok "retention removal: prune ok / hook ok: exit 0, no warning, hook ran"
+  else bad "prune ok / hook ok: rc=${RC} out=${OUT}"; fi
+
+  # prune fail / hook ok: exit 2, warning for the entry, the removable one still gone, hook ran
+  DF2="${SCRATCH}/b19b"; mk_age_fixture "${DF2}" 1; : > "${HOOK_LOG}"
+  BACKUP_OFFHOST_HOOK="${HOOK}" run_backup prunefail_hookok "${DF2}"
+  if [ "${RC}" -eq 2 ] \
+    && grep -qF "WARNING: could not remove the old backup ${DF2}/20010102_000000" <<< "${OUT}" \
+    && grep -qF "ERROR: retention could not remove 1 old backup(s); the backup is complete" <<< "${OUT}" \
+    && [ "$(grep -c 'WARNING' <<< "${OUT}")" = "1" ] \
+    && gone "${DF2}/20010101_000000" && present "${DF2}/20010102_000000" \
+    && hook_ran_on "${DF2}" && grep -q "Off-host hook complete" <<< "${OUT}"; then
+    ok "retention removal (age): prune fail / hook ok: warning, loop goes on, hook runs, exit 2, new backup kept"
+  else bad "prune fail / hook ok: rc=${RC} out=${OUT} hooklog=$(cat "${HOOK_LOG}")"; fi
+
+  # prune ok / hook fail: exit 1 (the hook failure), no retention error
+  DF3="${SCRATCH}/b19c"; mk_age_fixture "${DF3}" 0; : > "${HOOK_LOG}"
+  HOOK_FAIL=1 BACKUP_OFFHOST_HOOK="${HOOK}" run_backup pruneok_hookfail "${DF3}"
+  if [ "${RC}" -eq 1 ] && grep -q "off-host hook failed" <<< "${OUT}" && ! grep -q "retention could not remove" <<< "${OUT}" \
+    && hook_ran_on "${DF3}"; then
+    ok "retention removal: prune ok / hook fail: exit 1, hook failure reported, backup kept"
+  else bad "prune ok / hook fail: rc=${RC} out=${OUT}"; fi
+
+  # prune fail / hook fail: exit 1 wins, both reported, backup kept
+  DF4="${SCRATCH}/b19d"; mk_age_fixture "${DF4}" 1; : > "${HOOK_LOG}"
+  HOOK_FAIL=1 BACKUP_OFFHOST_HOOK="${HOOK}" run_backup prunefail_hookfail "${DF4}"
+  if [ "${RC}" -eq 1 ] && grep -q "off-host hook failed" <<< "${OUT}" \
+    && grep -qF "ERROR: retention could not remove 1 old backup(s)" <<< "${OUT}" \
+    && hook_ran_on "${DF4}"; then
+    ok "retention removal: prune fail / hook fail: exit 1 wins, both errors printed, backup kept"
+  else bad "prune fail / hook fail: rc=${RC} out=${OUT}"; fi
+
+  # prune fail, no hook configured: exit 2, says the backup stays local
+  DF5="${SCRATCH}/b19e"; mk_age_fixture "${DF5}" 1; : > "${HOOK_LOG}"
+  run_backup prunefail_nohook "${DF5}"
+  if [ "${RC}" -eq 2 ] && grep -q "stays on this host only" <<< "${OUT}" \
+    && grep -qF "ERROR: retention could not remove 1 old backup(s); the backup is complete" <<< "${OUT}" \
+    && [ ! -s "${HOOK_LOG}" ] && [ "$(valid_count "${DF5}")" -ge 1 ] \
+    && [ "$(find "${DF5}" -mindepth 2 -maxdepth 2 -name postgres.sql.gz -size +0 | wc -l | tr -d ' ')" = "1" ]; then
+    ok "retention removal: prune fail, no hook: exit 2, backup kept"
+  else bad "prune fail, no hook: rc=${RC} out=${OUT}"; fi
+
+  # count path: 12 recent backups plus the new one; ranks 11 to 13 (names 03, 02, 01) are over the
+  # limit, 02 is stuck, 03 and 01 are removed around it. A second case below has two stuck entries.
+  DC="${SCRATCH}/b20"
+  mkdir -p "${DC}"
+  RECENT="$(days_ago 1)"
+  for i in 01 03 04 05 06 07 08 09 10 11 12; do mk_backup "${DC}" "200101${i}_000000" "${RECENT}"; done
+  mk_stuck "${DC}" 20010102_000000 "${RECENT}"
+  : > "${HOOK_LOG}"
+  BACKUP_OFFHOST_HOOK="${HOOK}" run_backup count_prunefail "${DC}"
+  if [ "${RC}" -eq 2 ] \
+    && grep -qF "WARNING: could not remove the old backup ${DC}/20010102_000000" <<< "${OUT}" \
+    && grep -qF "ERROR: retention could not remove 1 old backup(s); the backup is complete" <<< "${OUT}" \
+    && gone "${DC}/20010101_000000" "${DC}/20010103_000000" && present "${DC}/20010102_000000" "${DC}/20010104_000000" \
+    && hook_ran_on "${DC}"; then
+    ok "retention removal (count): prune fail / hook ok: warning, entries around it removed, hook runs, exit 2"
+  else bad "count path prune fail: rc=${RC} out=${OUT}"; fi
+  DC2="${SCRATCH}/b21"
+  mkdir -p "${DC2}"
+  for i in 03 04 05 06 07 08 09 10 11 12; do mk_backup "${DC2}" "200101${i}_000000" "${RECENT}"; done
+  mk_stuck "${DC2}" 20010102_000000 "${RECENT}"
+  mk_stuck "${DC2}" 20010101_000000 "${RECENT}"
+  run_backup count_prunefail2 "${DC2}"
+  if [ "${RC}" -eq 2 ] && grep -qF "ERROR: retention could not remove 2 old backup(s)" <<< "${OUT}" \
+    && [ "$(grep -c 'WARNING' <<< "${OUT}")" = "2" ]; then
+    ok "retention removal: two failures are counted as 2, one warning each"
+  else bad "two failures: rc=${RC} out=${OUT}"; fi
+fi
+chmod -R u+rwx "${SCRATCH}" 2>/dev/null
+
+# --- 6g. the timestamp pattern accepts ASCII digits only -------------------------
+# Under glibc with a UTF-8 locale [0-9] also matches other digits, so a foreign
+# directory named with fullwidth digits that holds both dumps would be pruned.
+D22="${SCRATCH}/b22"
+mkdir -p "${D22}"
+# UTF-8 bytes of U+FF10..U+FF19 spelled out, so the name does not depend on the locale
+FULLWIDTH=$'\xef\xbc\x92\xef\xbc\x90\xef\xbc\x90\xef\xbc\x91\xef\xbc\x90\xef\xbc\x91\xef\xbc\x90\xef\xbc\x91_\xef\xbc\x90\xef\xbc\x90\xef\xbc\x90\xef\xbc\x90\xef\xbc\x90\xef\xbc\x90'
+mk_backup "${D22}" "${FULLWIDTH}" 201901010000
+UTF8_LOCALE=""
+# captured first: `grep -q` closing the pipe early would fail the pipeline under pipefail
+INSTALLED_LOCALES="$(locale -a 2>/dev/null)"
+for cand in en_US.UTF-8 en_US.utf8 C.UTF-8 C.utf8; do
+  if grep -qxF "${cand}" <<< "${INSTALLED_LOCALES}"; then UTF8_LOCALE="${cand}"; break; fi
+done
+run_backup fullwidth_default "${D22}"
+if [ "${RC}" -eq 0 ] && present "${D22}/${FULLWIDTH}/postgres.sql.gz" "${D22}/${FULLWIDTH}/clickhouse_logs.native.gz" \
+  && grep -qF "Retention left 1 entry" <<< "${OUT}"; then
+  ok "fullwidth-digit directory with both dumps survives (default locale) and is counted as left alone"
+else bad "fullwidth digits, default locale: rc=${RC} out=${OUT}"; fi
+if [ -n "${UTF8_LOCALE}" ]; then
+  sleep 1
+  LC_ALL="${UTF8_LOCALE}" run_backup fullwidth_utf8 "${D22}"
+  if [ "${RC}" -eq 0 ] && present "${D22}/${FULLWIDTH}/postgres.sql.gz" "${D22}/${FULLWIDTH}/clickhouse_logs.native.gz" \
+    && grep -qF "Retention left 1 entry" <<< "${OUT}"; then
+    ok "fullwidth-digit directory with both dumps survives under ${UTF8_LOCALE}"
+  else bad "fullwidth digits under ${UTF8_LOCALE}: rc=${RC} out=${OUT}"; fi
+else
+  echo "skip - fullwidth digits under a UTF-8 locale (no en_US.UTF-8 or C.UTF-8 installed)"
+fi
 
 # --- 7. mkdir failures other than a collision -----------------------------------
 # A backup path that exists gets the collision message (covered in 4b). Any other
