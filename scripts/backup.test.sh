@@ -763,21 +763,53 @@ fi
 # --- 6h. stale incomplete timestamp directories ----------------------------------
 # A real directory named YYYYMMDD_HHMMSS that lacks one of the dumps (a run that
 # was killed before its cleanup trap) is removed when its mtime is more than 2
-# whole days old (find -mtime +2: 3.5 days goes, 2.5 days stays). Younger ones,
-# symlinks, foreign names, files and the directory of the running backup stay.
+# whole days old (find -mtime +2: 3.5 days goes, 2.5 days stays) and everything
+# in it is a regular file with one of the four names a killed run leaves
+# (postgres.sql.gz, clickhouse_logs.native.gz and their .partial names; an empty
+# directory counts). Younger ones, ones with any other content (a foreign file,
+# a subdirectory, a symlink, even one named like a dump), symlinks, foreign
+# names, files and the directory of the running backup stay.
 D23="${SCRATCH}/b23"
 OUTSIDE23="${SCRATCH}/outside-target23"
 mkdir -p "${D23}" "${OUTSIDE23}"
 echo precious > "${OUTSIDE23}/sentinel.txt"
 : > "${OUTSIDE23}/postgres.sql.gz"
 touch -t 200001010000 "${OUTSIDE23}"
-# stale incomplete: empty, one dump only, with nested content, 3.5 days old
+# stale incomplete, removed: empty, one dump only, a dump 3.5 days old, only
+# partial dumps, a finished dump next to a partial one
 mkdir -p "${D23}/20010101_000000"
 mkdir -p "${D23}/20010102_000000"; : > "${D23}/20010102_000000/clickhouse_logs.native.gz"
-mkdir -p "${D23}/20010103_000000/sub"; echo x > "${D23}/20010103_000000/sub/file"
 mkdir -p "${D23}/20010104_000000"; : > "${D23}/20010104_000000/postgres.sql.gz"
-for name in 20010101_000000 20010102_000000 20010103_000000; do touch -t 200001010000 "${D23}/${name}"; done
+mkdir -p "${D23}/20010110_000000"
+: > "${D23}/20010110_000000/postgres.sql.gz.partial"; : > "${D23}/20010110_000000/clickhouse_logs.native.gz.partial"
+mkdir -p "${D23}/20010111_000000"
+: > "${D23}/20010111_000000/postgres.sql.gz"; : > "${D23}/20010111_000000/postgres.sql.gz.partial"
+: > "${D23}/20010111_000000/clickhouse_logs.native.gz.partial"
+mkdir -p "${D23}/20010120_000000"; : > "${D23}/20010120_000000/clickhouse_logs.native.gz.partial"
+for name in 20010101_000000 20010102_000000 20010110_000000 20010111_000000 20010120_000000; do touch -t 200001010000 "${D23}/${name}"; done
 touch -t "$(hours_ago 84)" "${D23}/20010104_000000"
+STALE_REMOVED=(20010101_000000 20010102_000000 20010104_000000 20010110_000000 20010111_000000 20010120_000000)
+# old and incomplete, but with content a killed run does not leave: kept
+#   03 a subdirectory with a file, 14 an empty subdirectory,
+#   12 a foreign file only, 13 a dump next to a foreign file,
+#   18 a hidden file named like a dump, 19 a partial dump next to a name with a suffix,
+#   15 a symlink named like a dump (to a file outside), 16 a symlink to a directory,
+#   17 a dangling symlink named like a partial dump
+mkdir -p "${D23}/20010103_000000/sub"; echo x > "${D23}/20010103_000000/sub/file"
+mkdir -p "${D23}/20010114_000000/sub"
+mkdir -p "${D23}/20010112_000000"; echo data > "${D23}/20010112_000000/notes.txt"
+mkdir -p "${D23}/20010113_000000"; : > "${D23}/20010113_000000/postgres.sql.gz"; echo data > "${D23}/20010113_000000/notes.txt"
+mkdir -p "${D23}/20010118_000000"; : > "${D23}/20010118_000000/.postgres.sql.gz"
+mkdir -p "${D23}/20010119_000000"
+: > "${D23}/20010119_000000/clickhouse_logs.native.gz.partial"; : > "${D23}/20010119_000000/postgres.sql.gz.partial.old"
+mkdir -p "${D23}/20010115_000000"; ln -s "${OUTSIDE23}/postgres.sql.gz" "${D23}/20010115_000000/postgres.sql.gz"
+mkdir -p "${D23}/20010116_000000"; ln -s "${OUTSIDE23}" "${D23}/20010116_000000/link"
+mkdir -p "${D23}/20010117_000000"; ln -s "${SCRATCH}/does-not-exist23" "${D23}/20010117_000000/clickhouse_logs.native.gz.partial"
+#   21 a subdirectory named like a dump, 22 a subdirectory named like a partial dump
+mkdir -p "${D23}/20010121_000000/clickhouse_logs.native.gz"
+mkdir -p "${D23}/20010122_000000/postgres.sql.gz.partial"
+STALE_KEPT=(20010103_000000 20010112_000000 20010113_000000 20010114_000000 20010115_000000 20010116_000000 20010117_000000 20010118_000000 20010119_000000 20010121_000000 20010122_000000)
+for name in "${STALE_KEPT[@]}"; do touch -t 200001010000 "${D23}/${name}"; done
 # young incomplete: 2.5 days and 1 day old
 mkdir -p "${D23}/20010105_000000"; : > "${D23}/20010105_000000/postgres.sql.gz"
 touch -t "$(hours_ago 60)" "${D23}/20010105_000000"
@@ -796,12 +828,15 @@ for name in "${STALE_FOREIGN[@]}"; do
 done
 echo file > "${D23}/20010109_000000"
 touch -t 200001010000 "${D23}/20010109_000000"
-LEFT23=$(( 2 + 1 + ${#STALE_FOREIGN[@]} + 1 ))
+LEFT23=$(( 2 + 1 + ${#STALE_FOREIGN[@]} + 1 + ${#STALE_KEPT[@]} ))
 run_backup stale_incomplete "${D23}"
-if [ "${RC}" -eq 0 ] && gone "${D23}/20010101_000000" "${D23}/20010102_000000" "${D23}/20010103_000000" "${D23}/20010104_000000" \
-  && [ "$(grep -c 'Removed the stale incomplete backup directory' <<< "${OUT}")" = "4" ] \
-  && grep -qF "Removed the stale incomplete backup directory ${D23}/20010103_000000" <<< "${OUT}"; then
-  ok "stale incomplete: empty, one-dump and nested directories older than 2 days are removed, each reported"
+REMOVED_PATHS=()
+for name in "${STALE_REMOVED[@]}"; do REMOVED_PATHS+=("${D23}/${name}"); done
+if [ "${RC}" -eq 0 ] && gone "${REMOVED_PATHS[@]}" \
+  && [ "$(grep -c 'Removed the stale incomplete backup directory' <<< "${OUT}")" = "${#STALE_REMOVED[@]}" ] \
+  && grep -qF "Removed the stale incomplete backup directory ${D23}/20010110_000000" <<< "${OUT}" \
+  && grep -qF "Removed the stale incomplete backup directory ${D23}/20010111_000000" <<< "${OUT}"; then
+  ok "stale incomplete: empty, one-dump, partial-dump and finished-plus-partial directories older than 2 days are removed, each reported"
 else bad "stale incomplete removal: rc=${RC} left=$(find "${D23}" -maxdepth 1 | sort | tr '\n' ' ') out=${OUT}"; fi
 if present "${D23}/20010105_000000/postgres.sql.gz" "${D23}/20010106_000000"; then
   ok "stale incomplete: incomplete directories 2.5 days and 1 day old are kept"
@@ -816,6 +851,21 @@ done
 if [ "${FOREIGN_KEPT}" -eq 1 ] && [ "$(cat "${D23}/20010109_000000")" = "file" ]; then
   ok "stale incomplete: old foreign names and a regular file named like a timestamp are kept"
 else bad "foreign entry removed: $(find "${D23}" -maxdepth 1 | sort | tr '\n' ' ')"; fi
+# old incomplete directories with content a killed run does not leave
+if [ -f "${D23}/20010112_000000/notes.txt" ] && [ -f "${D23}/20010113_000000/notes.txt" ] && [ -f "${D23}/20010113_000000/postgres.sql.gz" ] \
+  && [ -f "${D23}/20010118_000000/.postgres.sql.gz" ] && [ -f "${D23}/20010119_000000/postgres.sql.gz.partial.old" ] \
+  && [ -f "${D23}/20010119_000000/clickhouse_logs.native.gz.partial" ]; then
+  ok "stale incomplete: an old directory with a foreign file (alone, next to a dump, hidden, or a suffixed name) is kept whole"
+else bad "directory with a foreign file changed: $(find "${D23}" -maxdepth 2 | sort | tr '\n' ' ')"; fi
+if [ -f "${D23}/20010103_000000/sub/file" ] && [ -d "${D23}/20010114_000000/sub" ] \
+  && [ -d "${D23}/20010121_000000/clickhouse_logs.native.gz" ] && [ -d "${D23}/20010122_000000/postgres.sql.gz.partial" ]; then
+  ok "stale incomplete: an old directory with a subdirectory (with or without content, even one named like a dump) is kept whole"
+else bad "directory with a subdirectory changed: $(find "${D23}" -maxdepth 2 | sort | tr '\n' ' ')"; fi
+if [ -L "${D23}/20010115_000000/postgres.sql.gz" ] && [ -L "${D23}/20010116_000000/link" ] \
+  && [ -L "${D23}/20010117_000000/clickhouse_logs.native.gz.partial" ] \
+  && [ -f "${OUTSIDE23}/sentinel.txt" ] && [ -f "${OUTSIDE23}/postgres.sql.gz" ]; then
+  ok "stale incomplete: an old directory holding a symlink (even one named like a dump, or a dangling one) is kept and the targets are untouched"
+else bad "directory with a symlink changed: $(find "${D23}" -maxdepth 2 | sort | tr '\n' ' ') outside=$(find "${OUTSIDE23}")"; fi
 if grep -qF "Retention left ${LEFT23} entries in ${D23} alone" <<< "${OUT}" \
   && [ "$(grep -c 'Retention left' <<< "${OUT}")" = "1" ]; then
   ok "stale incomplete: the note counts the kept entries only, not the removed ones"
@@ -854,10 +904,17 @@ if [ "${RC}" -eq 0 ] && [ -n "${OWN24}" ] && [ -s "${OWN24}/clickhouse_logs.nati
   ok "stale incomplete: the directory of the running backup is never removed, even when it looks old and incomplete"
 else bad "own directory: rc=${RC} dirs=$(find "${D24}" | tr '\n' ' ') out=${OUT}"; fi
 
-# A stale incomplete directory that rm cannot remove (a read-only subdirectory
-# with a file in it, nothing else at the top level, so its mtime stays old):
-# a WARNING naming the path, the loop goes on, the hook still gets the new
-# backup, then exit 2; the next run does the same. Skipped as root.
+# A stale incomplete directory that rm cannot remove (the directory itself is
+# read-only and holds a partial dump, so unlinking the file fails; its mtime
+# stays old): a WARNING naming the path, the loop goes on, the hook still gets
+# the new backup, then exit 2; the next run does the same. Skipped as root.
+# mk_stale_stuck <backup_dir> <name>: stale incomplete directory rm -rf cannot remove
+mk_stale_stuck() {
+  mkdir -p "$1/$2"
+  : > "$1/$2/postgres.sql.gz.partial"
+  chmod 555 "$1/$2"
+  touch -t 200001010000 "$1/$2"
+}
 PROBE2="${SCRATCH}/probe-locked2"
 mkdir -p "${PROBE2}/locked"
 chmod 555 "${PROBE2}/locked"
@@ -865,17 +922,16 @@ if [ "$(id -u)" = "0" ] || [ -w "${PROBE2}/locked" ]; then
   echo "skip - stale incomplete removal failure (running as root or the directory stays writable)"
 else
   D25="${SCRATCH}/b25"
-  mkdir -p "${D25}/20010101_000000/locked" "${D25}/20010102_000000"
-  echo x > "${D25}/20010101_000000/locked/file"
-  chmod 555 "${D25}/20010101_000000/locked"
-  touch -t 200001010000 "${D25}/20010101_000000" "${D25}/20010102_000000"
+  mkdir -p "${D25}/20010102_000000"
+  mk_stale_stuck "${D25}" 20010101_000000
+  touch -t 200001010000 "${D25}/20010102_000000"
   : > "${HOOK_LOG}"
   BACKUP_OFFHOST_HOOK="${HOOK}" run_backup stale_stuck "${D25}"
   if [ "${RC}" -eq 2 ] \
     && grep -qF "WARNING: could not remove the stale incomplete backup directory ${D25}/20010101_000000" <<< "${OUT}" \
     && grep -qF "ERROR: retention could not remove 1 old backup(s); the backup is complete" <<< "${OUT}" \
     && [ "$(grep -c 'WARNING' <<< "${OUT}")" = "1" ] \
-    && present "${D25}/20010101_000000/locked/file" && gone "${D25}/20010102_000000" \
+    && present "${D25}/20010101_000000/postgres.sql.gz.partial" && gone "${D25}/20010102_000000" \
     && hook_ran_on "${D25}" && grep -q "Off-host hook complete" <<< "${OUT}"; then
     ok "stale incomplete removal failure: warning with the path, loop goes on, hook runs, exit 2"
   else bad "stale incomplete stuck: rc=${RC} out=${OUT} hooklog=$(cat "${HOOK_LOG}")"; fi
@@ -887,10 +943,8 @@ else
   else bad "stale incomplete stuck again: rc=${RC} out=${OUT}"; fi
   # one old complete backup and one stale incomplete directory that both stay: counted as 2
   D26="${SCRATCH}/b26"
-  mkdir -p "${D26}/20010102_000000/locked"
-  echo x > "${D26}/20010102_000000/locked/file"
-  chmod 555 "${D26}/20010102_000000/locked"
-  touch -t 200001010000 "${D26}/20010102_000000"
+  mkdir -p "${D26}"
+  mk_stale_stuck "${D26}" 20010102_000000
   mk_stuck "${D26}" 20010101_000000 200001010000
   run_backup stale_and_old_stuck "${D26}"
   if [ "${RC}" -eq 2 ] && grep -qF "ERROR: retention could not remove 2 old backup(s)" <<< "${OUT}" \
@@ -898,6 +952,35 @@ else
     && grep -qF "WARNING: could not remove the stale incomplete backup directory ${D26}/20010102_000000" <<< "${OUT}"; then
     ok "stale incomplete removal failure is counted together with an old backup that cannot be removed"
   else bad "stale incomplete and old stuck: rc=${RC} out=${OUT}"; fi
+  # a backup that rm could only partly remove (dumps gone, a locked subdirectory
+  # left) and whose mtime is by now old: it holds a subdirectory, so it stays
+  # left alone, without a warning, and the run exits 0
+  D27="${SCRATCH}/b27"
+  mkdir -p "${D27}/20010101_000000/locked"
+  echo x > "${D27}/20010101_000000/locked/file"
+  chmod 555 "${D27}/20010101_000000/locked"
+  touch -t 200001010000 "${D27}/20010101_000000"
+  run_backup half_removed_old "${D27}"
+  if [ "${RC}" -eq 0 ] && grep -qF "Retention left 1 entry in ${D27} alone" <<< "${OUT}" \
+    && ! grep -q "WARNING" <<< "${OUT}" && ! grep -q "ERROR" <<< "${OUT}" \
+    && ! grep -q "Removed the stale" <<< "${OUT}" \
+    && present "${D27}/20010101_000000/locked/file"; then
+    ok "stale incomplete: a half-removed old backup (a locked subdirectory left) stays left alone, exit 0"
+  else bad "half-removed old backup: rc=${RC} out=${OUT}"; fi
+  # a directory find cannot read to the end is refused (fail closed): an old
+  # incomplete one with mode 000 stays, without a warning, and the run exits 0
+  D28="${SCRATCH}/b28"
+  mkdir -p "${D28}/20010101_000000"
+  : > "${D28}/20010101_000000/postgres.sql.gz.partial"
+  chmod 000 "${D28}/20010101_000000"
+  touch -t 200001010000 "${D28}/20010101_000000"
+  run_backup unreadable_stale "${D28}"
+  chmod 755 "${D28}/20010101_000000"
+  if [ "${RC}" -eq 0 ] && grep -qF "Retention left 1 entry in ${D28} alone" <<< "${OUT}" \
+    && ! grep -q "WARNING" <<< "${OUT}" && ! grep -q "Removed the stale" <<< "${OUT}" \
+    && present "${D28}/20010101_000000/postgres.sql.gz.partial"; then
+    ok "stale incomplete: an old directory that cannot be read is kept (fail closed)"
+  else bad "unreadable stale directory: rc=${RC} out=${OUT}"; fi
 fi
 chmod -R u+rwx "${SCRATCH}" 2>/dev/null
 
