@@ -79,6 +79,34 @@ run_backup() {
 
 count_dirs() { find "$1" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' '; }
 
+# mk_backup <backup_dir> <name> [touch -t stamp]: a complete backup directory
+# (both dumps), its modification time set last when a stamp is given
+mk_backup() {
+  mkdir -p "$1/$2"
+  : > "$1/$2/postgres.sql.gz"
+  : > "$1/$2/clickhouse_logs.native.gz"
+  if [ -n "${3:-}" ]; then touch -t "$3" "$1/$2"; fi
+}
+
+# days_ago <n>: touch -t stamp n days back (BSD date first, then GNU date)
+days_ago() { date -v-"$1"d +%Y%m%d%H%M 2>/dev/null || date -d "$1 days ago" +%Y%m%d%H%M; }
+
+# valid_count <dir>: real directories named YYYYMMDD_HHMMSS holding both dumps
+valid_count() {
+  local n=0 e
+  for e in "$1"/*; do
+    if [[ "${e##*/}" =~ ^[0-9]{8}_[0-9]{6}$ ]] && [ -d "${e}" ] && [ ! -L "${e}" ] \
+      && [ -f "${e}/postgres.sql.gz" ] && [ -f "${e}/clickhouse_logs.native.gz" ]; then
+      n=$((n + 1))
+    fi
+  done
+  echo "${n}"
+}
+
+# gone <path>...: true when none of the paths exists, not even as a symlink
+gone() { local p; for p in "$@"; do if [ -e "${p}" ] || [ -L "${p}" ]; then return 1; fi; done; }
+present() { local p; for p in "$@"; do if [ ! -e "${p}" ] && [ ! -L "${p}" ]; then return 1; fi; done; }
+
 # --- 1. success path ---------------------------------------------------------
 export STUB_RUNNING=$'postgres\nclickhouse\nredis\n'
 D1="${SCRATCH}/b1"
@@ -178,6 +206,49 @@ if [ "${RC}" -ne 0 ] && [ -s "${D4C}/20990101_000000/postgres.sql.gz" ]; then
   ok "same-second: a second run that would succeed is refused too, first backup kept"
 else bad "same-second: third run rc=${RC} out=${OUT}"; fi
 
+# --- 4c. a dangling symlink at the backup path is not a collision message ------
+# `[ -e ]` is false for a dangling symlink, so the "already exists" branch is
+# skipped and mkdir (which does not follow the link) fails; the link must stay
+# and the message must be the generic one.
+D4D="${SCRATCH}/b4d"
+mkdir -p "${D4D}"
+ln -s "${SCRATCH}/dangling-target" "${D4D}/20990101_000000"
+PATH="${DATE_STUB}:${PATH}" run_backup dangling "${D4D}"
+if [ "${RC}" -ne 0 ] \
+  && grep -q "could not create the backup directory" <<< "${OUT}" \
+  && ! grep -q "already exists" <<< "${OUT}" \
+  && [ -L "${D4D}/20990101_000000" ] \
+  && [ "$(readlink "${D4D}/20990101_000000")" = "${SCRATCH}/dangling-target" ] \
+  && [ ! -e "${SCRATCH}/dangling-target" ]; then
+  ok "dangling symlink at the backup path: generic mkdir message, link untouched, non-zero"
+else bad "dangling symlink at the backup path: rc=${RC} out=${OUT}"; fi
+
+# --- 4d. a run that creates the backup path between the check and the mkdir ----
+# The stub mkdir creates the target (with a marker file) just before the real
+# mkdir of the script, which then fails. The EXIT trap is installed after that
+# mkdir, so the other run's directory and marker must survive.
+MKDIR_STUB="${SCRATCH}/mkdirstub"
+mkdir -p "${MKDIR_STUB}"
+cat > "${MKDIR_STUB}/mkdir" <<'MKDIRSTUB'
+#!/usr/bin/env bash
+if [ "$#" -eq 1 ] && [ "$1" = "${STUB_RACE_TARGET:-}" ]; then
+  "${STUB_REAL_MKDIR}" "$1" && echo marker > "$1/marker"
+fi
+exec "${STUB_REAL_MKDIR}" "$@"
+MKDIRSTUB
+chmod +x "${MKDIR_STUB}/mkdir"
+REAL_MKDIR="$(command -v mkdir)"
+D4E="${SCRATCH}/b4e"
+PATH="${MKDIR_STUB}:${DATE_STUB}:${PATH}" STUB_REAL_MKDIR="${REAL_MKDIR}" STUB_RACE_TARGET="${D4E}/20990101_000000" \
+  run_backup race "${D4E}"
+if [ "${RC}" -ne 0 ] \
+  && grep -q "could not create the backup directory" <<< "${OUT}" \
+  && ! grep -q "already exists" <<< "${OUT}" \
+  && [ -d "${D4E}/20990101_000000" ] \
+  && [ -f "${D4E}/20990101_000000/marker" ]; then
+  ok "mkdir race: generic message, the other run's directory and marker survive, non-zero"
+else bad "mkdir race: rc=${RC} out=${OUT} files=$(find "${D4E}" 2>/dev/null)"; fi
+
 # --- 5. off-host hook ----------------------------------------------------------
 HOOK="${SCRATCH}/hook.sh"
 HOOK_LOG="${SCRATCH}/hook.log"
@@ -274,11 +345,150 @@ else bad "defaults: rc=${RC} calls=$(cat "${STUB_LOG}") out=${OUT}"; fi
 # --- 6. relative backup dir and retention --------------------------------------
 D9="${SCRATCH}/b9"
 mkdir -p "${D9}"
-for i in 01 02 03 04 05 06 07 08 09 10 11 12; do mkdir -p "${D9}/old_${i}"; touch -t "202001${i}0000" "${D9}/old_${i}"; done
+for i in 01 02 03 04 05 06 07 08 09 10 11 12; do mk_backup "${D9}" "202001${i}_000000" "202001${i}0000"; done
 ( cd "${SCRATCH}" && : > "${STUB_LOG}" && bash "${BACKUP_SH}" "b9" > "${SCRATCH}/rel.out" 2>&1 ); RC=$?
 if [ "${RC}" -eq 0 ] && [ "$(count_dirs "${D9}")" = "1" ]; then
   ok "relative backup dir: exit 0, old backups pruned, new one kept"
 else bad "relative backup dir: rc=${RC} dirs=$(count_dirs "${D9}") out=$(cat "${SCRATCH}/rel.out")"; fi
+if ! grep -q "Retention left" "${SCRATCH}/rel.out"; then
+  ok "retention: a directory holding only backups prints no note"
+else bad "retention: note printed for a clean backup dir: $(cat "${SCRATCH}/rel.out")"; fi
+
+# --- 6b. retention touches only complete YYYYMMDD_HHMMSS directories ------------
+# A shared directory (/backups instead of /backups/telerithm): everything that
+# is not a complete backup of this script survives, however old, next to 12
+# valid old backups that are pruned. The foreign timestamp-like entries have
+# names below every valid one, so a filter that lets them through would rank
+# them last and remove them by the count rule as well as by the age rule.
+D14="${SCRATCH}/b14"
+OUTSIDE="${SCRATCH}/outside-target"
+mkdir -p "${D14}" "${OUTSIDE}"
+: > "${OUTSIDE}/postgres.sql.gz"
+: > "${OUTSIDE}/clickhouse_logs.native.gz"
+echo precious > "${OUTSIDE}/sentinel.txt"
+for i in 01 02 03 04 05 06 07 08 09 10 11 12; do mk_backup "${D14}" "202001${i}_000000" "202001${i}0000"; done
+FOREIGN_DIRS=("other-app" "manual_snapshot" "20200101_000000_keep" "20200101_000000.bak" "-rf" "a b" ".hidden" "..dots" $'line\nbreak'
+  "20190201_000000" "20190202_000000" "20190203_000000")
+for name in "${FOREIGN_DIRS[@]}"; do
+  mkdir -p "${D14}/${name}"
+  echo data > "${D14}/${name}/data.txt"
+done
+# complete dumps behind a name that is not a timestamp, or behind a longer one
+for name in manual_snapshot 20200101_000000_keep 20200101_000000.bak; do
+  : > "${D14}/${name}/postgres.sql.gz"
+  : > "${D14}/${name}/clickhouse_logs.native.gz"
+done
+# timestamp-named but incomplete: empty (20190201), only one dump (the other two)
+: > "${D14}/20190202_000000/postgres.sql.gz"
+: > "${D14}/20190203_000000/clickhouse_logs.native.gz"
+ln -s "${OUTSIDE}" "${D14}/20190204_000000"                      # symlink to a directory holding both dumps
+ln -s "${SCRATCH}/no-such-dir" "${D14}/20190205_000000"           # dangling symlink
+echo notes > "${D14}/notes.txt"
+echo file > "${D14}/20190206_000000"                              # regular file named like a timestamp
+for name in "${FOREIGN_DIRS[@]}"; do touch -t 201901010000 "${D14}/${name}"; done
+FOREIGN_ALL=("${FOREIGN_DIRS[@]}" "20190204_000000" "20190205_000000" "notes.txt" "20190206_000000")
+run_backup foreign "${D14}"
+ALL_PRESENT=1
+for name in "${FOREIGN_ALL[@]}"; do present "${D14}/${name}" || ALL_PRESENT=0; done
+if [ "${RC}" -eq 0 ] && [ "${ALL_PRESENT}" -eq 1 ] \
+  && [ "$(valid_count "${D14}")" = "1" ]; then
+  ok "retention: foreign entries survive, the 12 old valid backups are pruned, exit 0"
+else bad "retention foreign: rc=${RC} present=${ALL_PRESENT} valid=$(valid_count "${D14}") out=${OUT}"; fi
+if [ -L "${D14}/20190204_000000" ] && [ -f "${OUTSIDE}/sentinel.txt" ] \
+  && [ -f "${OUTSIDE}/postgres.sql.gz" ] && [ -f "${OUTSIDE}/clickhouse_logs.native.gz" ] \
+  && [ "$(cat "${D14}/other-app/data.txt")" = "data" ]; then
+  ok "retention: a timestamp-named symlink survives and its target is untouched"
+else bad "retention symlink: link=$(ls -l "${D14}/20190204_000000" 2>&1) outside=$(find "${OUTSIDE}")"; fi
+if gone "${D14}/20200101_000000" "${D14}/20200112_000000"; then
+  ok "retention: the pruned backups are gone"
+else bad "retention: old valid backups remain: $(find "${D14}" -maxdepth 1 -name '2020*')"; fi
+if grep -qF "Retention left ${#FOREIGN_ALL[@]} entries in ${D14} alone" <<< "${OUT}"; then
+  ok "retention: one note names how many entries were left alone"
+else bad "retention note: expected ${#FOREIGN_ALL[@]} entries, out=${OUT}"; fi
+if [ "$(grep -c 'Retention left' <<< "${OUT}")" = "1" ]; then ok "retention: the note is a single line"; else bad "retention note count: ${OUT}"; fi
+
+# a second run (a second later, the timestamp has one-second resolution) changes
+# nothing more: the foreign entries are stable
+sleep 1
+run_backup foreign2 "${D14}"
+ALL_PRESENT=1
+for name in "${FOREIGN_ALL[@]}"; do present "${D14}/${name}" || ALL_PRESENT=0; done
+if [ "${RC}" -eq 0 ] && [ "${ALL_PRESENT}" -eq 1 ] && grep -q "Retention left ${#FOREIGN_ALL[@]} entries" <<< "${OUT}"; then
+  ok "retention: a repeated run keeps the foreign entries and repeats the note"
+else bad "retention repeat: rc=${RC} present=${ALL_PRESENT} out=${OUT}"; fi
+
+# only foreign entries and no valid backup besides the new one
+D14B="${SCRATCH}/b14b"
+mkdir -p "${D14B}/other-app"
+touch -t 201901010000 "${D14B}/other-app"
+run_backup onlyforeign "${D14B}"
+if [ "${RC}" -eq 0 ] && [ -d "${D14B}/other-app" ] && [ "$(valid_count "${D14B}")" = "1" ] \
+  && grep -qF "Retention left 1 entry in ${D14B} alone" <<< "${OUT}"; then
+  ok "retention: only a foreign directory present: kept, note says 1 entry"
+else bad "retention only foreign: rc=${RC} out=${OUT}"; fi
+
+# --- 6c. the count rule ranks by the timestamp in the name, not by mtime --------
+# 13 valid backups within the last 10 days; the 4 oldest by name carry the
+# newest mtime. With the new backup that is 14: the 4 oldest names go, the 9
+# newest stay with the new one. An mtime ordering would keep the wrong 4.
+D15="${SCRATCH}/b15"
+mkdir -p "${D15}"
+NEWEST_MTIME="$(days_ago 1)"
+OLDER_MTIME="$(days_ago 5)"
+for i in 01 02 03 04; do mk_backup "${D15}" "200101${i}_000000" "${NEWEST_MTIME}"; done
+for i in 05 06 07 08 09 10 11 12 13; do mk_backup "${D15}" "200101${i}_000000" "${OLDER_MTIME}"; done
+run_backup count "${D15}"
+KEPT=1
+for i in 05 06 07 08 09 10 11 12 13; do present "${D15}/200101${i}_000000" || KEPT=0; done
+if [ "${RC}" -eq 0 ] && [ "${KEPT}" -eq 1 ] && [ "$(valid_count "${D15}")" = "10" ] \
+  && gone "${D15}/20010101_000000" "${D15}/20010102_000000" "${D15}/20010103_000000" "${D15}/20010104_000000"; then
+  ok "count rule: newest 10 by name kept (new one included), the 4 oldest by name removed"
+else bad "count rule: rc=${RC} kept=${KEPT} valid=$(valid_count "${D15}") out=${OUT}"; fi
+if ! grep -q "Retention left" <<< "${OUT}"; then ok "count rule: no note when everything is a backup"; else bad "count rule: unexpected note: ${OUT}"; fi
+
+# exactly 10 with the new one: nothing is removed
+D16="${SCRATCH}/b16"
+mkdir -p "${D16}"
+for i in 01 02 03 04 05 06 07 08 09; do mk_backup "${D16}" "200101${i}_000000" "${OLDER_MTIME}"; done
+run_backup tenkept "${D16}"
+if [ "${RC}" -eq 0 ] && [ "$(valid_count "${D16}")" = "10" ]; then
+  ok "count rule: 9 recent backups plus the new one are all kept"
+else bad "count rule boundary: rc=${RC} valid=$(valid_count "${D16}") out=${OUT}"; fi
+
+# --- 6d. the age rule ------------------------------------------------------------
+# Fewer than 10 backups: only the one older than 10 days (by mtime) is removed.
+D17="${SCRATCH}/b17"
+mkdir -p "${D17}"
+mk_backup "${D17}" 20010101_000000 202001010000
+mk_backup "${D17}" 20010102_000000 "${OLDER_MTIME}"
+mk_backup "${D17}" 20010103_000000
+run_backup age "${D17}"
+if [ "${RC}" -eq 0 ] && gone "${D17}/20010101_000000" && present "${D17}/20010102_000000" "${D17}/20010103_000000" \
+  && [ "$(valid_count "${D17}")" = "3" ]; then
+  ok "age rule: the backup older than 10 days is removed, recent ones stay"
+else bad "age rule: rc=${RC} valid=$(valid_count "${D17}") out=${OUT}"; fi
+
+# --- 6e. the backup written by this run is never removed ------------------------
+# A clock that is far behind the existing names makes the new backup the oldest
+# by name (rank 13 of 13): the count rule would remove it.
+DATE_STUB_OLD="${SCRATCH}/datestub-old"
+mkdir -p "${DATE_STUB_OLD}"
+cat > "${DATE_STUB_OLD}/date" <<'DATESTUB'
+#!/usr/bin/env bash
+echo 20000101_000000
+DATESTUB
+chmod +x "${DATE_STUB_OLD}/date"
+D18="${SCRATCH}/b18"
+mkdir -p "${D18}"
+for i in 01 02 03 04 05 06 07 08 09 10 11 12; do mk_backup "${D18}" "202001${i}_000000"; done
+PATH="${DATE_STUB_OLD}:${PATH}" run_backup oldclock "${D18}"
+if [ "${RC}" -eq 0 ] \
+  && [ -s "${D18}/20000101_000000/postgres.sql.gz" ] && [ -s "${D18}/20000101_000000/clickhouse_logs.native.gz" ] \
+  && gone "${D18}/20200101_000000" "${D18}/20200102_000000" \
+  && present "${D18}/20200103_000000" "${D18}/20200112_000000" \
+  && [ "$(valid_count "${D18}")" = "11" ]; then
+  ok "new backup is never pruned, even when the clock ranks it oldest; the two oldest others go"
+else bad "old clock: rc=${RC} valid=$(valid_count "${D18}") out=${OUT}"; fi
 
 # --- 7. mkdir failures other than a collision -----------------------------------
 # A backup path that exists gets the collision message (covered in 4b). Any other

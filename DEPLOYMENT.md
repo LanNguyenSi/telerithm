@@ -356,7 +356,7 @@ It publishes default Node process metrics plus Telerithm series for HTTP request
 0 2 * * * /root/git/telerithm/scripts/backup.sh /backups/telerithm
 ```
 
-Each run writes `<backup_dir>/<timestamp>/postgres.sql.gz` and `clickhouse_logs.native.gz` and keeps the latest 10 runs, at most 10 days. A run that fails midway removes its own directory. Environment variables:
+Each run writes `<backup_dir>/<timestamp>/postgres.sql.gz` and `clickhouse_logs.native.gz` and keeps the latest 10 runs, at most 10 days. That cleanup only touches directories named `YYYYMMDD_HHMMSS` (not symlinks) that hold both dumps; everything else in `<backup_dir>` is left alone, with one line on stderr saying how many entries (this includes a timestamp directory without both dumps, for example one left by a killed run, which you remove by hand). A run that fails midway removes its own directory. Environment variables:
 
 - `BACKUP_COMPOSE_FILE`: compose file of the stack to back up (default: `docker-compose.traefik.yml` in the repository root).
 - `BACKUP_ENV_FILE`: env file passed to compose (default: `.env.production` in the repository root; skipped when it does not exist).

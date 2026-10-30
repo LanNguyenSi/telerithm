@@ -12,6 +12,11 @@ set -euo pipefail
 # clickhouse services of that stack are not running, so a cron job cannot report
 # success for a stack that is not the one in production.
 #
+# Retention: after a successful backup it keeps the newest 10 backups and removes
+# those older than 10 days, but only directories named YYYYMMDD_HHMMSS that hold
+# both dumps (the ones this script writes). Anything else in <backup_dir> is left
+# alone, with one note saying how many entries.
+#
 # Output (in <backup_dir>/<timestamp>/):
 #   postgres.sql.gz            pg_dump, restore with psql (DEPLOYMENT.md, Backup)
 #   clickhouse_logs.native.gz  logs table in Native format, restore with
@@ -117,14 +122,59 @@ mv "${BACKUP_PATH}/clickhouse_logs.native.gz.partial" "${BACKUP_PATH}/clickhouse
 echo "[backup] ClickHouse dump complete"
 DUMPS_COMPLETE=1
 
-# Cleanup old backups (keep last 10 by count, max 10 days)
+# Retention: keep the newest 10 backups and drop those older than 10 days.
+# Only entries this script wrote are candidates: a real directory (not a
+# symlink) named YYYYMMDD_HHMMSS that holds both finished dumps. Everything
+# else in the backup directory (other applications' directories, files,
+# symlinks, a timestamp-named directory without both dumps) is left alone and
+# only counted in one note, so pointing the script at a shared directory such
+# as /backups instead of /backups/telerithm cannot delete anything unrelated.
+# "Newest" is decided by the timestamp in the name; the age rule uses the
+# directory's modification time. The backup written by this run is never
+# removed.
 CDPATH='' cd -- "${BACKUP_DIR}" >/dev/null
-BACKUP_COUNT=$(ls -d */ 2>/dev/null | wc -l)
-if [ "${BACKUP_COUNT}" -gt 10 ]; then
-  ls -dt */ | tail -n +11 | xargs rm -rf
+TIMESTAMP_RE='^[0-9]{8}_[0-9]{6}$'
+RETAINABLE=()
+LEFT_ALONE=0
+# The three globs cover every name (plain, one dot, two dots) without matching
+# . or ..; a glob that matches nothing stays literal and is skipped below.
+for entry in "${BACKUP_DIR}"/* "${BACKUP_DIR}"/.[!.]* "${BACKUP_DIR}"/..?*; do
+  if [ ! -e "${entry}" ] && [ ! -L "${entry}" ]; then
+    continue
+  fi
+  entry_name="${entry##*/}"
+  if [[ "${entry_name}" =~ ${TIMESTAMP_RE} ]] \
+    && [ -d "${entry}" ] && [ ! -L "${entry}" ] \
+    && [ -f "${entry}/postgres.sql.gz" ] \
+    && [ -f "${entry}/clickhouse_logs.native.gz" ]; then
+    RETAINABLE+=("${entry_name}")
+  else
+    LEFT_ALONE=$((LEFT_ALONE + 1))
+  fi
+done
+if [ "${LEFT_ALONE}" -gt 0 ]; then
+  NOUN=entries
+  if [ "${LEFT_ALONE}" -eq 1 ]; then
+    NOUN=entry
+  fi
+  echo "[backup] Retention left ${LEFT_ALONE} ${NOUN} in ${BACKUP_DIR} alone (not a complete YYYYMMDD_HHMMSS backup directory written by this script)" >&2
 fi
-# Also remove anything older than 10 days
-find "${BACKUP_DIR}" -maxdepth 1 -type d -mtime +10 -exec rm -rf {} \;
+if [ "${#RETAINABLE[@]}" -gt 0 ]; then
+  RANK=0
+  # Newest name first; every name here matched TIMESTAMP_RE, so it holds no
+  # newline and no character that could be read as an option or a path.
+  while IFS= read -r entry_name; do
+    RANK=$((RANK + 1))
+    if [ "${entry_name}" = "${TIMESTAMP}" ]; then
+      continue
+    fi
+    entry="${BACKUP_DIR}/${entry_name}"
+    if [ "${RANK}" -gt 10 ] || [ -n "$(find "${entry}" -maxdepth 0 -mtime +10 2>/dev/null)" ]; then
+      rm -rf -- "${entry}" \
+        || echo "[backup] WARNING: could not remove the old backup ${entry}" >&2
+    fi
+  done < <(printf '%s\n' "${RETAINABLE[@]}" | LC_ALL=C sort -r)
+fi
 
 echo "[backup] Backup complete: ${BACKUP_PATH}"
 ls -lh "${BACKUP_PATH}"
