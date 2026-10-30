@@ -10,7 +10,15 @@ set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 guard="$repo/scripts/clickhouse-config-guard.sh"
 
-work="$(mktemp -d)"
+# A failed mktemp stops the run before the cleanup trap exists: with an empty
+# work, the trap would delete the caller's directory (the guard's own
+# test-scratch-safety coverage requires the fail-closed pattern).
+work="$(mktemp -d "${TMPDIR:-/tmp}/telerithm-clickhouse-guard-test.XXXXXX")" \
+  || { echo "FATAL: mktemp failed" >&2; exit 2; }
+if [ -z "$work" ] || [ ! -d "$work" ]; then
+  echo "FATAL: mktemp did not create a directory: '$work'" >&2
+  exit 2
+fi
 trap 'rm -rf "$work"' EXIT
 
 failed=0
@@ -173,6 +181,8 @@ fe_limits_prod='          memory: 256M
           cpus: "0.5"
 
 volumes:'
+be_probe="fetch('http://127.0.0.1:4000/api/v1/health')"
+be_localhost="fetch('http://localhost:4000/api/v1/health')"
 
 fresh_copy
 replace docker-compose.prod.yml 'max-size: "10m"' 'max-size: "20m"'
@@ -259,6 +269,18 @@ replace docker-compose.traefik.yml '      start_period: 30s
     networks:' '      start_period: 60s
     networks:'
 expect_fail "frontend start_period differs (traefik only)" "healthcheck of service frontend differs between docker-compose.prod.yml and docker-compose.traefik.yml"
+
+# The backend probe host: localhost resolves to ::1 first and the backend
+# listens on 0.0.0.0 only, so the probe must address 127.0.0.1. The second
+# case mutates both composes identically, so only the host check can catch it.
+fresh_copy
+replace docker-compose.prod.yml "$be_probe" "$be_localhost"
+expect_fail "backend probe host is localhost (prod)" "docker-compose.prod.yml: service backend healthcheck must probe http://127.0.0.1:4000/api/v1/health"
+
+fresh_copy
+replace docker-compose.prod.yml "$be_probe" "$be_localhost"
+replace docker-compose.traefik.yml "$be_probe" "$be_localhost"
+expect_fail "backend probe host is localhost in both composes" "docker-compose.traefik.yml: service backend healthcheck must probe http://127.0.0.1:4000/api/v1/health"
 
 # A service behind a compose profile is rendered only with --profile '*', so
 # without it this one would skip every per-service check.
