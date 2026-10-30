@@ -43,7 +43,7 @@ That builds the stack and starts everything on Docker:
 | Backend  | http://localhost:4000        |
 | API docs | http://localhost:4000/docs   |
 
-The local stack is for your own machine only: every port it publishes (the backend and frontend above, plus Postgres, ClickHouse and Redis with default or no credentials) is bound to the loopback interface, so nothing is reachable from the rest of your network; to reach the stack from another machine, use an SSH tunnel (`ssh -L 3000:localhost:3000 -L 4000:localhost:4000 <host>`) or a compose override that republishes the ports.
+The local stack is for your own machine only: every port it publishes (the backend and frontend above, plus Postgres, ClickHouse and Redis with default or no credentials) is bound to the loopback interface, so nothing is reachable from the rest of your network; to reach the stack from another machine, use an SSH tunnel (`ssh -L 3000:localhost:3000 -L 4000:localhost:4000 <host>`).
 
 The stack starts empty (no demo data), and sources are created through the API. The steps below use `jq`.
 
