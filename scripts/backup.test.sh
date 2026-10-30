@@ -967,19 +967,22 @@ else
     && present "${D27}/20010101_000000/locked/file"; then
     ok "stale incomplete: a half-removed old backup (a locked subdirectory left) stays left alone, exit 0"
   else bad "half-removed old backup: rc=${RC} out=${OUT}"; fi
-  # a directory find cannot read to the end is refused (fail closed): an old
-  # incomplete one with mode 000 stays, without a warning, and the run exits 0
+  # a directory find cannot list is refused (fail closed): an old incomplete
+  # one with mode 111 (searchable, so its own age can be read, but its entries
+  # cannot be listed) stays, without a warning, and the run exits 0. Modes 000
+  # and 444 would not isolate this: the age check on the directory itself
+  # already fails there under BSD find.
   D28="${SCRATCH}/b28"
   mkdir -p "${D28}/20010101_000000"
   : > "${D28}/20010101_000000/postgres.sql.gz.partial"
-  chmod 000 "${D28}/20010101_000000"
+  chmod 111 "${D28}/20010101_000000"
   touch -t 200001010000 "${D28}/20010101_000000"
   run_backup unreadable_stale "${D28}"
   chmod 755 "${D28}/20010101_000000"
   if [ "${RC}" -eq 0 ] && grep -qF "Retention left 1 entry in ${D28} alone" <<< "${OUT}" \
     && ! grep -q "WARNING" <<< "${OUT}" && ! grep -q "Removed the stale" <<< "${OUT}" \
     && present "${D28}/20010101_000000/postgres.sql.gz.partial"; then
-    ok "stale incomplete: an old directory that cannot be read is kept (fail closed)"
+    ok "stale incomplete: an old directory whose entries cannot be listed is kept (fail closed)"
   else bad "unreadable stale directory: rc=${RC} out=${OUT}"; fi
 fi
 chmod -R u+rwx "${SCRATCH}" 2>/dev/null
