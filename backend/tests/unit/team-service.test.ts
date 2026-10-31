@@ -712,12 +712,28 @@ describe("sourceKeyHint", () => {
     expect(sourceKeyHint("0123456789abcdef")).toBe("****cdef");
   });
 
-  it("hints a key shorter than 12 characters as **** only", () => {
-    expect(sourceKeyHint("lf_abcdefg")).toBe("****");
+  it("hints a 12-character key whose 8-character prefix plus 4-character tail leave 0 hidden as ****", () => {
+    expect(sourceKeyHint("abcdefg_hijk")).toBe("****");
   });
 
-  it("hints a key of exactly 12 characters with prefix and tail", () => {
-    expect(sourceKeyHint("lf_abcdefghi")).toBe("lf_****fghi");
+  it("keeps the shape for a 16-character key without an underscore (4 shown, 12 hidden)", () => {
+    expect(sourceKeyHint("abcdefghijklmnop")).toBe("****mnop");
+  });
+
+  it("hints a 16-character key with an 8-character prefix (8 shown plus 4 tail, 4 hidden) as ****", () => {
+    expect(sourceKeyHint("abcdefg_hijklmno")).toBe("****");
+  });
+
+  it("keeps the shape when exactly 8 characters stay hidden", () => {
+    expect(sourceKeyHint("lf_0123456789ab")).toBe("lf_****89ab");
+  });
+
+  it("hints as **** when only 7 characters stay hidden", () => {
+    expect(sourceKeyHint("lf_0123456789a")).toBe("****");
+  });
+
+  it("hints a short key that would leave 3 characters hidden as **** only", () => {
+    expect(sourceKeyHint("lf_abcdefg")).toBe("****");
   });
 
   it("hints the empty key as ****", () => {
