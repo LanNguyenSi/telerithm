@@ -33,8 +33,8 @@ function sanitizeUser(user: {
   };
 }
 
-/** Keys shorter than this are hinted as `****` only: prefix plus tail would leave too little hidden. */
-const MIN_PARTIALLY_HINTED_LENGTH = 12;
+/** Characters of the key that must stay hidden beyond the shown prefix and tail. */
+const MIN_HIDDEN_KEY_CHARS = 8;
 
 /** Upper bound on the visible prefix, so a long prefix cannot expose the key. */
 const MAX_HINT_PREFIX_LENGTH = 8;
@@ -42,15 +42,15 @@ const MAX_HINT_PREFIX_LENGTH = 8;
 /**
  * The display hint for an ingest key: the prefix through the first underscore
  * (at most 8 characters), then `****`, then the last four characters (for a
- * generated key `lf_****a7c1`). A key shorter than 12 characters, including
- * the empty string, becomes `****`; a key without an underscore has no prefix
- * (`****a7c1`). The hint is all a list response carries of a key; the full
- * key leaves the server only through create, rotate and the audited reveal.
+ * generated key `lf_****a7c1`). That shape is used only while at least 8 key
+ * characters stay hidden (key length minus the shown prefix minus the shown
+ * tail); otherwise the hint is exactly `****`, which covers short keys, the
+ * empty key and keys whose prefix would expose too much of the key.
  */
 export function sourceKeyHint(apiKey: string): string {
-  if (apiKey.length < MIN_PARTIALLY_HINTED_LENGTH) return "****";
   const underscore = apiKey.indexOf("_");
   const prefix = underscore >= 0 ? apiKey.slice(0, Math.min(underscore + 1, MAX_HINT_PREFIX_LENGTH)) : "";
+  if (apiKey.length - prefix.length - 4 < MIN_HIDDEN_KEY_CHARS) return "****";
   return `${prefix}****${apiKey.slice(-4)}`;
 }
 
