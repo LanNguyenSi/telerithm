@@ -370,7 +370,9 @@ apiRouter.get(
     }
     const role = await requireTeamRole(userId, teamId, res);
     if (role === null) return;
-    const sources = await teamService.listSources(teamId, { includeApiKey: canSeeSourceKeys(role) });
+    const sources = await teamService.listSources(teamId, {
+      keyView: canSeeSourceKeys(role) ? "hint" : "none",
+    });
     res.json({ sources });
   }),
 );
@@ -395,7 +397,7 @@ writeRoute(
   async ({ req, res, teamId, role, input }) => {
     try {
       const source = await teamService.renameSource(teamId, String(req.params.id), input.name, {
-        includeApiKey: canSeeSourceKeys(role),
+        keyView: canSeeSourceKeys(role) ? "hint" : "none",
       });
       res.json({ source });
     } catch (error) {
@@ -434,7 +436,7 @@ writeRoute(
 
 // Hard cutover: the new key replaces the old one in place, so the next ingest
 // request with the old key is a 403. The response is the only place the new
-// key is returned to this caller besides the owner/admin list.
+// key is returned to this caller besides the audited reveal below.
 writeRoute(
   "post",
   "/sources/:id/rotate-key",
@@ -451,6 +453,34 @@ writeRoute(
       if (handlePrismaError(error, res, { notFound: "Source not found" })) return;
       throw error;
     }
+  },
+);
+
+// The only read path to a stored ingest key: lists and renames carry the
+// masked hint, never the key. OWNER and ADMIN only (canSeeSourceKeys); writeRoute
+// has already refused a VIEWER and answered a non-member of the owning team
+// like an unknown id, and a MEMBER passes the write gate, so the handler
+// answers 403 before the key is read. The response is never cached. Every
+// successful reveal leaves one audit line with who looked at which source; the
+// line never carries the key.
+writeRoute(
+  "post",
+  "/sources/:id/reveal",
+  teamFromResource(loadSourceTeamId, "Source not found"),
+  async ({ req, res, userId, teamId, role }) => {
+    if (!canSeeSourceKeys(role)) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    const sourceId = String(req.params.id);
+    const apiKey = await teamService.revealSourceKey(teamId, sourceId);
+    if (apiKey === null) {
+      res.status(404).json({ error: "Source not found" });
+      return;
+    }
+    log.info({ sourceId, teamId, userId }, "Source key revealed");
+    res.set("Cache-Control", "no-store");
+    res.json({ apiKey });
   },
 );
 
@@ -1216,8 +1246,9 @@ export function canWrite(role: TeamRoleName): boolean {
   return role === "OWNER" || role === "ADMIN" || role === "MEMBER";
 }
 
-// Who may read a source's ingest key (the credential senders authenticate
-// with): OWNER and ADMIN only, in list and rename responses. Written as an
+// Who may see anything of a source's ingest key (the credential senders
+// authenticate with): OWNER and ADMIN only, the masked hint in list and rename
+// responses and the full key through POST /sources/:id/reveal. Written as an
 // allow list so a role added later cannot see keys until someone opts it in
 // here. A MEMBER who creates a source still gets the key once in the create
 // response, because a new source is unusable without it.

@@ -189,10 +189,13 @@ export interface LogSource {
   config: Record<string, unknown>;
   retentionDays: number;
   createdAt: string;
-  // The ingest credential. Present only for roles that may see it (OWNER and
-  // ADMIN in list and rename responses, the creating writer in the create
-  // response); the field is absent, not masked, otherwise.
+  // The full ingest credential. Present only in the create and rotate-key
+  // responses (once); list and rename responses never carry it. The reveal
+  // route returns it separately, to OWNER and ADMIN, with an audit log line.
   apiKey?: string;
+  // The masked ingest key (`lf_****a7c1`) for OWNER and ADMIN in list and rename
+  // responses; absent, not masked, for MEMBER and VIEWER.
+  keyHint?: string;
 }
 
 // Mirrors the Prisma AlertCondition enum. ANOMALY_DETECTED is stored by older

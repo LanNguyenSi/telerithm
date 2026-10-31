@@ -2741,8 +2741,19 @@ describe("API Routes", () => {
       return path.replace(/:[A-Za-z0-9_]+/g, "placeholder");
     }
 
+    // The audit sends one request per registered route. On the shared app those
+    // requests alone used the whole general rate-limit budget (200 a minute),
+    // so adding any route made a later test on the shared app answer 429. It
+    // gets its own app instance with a fresh limiter instead.
     it("rejects unauthenticated requests on every non-public /api/v1 route", async () => {
       const { apiRouter } = await import("../../src/api/rest/router.js");
+      const { createApp } = await import("../../src/app.js");
+      const auditServer = await new Promise<Server>((resolve, reject) => {
+        const s = createApp().listen(0);
+        s.once("listening", () => resolve(s));
+        s.once("error", reject);
+      });
+      const auditApp = supertest(auditServer);
       type Layer = { route?: { path: string; methods: Record<string, boolean> } };
       const stack = (apiRouter as unknown as { stack: Layer[] }).stack;
       const routes = stack
@@ -2757,18 +2768,24 @@ describe("API Routes", () => {
 
       expect(routes.length).toBeGreaterThan(20);
 
-      for (const { method, path } of routes) {
-        if (PUBLIC_PATHS.has(path)) continue;
-        if (path.startsWith(API_KEY_PREFIX)) {
-          const res = await app[method.toLowerCase() as "get"](`/api/v1${fillParams(path)}`);
-          expect(res.status, `${method} ${path} should require API key`).toBe(401);
-          continue;
-        }
+      try {
+        for (const { method, path } of routes) {
+          if (PUBLIC_PATHS.has(path)) continue;
+          if (path.startsWith(API_KEY_PREFIX)) {
+            const res = await auditApp[method.toLowerCase() as "get"](`/api/v1${fillParams(path)}`);
+            expect(res.status, `${method} ${path} should require API key`).toBe(401);
+            continue;
+          }
 
-        const filled = fillParams(path);
-        const verb = method.toLowerCase() as "get" | "post" | "put" | "delete" | "patch";
-        const res = await app[verb](`/api/v1${filled}`);
-        expect(res.status, `${method} ${path} should require bearer auth`).toBe(401);
+          const filled = fillParams(path);
+          const verb = method.toLowerCase() as "get" | "post" | "put" | "delete" | "patch";
+          const res = await auditApp[verb](`/api/v1${filled}`);
+          expect(res.status, `${method} ${path} should require bearer auth`).toBe(401);
+        }
+      } finally {
+        await new Promise<void>((resolve, reject) => {
+          auditServer.close((err) => (err ? reject(err) : resolve()));
+        });
       }
     });
   });
@@ -3899,23 +3916,31 @@ describe("API Routes", () => {
         ["ADMIN", true],
         ["MEMBER", false],
         ["VIEWER", false],
-      ] as const)("GET /sources: %s sees the ingest key only if OWNER or ADMIN", async (role, sees) => {
-        asRole(role);
-        mockedPrisma.logSource.findMany.mockResolvedValueOnce([makeSourceRow({ apiKey: "lf_secret" })]);
+      ] as const)(
+        "GET /sources: %s gets the key hint only if OWNER or ADMIN, never the key",
+        async (role, sees) => {
+          asRole(role);
+          mockedPrisma.logSource.findMany.mockResolvedValueOnce([
+            makeSourceRow({ apiKey: "lf_0123456789abcdef01234567" }),
+          ]);
 
-        const res = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
+          const res = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
 
-        expect(res.status).toBe(200);
-        expect(res.body.sources).toHaveLength(1);
-        expect(res.body.sources[0]).toMatchObject({ id: "src-1", name: "web", type: "HTTP" });
-        if (sees) {
-          expect(res.body.sources[0].apiKey).toBe("lf_secret");
-        } else {
-          // Absent from the JSON, not masked or empty.
+          expect(res.status).toBe(200);
+          expect(res.body.sources).toHaveLength(1);
+          expect(res.body.sources[0]).toMatchObject({ id: "src-1", name: "web", type: "HTTP" });
+          // The full key is in no role's list response.
           expect(res.body.sources[0]).not.toHaveProperty("apiKey");
-          expect(res.text).not.toContain("lf_secret");
-        }
-      });
+          expect(res.text).not.toContain("0123456789abcdef");
+          if (sees) {
+            expect(res.body.sources[0].keyHint).toBe("lf_****4567");
+          } else {
+            // Absent from the JSON, not masked or empty.
+            expect(res.body.sources[0]).not.toHaveProperty("keyHint");
+            expect(res.text).not.toContain("****");
+          }
+        },
+      );
 
       it("GET /sources: a non-member still gets 403", async () => {
         mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
@@ -3932,11 +3957,13 @@ describe("API Routes", () => {
         ["ADMIN", true],
         ["MEMBER", false],
       ] as const)(
-        "PUT /sources/:id: %s renames, scoped by id and team, key only for OWNER and ADMIN",
+        "PUT /sources/:id: %s renames, scoped by id and team, key hint only for OWNER and ADMIN",
         async (role, sees) => {
           asRole(role);
           mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
-          mockedPrisma.logSource.update.mockResolvedValueOnce(makeSourceRow({ name: "renamed" }));
+          mockedPrisma.logSource.update.mockResolvedValueOnce(
+            makeSourceRow({ name: "renamed", apiKey: "lf_0123456789abcdef01234567" }),
+          );
 
           const res = await authed(writeApp.put("/api/v1/sources/src-1")).send({ name: "renamed" });
 
@@ -3946,11 +3973,13 @@ describe("API Routes", () => {
             where: { id: "src-1", teamId: "t1" },
             data: { name: "renamed" },
           });
+          expect(res.body.source).not.toHaveProperty("apiKey");
+          expect(res.text).not.toContain("0123456789abcdef");
           if (sees) {
-            expect(res.body.source.apiKey).toBe("lf_key");
+            expect(res.body.source.keyHint).toBe("lf_****4567");
           } else {
-            expect(res.body.source).not.toHaveProperty("apiKey");
-            expect(res.text).not.toContain("lf_key");
+            expect(res.body.source).not.toHaveProperty("keyHint");
+            expect(res.text).not.toContain("****");
           }
         },
       );
@@ -4073,6 +4102,7 @@ describe("API Routes", () => {
         const listed = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
         expect(listed.status).toBe(200);
         expect(listed.body.sources[0]).not.toHaveProperty("apiKey");
+        expect(listed.body.sources[0]).not.toHaveProperty("keyHint");
         expect(listed.text).not.toContain("lf_key");
       });
     });
@@ -4303,6 +4333,106 @@ describe("API Routes", () => {
         expect(res.body.error).toBe("Source not found");
       });
 
+      describe("POST /sources/:id/reveal", () => {
+        const SECRET = "lf_0123456789abcdef01234567";
+
+        const reveal = () => authed(writeApp.post("/api/v1/sources/src-1/reveal"));
+
+        // The router resolves the owning team first (findUnique by id), then the
+        // service reads the key (findUnique by id and team).
+        const arrangeFound = () => {
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ apiKey: SECRET });
+        };
+
+        it.each(["OWNER", "ADMIN"] as const)(
+          "%s gets the full key as { apiKey }, scoped by id and team, never cached",
+          async (role) => {
+            asRole(role);
+            arrangeFound();
+
+            const res = await reveal();
+
+            expect(res.status).toBe(200);
+            expect(res.body).toEqual({ apiKey: SECRET });
+            expect(res.headers["cache-control"]).toBe("no-store");
+            expect(mockedPrisma.logSource.findUnique).toHaveBeenLastCalledWith({
+              where: { id: "src-1", teamId: "t1" },
+              select: { apiKey: true },
+            });
+            expect(mockedPrisma.logSource.update).not.toHaveBeenCalled();
+          },
+        );
+
+        it.each(["MEMBER", "VIEWER"] as const)("%s gets 403 and the key is never read", async (role) => {
+          asRole(role);
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+
+          const res = await reveal();
+
+          expect(res.status).toBe(403);
+          expect(res.body).toEqual({ error: "Forbidden" });
+          expect(res.text).not.toContain("lf_");
+          // Only the team lookup ran; the key lookup did not.
+          expect(mockedPrisma.logSource.findUnique).toHaveBeenCalledTimes(1);
+          expect(childLog.info).not.toHaveBeenCalledWith(expect.anything(), "Source key revealed");
+        });
+
+        it("a member of another team gets the same 404 as an unknown id, and no key lookup runs", async () => {
+          mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "other-team" });
+          mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+          const foreign = await reveal();
+
+          mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce(null);
+          const unknown = await authed(writeApp.post("/api/v1/sources/nope/reveal"));
+
+          expect(foreign.status).toBe(404);
+          expect(unknown.status).toBe(404);
+          expect(foreign.text).toBe(unknown.text);
+          expect(mockedPrisma.logSource.findUnique).toHaveBeenCalledTimes(2);
+          expect(childLog.info).not.toHaveBeenCalledWith(expect.anything(), "Source key revealed");
+        });
+
+        it("answers 404 when the source vanishes between the team lookup and the key read", async () => {
+          asRole("OWNER");
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce(null);
+
+          const res = await reveal();
+
+          expect(res.status).toBe(404);
+          expect(res.body).toEqual({ error: "Source not found" });
+          expect(res.headers["cache-control"]).not.toBe("no-store");
+          expect(childLog.info).not.toHaveBeenCalledWith(expect.anything(), "Source key revealed");
+        });
+
+        it("an unauthenticated caller gets 401", async () => {
+          const res = await writeApp.post("/api/v1/sources/src-1/reveal");
+
+          expect(res.status).toBe(401);
+          expect(mockedPrisma.logSource.findUnique).not.toHaveBeenCalled();
+        });
+
+        it("logs exactly one audit line with source, team and user, and never the key", async () => {
+          asRole("ADMIN");
+          arrangeFound();
+
+          await reveal();
+
+          const revealLines = childLog.info.mock.calls.filter((call) => call[1] === "Source key revealed");
+          expect(revealLines).toEqual([
+            [{ sourceId: "src-1", teamId: "t1", userId: "user-1" }, "Source key revealed"],
+          ]);
+          for (const level of ["info", "warn", "error", "debug"] as const) {
+            for (const call of childLog[level].mock.calls) {
+              expect(JSON.stringify(call)).not.toContain("0123456789abcdef");
+            }
+          }
+        });
+      });
+
       // The two routes run against one in-memory source table that answers the
       // lookups the router makes (by id for the team, by apiKey for ingest), so
       // the ingest key check sees the effect of the delete and the rotation.
@@ -4332,7 +4462,10 @@ describe("API Routes", () => {
         });
 
         const ingest = (key: string) =>
-          writeApp.post("/api/v1/ingest/src-1").set("X-API-Key", key).send({ logs: ["hello"] });
+          writeApp
+            .post("/api/v1/ingest/src-1")
+            .set("X-API-Key", key)
+            .send({ logs: ["hello"] });
 
         it("ingest works with the key before the delete", async () => {
           const res = await ingest("lf_oldkey");
@@ -4377,12 +4510,21 @@ describe("API Routes", () => {
             expect(listed.status, role).toBe(200);
             expect(listed.body.sources).toHaveLength(1);
             expect(listed.body.sources[0], role).not.toHaveProperty("apiKey");
+            expect(listed.body.sources[0], role).not.toHaveProperty("keyHint");
             expect(listed.text, role).not.toContain(newKey);
           }
 
           asRole("OWNER");
           const ownerList = await authed(writeApp.get("/api/v1/sources?teamId=t1"));
-          expect(ownerList.body.sources[0].apiKey).toBe(newKey);
+          expect(ownerList.body.sources[0]).not.toHaveProperty("apiKey");
+          expect(ownerList.text).not.toContain(newKey);
+          expect(ownerList.body.sources[0].keyHint).toBe(`lf_****${newKey.slice(-4)}`);
+
+          // The audited reveal hands the owner the same key the sender uses.
+          asRole("OWNER");
+          const revealed = await authed(writeApp.post("/api/v1/sources/src-1/reveal"));
+          expect(revealed.status).toBe(200);
+          expect(revealed.body).toEqual({ apiKey: newKey });
         });
 
         it("a refused rotation (MEMBER) leaves the old key working", async () => {
@@ -4465,6 +4607,16 @@ describe("API Routes", () => {
           mutations: () => [mockedPrisma.logSource.update],
         },
         {
+          name: "POST /sources/:id/reveal",
+          send: () => authed(writeApp.post("/api/v1/sources/src-1/reveal")),
+          found: (teamId) => mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId }),
+          missing: () => mockedPrisma.logSource.findUnique.mockResolvedValueOnce(null),
+          notFoundMessage: "Source not found",
+          // Read-only: it changes no row (the key-lookup count is pinned in
+          // the reveal tests above).
+          mutations: () => [mockedPrisma.logSource.update],
+        },
+        {
           name: "PUT /alerts/rules/:id",
           send: () => authed(writeApp.put("/api/v1/alerts/rules/rule-1")).send({ enabled: false }),
           found: (teamId) => ruleLookup(teamId),
@@ -4536,6 +4688,7 @@ describe("API Routes", () => {
             "POST /alerts/incidents/:id/resolve",
             "POST /alerts/rules/:id/mute",
             "POST /alerts/rules/:id/unmute",
+            "POST /sources/:id/reveal",
             "POST /sources/:id/rotate-key",
             "PUT /alerts/rules/:id",
             "PUT /issues/:id",
