@@ -310,6 +310,12 @@ jobs:
       - name: Dev compose loopback ports
         run: bash scripts/dev-compose-loopback.test.sh
 
+      # clickhouse and redis pinned to the same minor in all three compose
+      # files (a bare major tag would move the minor on `make deploy --pull`),
+      # plus controls on mutated copies. Needs only bash and python3.
+      - name: Compose base image pins
+        run: bash scripts/compose-image-pins.test.sh
+
       # Every scripts/*.test.sh started with a TMPDIR that does not exist, from
       # a directory holding one canary file: it must stop without deleting or
       # writing anything there (an unchecked mktemp let a cleanup trap delete
