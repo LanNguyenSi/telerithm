@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   renameSource: vi.fn(),
   deleteSource: vi.fn(),
   rotateSourceKey: vi.fn(),
+  revealSourceKey: vi.fn(),
   refresh: vi.fn(),
 }));
 
@@ -24,6 +25,7 @@ vi.mock("@/lib/api/client", () => ({
   renameSource: mocks.renameSource,
   deleteSource: mocks.deleteSource,
   rotateSourceKey: mocks.rotateSourceKey,
+  revealSourceKey: mocks.revealSourceKey,
 }));
 
 import { SourcesPanel } from "@/components/settings/sources-panel";
@@ -35,19 +37,35 @@ const source: Source = {
   name: "web",
   type: "HTTP",
   retentionDays: 7,
-  apiKey: "lf_existing_key",
+  keyHint: "lf_****_key",
 };
 
-/** Mask of the fixture key under the list rule (`lf_` prefix, last 4, `****` between). */
+/** What the list API sends for the fixture source, and the full key behind it. */
 const MASKED = "lf_****_key";
+const FULL_KEY = "lf_existing_key";
 
 function renderPanel(role: TeamRole, sources: Source[] = [source]) {
   return render(<SourcesPanel sources={sources} teamId="team-1" token="tok" role={role} />);
 }
 
-function renderWithKey(apiKey: string): RenderResult {
-  return renderPanel("OWNER", [{ ...source, apiKey }]);
+function renderWithHint(keyHint: string): RenderResult {
+  return renderPanel("OWNER", [{ ...source, keyHint }]);
 }
+
+/** A promise the test settles by hand, to hold a request in flight. */
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+beforeEach(() => {
+  mocks.revealSourceKey.mockResolvedValue({ apiKey: FULL_KEY });
+});
 
 afterEach(() => {
   cleanup();
@@ -63,9 +81,9 @@ describe("SourcesPanel", () => {
   });
 
   it.each(["VIEWER", "MEMBER"] as const)(
-    "renders sources that carry no apiKey for %s without a key pill or the word undefined",
+    "renders sources that carry no keyHint for %s without a key pill or the word undefined",
     (role) => {
-      const { apiKey: _omitted, ...keyless } = source;
+      const { keyHint: _omitted, ...keyless } = source;
       const { container } = renderPanel(role, [keyless, { ...keyless, id: "src-2", name: "api", type: "DOCKER" }]);
       expect(screen.getByText("web")).toBeInTheDocument();
       expect(screen.getByText("api")).toBeInTheDocument();
@@ -74,15 +92,17 @@ describe("SourcesPanel", () => {
       expect(container.querySelector("span.font-mono")).toBeNull();
       expect(screen.queryByRole("button", { name: /API key of/ })).toBeNull();
       expect(container.textContent).not.toMatch(/undefined/);
+      expect(mocks.revealSourceKey).not.toHaveBeenCalled();
     },
   );
 
   it.each(["OWNER", "ADMIN"] as const)(
-    "shows the existing key of a listed source masked to %s, with the full key out of the DOM",
+    "shows the key hint of a listed source to %s without asking the API for the key",
     (role) => {
       const { container } = renderPanel(role);
       expect(screen.getByText(MASKED)).toBeInTheDocument();
       expect(container.textContent).not.toMatch(/lf_existing_key/);
+      expect(mocks.revealSourceKey).not.toHaveBeenCalled();
     },
   );
 
@@ -184,50 +204,138 @@ describe("SourcesPanel", () => {
   });
 });
 
-describe("SourcesPanel: key masking in the list", () => {
-  const withKey = (apiKey: string): Source => ({ ...source, apiKey });
-
-  it.each([
-    ["short", "lf_abcd_", "****"],
-    ["one below the threshold", "lf_abcd_123", "****"],
-    ["exactly 12", "lf_abcd_1234", "lf_****1234"],
-    ["no underscore", "abcdefgh12345678", "****5678"],
-    ["long prefix", "abcdefghij_klmnopqrstabcd", "abcdefgh****abcd"],
-    ["real looking", "tlm_2f8d1a9c4b7e6053a1d8c2f5b9e4a7c1", "tlm_****a7c1"],
-  ])("masks the %s key %s as %s", (_shape, apiKey, masked) => {
-    const { container } = renderPanel("OWNER", [withKey(apiKey)]);
-    expect(screen.getByText(masked)).toBeInTheDocument();
-    expect(container.textContent).not.toMatch(new RegExp(apiKey));
+describe("SourcesPanel: key hint and reveal in the list", () => {
+  it("shows the hint exactly as the API sent it, whatever its shape", () => {
+    const { container } = renderPanel("OWNER", [{ ...source, keyHint: "****" }]);
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(/^\*\*\*\*$/);
+    expect(container.textContent).not.toMatch(/lf_existing_key/);
   });
 
-  it("reveals and hides the full key with the per-row toggle", () => {
+  it("reveals the full key on click through the API and hides it again", async () => {
     const { container } = renderPanel("OWNER");
     const reveal = screen.getByRole("button", { name: "Reveal API key of web" });
     expect(reveal).toHaveAttribute("aria-pressed", "false");
+    expect(mocks.revealSourceKey).not.toHaveBeenCalled();
+
     fireEvent.click(reveal);
-    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_existing_key");
-    const hide = screen.getByRole("button", { name: "Hide API key of web" });
-    expect(hide).toHaveAttribute("aria-pressed", "true");
-    fireEvent.click(hide);
+
+    expect(await screen.findByRole("button", { name: "Hide API key of web" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(mocks.revealSourceKey).toHaveBeenCalledExactlyOnceWith("src-1", "tok");
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(FULL_KEY);
+
+    fireEvent.click(screen.getByRole("button", { name: "Hide API key of web" }));
+
     expect(screen.getByTestId("source-api-key")).toHaveTextContent(MASKED);
     expect(screen.getByRole("button", { name: "Reveal API key of web" })).toHaveAttribute(
       "aria-pressed",
       "false",
     );
     expect(container.textContent).not.toMatch(/lf_existing_key/);
+    expect(mocks.revealSourceKey).toHaveBeenCalledTimes(1);
+
+    // The hidden key was dropped, so the next reveal asks the API again.
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    expect(await screen.findByRole("button", { name: "Hide API key of web" })).toBeInTheDocument();
+    expect(mocks.revealSourceKey).toHaveBeenCalledTimes(2);
   });
 
-  it("copies the full key to the clipboard without revealing it", async () => {
+  it("shows a loading state while the reveal is in flight and keeps the hint until it answers", async () => {
+    const pending = deferred<{ apiKey: string }>();
+    mocks.revealSourceKey.mockReturnValueOnce(pending.promise);
+    const { container } = renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+
+    const busy = screen.getByRole("button", { name: "Reveal API key of web" });
+    expect(busy).toBeDisabled();
+    expect(busy).toHaveTextContent("Loading...");
+    expect(screen.getByRole("button", { name: "Copy API key of web" })).toBeDisabled();
+    expect(screen.getByTestId("source-key-status")).toHaveTextContent("Loading the key");
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(MASKED);
+    expect(container.textContent).not.toMatch(/lf_existing_key/);
+
+    await act(async () => {
+      pending.resolve({ apiKey: FULL_KEY });
+    });
+
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(FULL_KEY);
+    expect(screen.getByRole("button", { name: "Hide API key of web" })).toBeEnabled();
+    expect(screen.getByTestId("source-key-status")).toBeEmptyDOMElement();
+  });
+
+  it.each([
+    ["403", new Error("Forbidden")],
+    ["404", new Error("Source not found")],
+    ["a network failure", new TypeError("Failed to fetch")],
+  ])("shows an error and keeps the hint when the reveal fails with %s", async (_case, failure) => {
+    mocks.revealSourceKey.mockRejectedValueOnce(failure);
+    const { container } = renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/Could not reveal the key/);
+    expect(alert).toHaveTextContent((failure as Error).message);
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(MASKED);
+    expect(container.textContent).not.toMatch(/lf_existing_key/);
+    expect(screen.getByRole("button", { name: "Reveal API key of web" })).toBeEnabled();
+
+    // A retry clears the stale error and succeeds.
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    expect(await screen.findByRole("button", { name: "Hide API key of web" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("copies the full key to the clipboard without revealing it or keeping it", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
     const { container } = renderPanel("OWNER");
 
     fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
 
-    await waitFor(() => expect(writeText).toHaveBeenCalledWith("lf_existing_key"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(FULL_KEY));
+    expect(mocks.revealSourceKey).toHaveBeenCalledExactlyOnceWith("src-1", "tok");
     expect(container.textContent).not.toMatch(/lf_existing_key/);
     expect(screen.getByTestId("source-api-key")).toHaveTextContent(MASKED);
     expect(await screen.findByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+
+    // Nothing was kept: another copy asks the API again.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Copied API key of web" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(2));
+    expect(mocks.revealSourceKey).toHaveBeenCalledTimes(2);
+  });
+
+  it("copies the held key without another API call while the row is revealed", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    await screen.findByRole("button", { name: "Hide API key of web" });
+    fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(FULL_KEY));
+    expect(mocks.revealSourceKey).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(FULL_KEY);
+  });
+
+  it("does not touch the clipboard and shows an error when the key cannot be fetched for a copy", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    mocks.revealSourceKey.mockRejectedValueOnce(new Error("Forbidden"));
+    renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/Could not copy the key/);
+    expect(alert).toHaveTextContent("Forbidden");
+    expect(writeText).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Copy API key of web" })).toBeInTheDocument();
   });
 
   it("reports a failed copy of a listed key", async () => {
@@ -240,6 +348,89 @@ describe("SourcesPanel: key masking in the list", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/Copy failed/);
+  });
+
+  it("drops the revealed key when the hint changes", async () => {
+    const view = renderPanel("OWNER");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    await screen.findByRole("button", { name: "Hide API key of web" });
+
+    view.rerender(
+      <SourcesPanel
+        sources={[{ ...source, keyHint: "lf_****_new" }]}
+        teamId="team-1"
+        token="tok"
+        role="OWNER"
+      />,
+    );
+
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_****_new");
+    expect(screen.getByRole("button", { name: "Reveal API key of web" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(view.container.textContent).not.toMatch(/lf_existing_key/);
+  });
+
+  it("drops the revealed key when the source's key is rotated, even before the list refreshes", async () => {
+    mocks.rotateSourceKey.mockResolvedValue({ source: { ...source, apiKey: "lf_rotated" } });
+    const { container } = renderPanel("OWNER");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    await screen.findByRole("button", { name: "Hide API key of web" });
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(FULL_KEY);
+
+    fireEvent.click(screen.getByRole("button", { name: "Rotate key of web" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Rotate key" }));
+    await screen.findByTestId("rotated-source-api-key");
+
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(MASKED);
+    expect(screen.getByRole("button", { name: "Reveal API key of web" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(container.textContent).not.toMatch(/lf_existing_key/);
+  });
+
+  it("ignores a reveal reply that arrives after the source's key was rotated", async () => {
+    const pending = deferred<{ apiKey: string }>();
+    mocks.revealSourceKey.mockReturnValueOnce(pending.promise);
+    mocks.rotateSourceKey.mockResolvedValue({ source: { ...source, apiKey: "lf_rotated" } });
+    const { container } = renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    fireEvent.click(screen.getByRole("button", { name: "Rotate key of web" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Rotate key" }));
+    await screen.findByTestId("rotated-source-api-key");
+
+    await act(async () => {
+      pending.resolve({ apiKey: FULL_KEY });
+    });
+
+    expect(container.textContent).not.toMatch(/lf_existing_key/);
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(MASKED);
+  });
+
+  it("clears the revealed key from the DOM on unmount and ignores a reply that arrives later", async () => {
+    const pending = deferred<{ apiKey: string }>();
+    mocks.revealSourceKey.mockReturnValueOnce(pending.promise);
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const view = renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    view.unmount();
+    await act(async () => {
+      pending.resolve({ apiKey: FULL_KEY });
+    });
+
+    expect(document.body.textContent).not.toMatch(/lf_existing_key/);
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+
+    const second = renderPanel("OWNER");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    await screen.findByRole("button", { name: "Hide API key of web" });
+    second.unmount();
+    expect(document.body.textContent).not.toMatch(/lf_existing_key/);
   });
 });
 
@@ -282,7 +473,7 @@ describe("SourcesPanel: the copy feedback of a listed key is transient and singl
     fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
     await settle();
     expect(writeText).toHaveBeenCalledTimes(2);
-    expect(writeText).toHaveBeenNthCalledWith(2, "lf_existing_key");
+    expect(writeText).toHaveBeenNthCalledWith(2, FULL_KEY);
     expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
   });
 
@@ -328,20 +519,21 @@ describe("SourcesPanel: the copy feedback of a listed key is transient and singl
     expect(vi.getTimerCount()).toBe(timersAfterRender);
   });
 
-  it("resets a revealed row, its Copied label and its failure note when the key changes", async () => {
+  it("resets a revealed row, its Copied label and its failure note when the hint changes", async () => {
     const writeText = stubClipboard("ok", "denied");
-    const view = renderWithKey("lf_existing_key");
+    const view = renderWithHint(MASKED);
 
     fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    await screen.findByRole("button", { name: "Hide API key of web" });
     fireEvent.click(copyButton());
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument(),
     );
-    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_existing_key");
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(FULL_KEY);
 
     view.rerender(
       <SourcesPanel
-        sources={[{ ...source, apiKey: "lf_rotated_new" }]}
+        sources={[{ ...source, keyHint: "lf_****_new" }]}
         teamId="team-1"
         token="tok"
         role="OWNER"
@@ -361,7 +553,7 @@ describe("SourcesPanel: the copy feedback of a listed key is transient and singl
 
     view.rerender(
       <SourcesPanel
-        sources={[{ ...source, apiKey: "lf_rotated_again" }]}
+        sources={[{ ...source, keyHint: "lf_****gain" }]}
         teamId="team-1"
         token="tok"
         role="OWNER"
@@ -487,11 +679,14 @@ describe("SourcesPanel: rename, rotate key and delete", () => {
     fireEvent.click(screen.getByRole("button", { name: "Rotate key of web" }));
     const confirm = screen.getByRole("dialog");
     expect(within(confirm).getByText(/stops working at once/)).toBeInTheDocument();
+    expect(within(confirm).getByText(/Owners and admins can reveal it again later/)).toBeInTheDocument();
+    expect(within(confirm).queryByText(/shown only once/)).toBeNull();
     expect(mocks.rotateSourceKey).not.toHaveBeenCalled();
     fireEvent.click(within(confirm).getByRole("button", { name: "Rotate key" }));
 
     expect(await screen.findByTestId("rotated-source-api-key")).toHaveTextContent("lf_rotated");
     expect(mocks.rotateSourceKey).toHaveBeenCalledWith("src-1", "tok");
+    expect(screen.getByText(/shows only a\s+masked hint of the key/)).toBeInTheDocument();
     expect(mocks.refresh).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Done" }));

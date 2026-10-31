@@ -149,9 +149,13 @@ export interface Source {
   name: string;
   type: string;
   retentionDays: number;
-  // Absent for VIEWER and MEMBER: the API omits the ingest key from reads unless
-  // the caller is OWNER or ADMIN. The create response still carries it.
+  // The full ingest key. Only the create and rotate-key responses carry it, once;
+  // list and rename responses never do. OWNER and ADMIN read it on demand with
+  // revealSourceKey.
   apiKey?: string;
+  // Masked ingest key (`lf_****a7c1`) from the list and rename responses. Absent
+  // for VIEWER and MEMBER: the API omits it unless the caller is OWNER or ADMIN.
+  keyHint?: string;
 }
 
 /** Conditions the API accepts for new and edited rules. */
