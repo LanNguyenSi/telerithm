@@ -39,7 +39,8 @@ function SourceKey({ id, name, keyHint, token }: { id: string; name: string; key
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Bumped whenever an in-flight request must be ignored: hide, new hint, unmount.
+  // Bumped whenever an in-flight request must be ignored: hide, new hint. (An
+  // unmount needs no bump: the state goes with the component.)
   const generation = useRef(0);
 
   useEffect(() => {
@@ -49,13 +50,6 @@ function SourceKey({ id, name, keyHint, token }: { id: string; name: string; key
     setCopied(false);
     setError(null);
   }, [keyHint]);
-
-  useEffect(
-    () => () => {
-      generation.current += 1;
-    },
-    [],
-  );
 
   useEffect(() => {
     if (!copied) return;

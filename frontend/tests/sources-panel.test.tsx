@@ -410,6 +410,29 @@ describe("SourcesPanel: key hint and reveal in the list", () => {
     expect(screen.getByTestId("source-api-key")).toHaveTextContent(MASKED);
   });
 
+  it("ignores a reveal reply that arrives after the hint changed", async () => {
+    const pending = deferred<{ apiKey: string }>();
+    mocks.revealSourceKey.mockReturnValueOnce(pending.promise);
+    const view = renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    view.rerender(
+      <SourcesPanel
+        sources={[{ ...source, keyHint: "lf_****_new" }]}
+        teamId="team-1"
+        token="tok"
+        role="OWNER"
+      />,
+    );
+    await act(async () => {
+      pending.resolve({ apiKey: FULL_KEY });
+    });
+
+    expect(view.container.textContent).not.toMatch(/lf_existing_key/);
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_****_new");
+    expect(screen.getByRole("button", { name: "Reveal API key of web" })).toBeEnabled();
+  });
+
   it("clears the revealed key from the DOM on unmount and ignores a reply that arrives later", async () => {
     const pending = deferred<{ apiKey: string }>();
     mocks.revealSourceKey.mockReturnValueOnce(pending.promise);
