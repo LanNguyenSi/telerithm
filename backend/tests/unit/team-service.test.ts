@@ -24,6 +24,7 @@ const {
   mockTeamFindUniqueOrThrow,
   mockTransaction,
   mockLogSourceFindMany,
+  mockLogSourceFindUnique,
   mockLogSourceUpdate,
   mockLogSourceDelete,
   mockLogSourceCreate,
@@ -48,6 +49,7 @@ const {
   mockTeamFindUniqueOrThrow: vi.fn(),
   mockTransaction: vi.fn(),
   mockLogSourceFindMany: vi.fn(),
+  mockLogSourceFindUnique: vi.fn(),
   mockLogSourceUpdate: vi.fn(),
   mockLogSourceDelete: vi.fn(),
   mockLogSourceCreate: vi.fn(),
@@ -97,6 +99,7 @@ vi.mock("../../src/repositories/prisma.js", () => ({
     },
     logSource: {
       findMany: mockLogSourceFindMany,
+      findUnique: mockLogSourceFindUnique,
       update: mockLogSourceUpdate,
       delete: mockLogSourceDelete,
       create: mockLogSourceCreate,
@@ -105,7 +108,7 @@ vi.mock("../../src/repositories/prisma.js", () => ({
   },
 }));
 
-import { TeamService } from "../../src/services/team/team-service.js";
+import { TeamService, sourceKeyHint } from "../../src/services/team/team-service.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -569,10 +572,10 @@ describe("TeamService source key visibility", () => {
     service = new TeamService();
   });
 
-  it("listSources includes apiKey when includeApiKey is true", async () => {
-    mockLogSourceFindMany.mockResolvedValue([sourceRow()]);
+  it("listSources with the hint view returns keyHint and never the full key", async () => {
+    mockLogSourceFindMany.mockResolvedValue([sourceRow({ apiKey: "lf_0123456789abcdef01234567" })]);
 
-    const sources = await service.listSources(TEAM_A, { includeApiKey: true });
+    const sources = await service.listSources(TEAM_A, { keyView: "hint" });
 
     expect(mockLogSourceFindMany).toHaveBeenCalledExactlyOnceWith({ where: { teamId: TEAM_A } });
     expect(sources).toEqual([
@@ -584,35 +587,58 @@ describe("TeamService source key visibility", () => {
         config: {},
         retentionDays: 7,
         createdAt: "2024-01-15T10:00:00.000Z",
-        apiKey: "lf_secret",
+        keyHint: "lf_****4567",
       },
     ]);
+    expect("apiKey" in sources[0]).toBe(false);
+    expect(JSON.stringify(sources)).not.toContain("0123456789abcdef");
   });
 
-  it("listSources omits the apiKey field (absent, not masked) when includeApiKey is false", async () => {
+  it("listSources with the none view omits both apiKey and keyHint (absent, not masked)", async () => {
     mockLogSourceFindMany.mockResolvedValue([sourceRow(), sourceRow({ id: "src-2" })]);
 
-    const sources = await service.listSources(TEAM_A, { includeApiKey: false });
+    const sources = await service.listSources(TEAM_A, { keyView: "none" });
 
     expect(sources).toHaveLength(2);
     for (const source of sources) {
       expect("apiKey" in source).toBe(false);
+      expect("keyHint" in source).toBe(false);
     }
     expect(JSON.stringify(sources)).not.toContain("lf_secret");
   });
 
-  it("renameSource updates by id and team, and applies the same key rule", async () => {
-    mockLogSourceUpdate.mockResolvedValue(sourceRow({ name: "renamed" }));
+  it("renameSource updates by id and team, and applies the same key view", async () => {
+    mockLogSourceUpdate.mockResolvedValue(sourceRow({ name: "renamed", apiKey: "lf_0123456789abcdef01234567" }));
 
-    const withKey = await service.renameSource(TEAM_A, "src-1", "renamed", { includeApiKey: true });
-    const withoutKey = await service.renameSource(TEAM_A, "src-1", "renamed", { includeApiKey: false });
+    const withHint = await service.renameSource(TEAM_A, "src-1", "renamed", { keyView: "hint" });
+    const withoutKey = await service.renameSource(TEAM_A, "src-1", "renamed", { keyView: "none" });
 
     expect(mockLogSourceUpdate).toHaveBeenCalledWith({
       where: { id: "src-1", teamId: TEAM_A },
       data: { name: "renamed" },
     });
-    expect(withKey).toMatchObject({ name: "renamed", apiKey: "lf_secret" });
+    expect(withHint).toMatchObject({ name: "renamed", keyHint: "lf_****4567" });
+    expect("apiKey" in withHint).toBe(false);
     expect("apiKey" in withoutKey).toBe(false);
+    expect("keyHint" in withoutKey).toBe(false);
+  });
+
+  it("revealSourceKey reads the key scoped by id and team", async () => {
+    mockLogSourceFindUnique.mockResolvedValue({ apiKey: "lf_secret" });
+
+    const key = await service.revealSourceKey(TEAM_A, "src-1");
+
+    expect(key).toBe("lf_secret");
+    expect(mockLogSourceFindUnique).toHaveBeenCalledExactlyOnceWith({
+      where: { id: "src-1", teamId: TEAM_A },
+      select: { apiKey: true },
+    });
+  });
+
+  it("revealSourceKey returns null for a source that is not in the team", async () => {
+    mockLogSourceFindUnique.mockResolvedValue(null);
+
+    expect(await service.revealSourceKey(TEAM_A, "src-other")).toBeNull();
   });
 
   it("deleteSource deletes the row scoped by id and team and returns nothing", async () => {
@@ -670,5 +696,31 @@ describe("TeamService source key visibility", () => {
 
     expect(created.apiKey).toMatch(/^lf_[0-9a-f]{24}$/);
     expect(rotated.apiKey).toMatch(/^lf_[0-9a-f]{24}$/);
+  });
+});
+
+describe("sourceKeyHint", () => {
+  it("keeps the prefix through the first underscore and the last four characters", () => {
+    expect(sourceKeyHint("lf_0123456789abcdef01234567")).toBe("lf_****4567");
+  });
+
+  it("caps the visible prefix at eight characters", () => {
+    expect(sourceKeyHint("telerithm_0123456789abcdef")).toBe("telerith****cdef");
+  });
+
+  it("shows no prefix for a key without an underscore", () => {
+    expect(sourceKeyHint("0123456789abcdef")).toBe("****cdef");
+  });
+
+  it("hints a key shorter than 12 characters as **** only", () => {
+    expect(sourceKeyHint("lf_abcdefg")).toBe("****");
+  });
+
+  it("hints a key of exactly 12 characters with prefix and tail", () => {
+    expect(sourceKeyHint("lf_abcdefghi")).toBe("lf_****fghi");
+  });
+
+  it("hints the empty key as ****", () => {
+    expect(sourceKeyHint("")).toBe("****");
   });
 });

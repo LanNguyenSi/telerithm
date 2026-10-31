@@ -74,6 +74,7 @@ const ROUTE_TEAM_GUARDS: Record<string, Guard> = {
   "PUT /sources/:id": { kind: "resolver", loaderName: "loadSourceTeamId" },
   "DELETE /sources/:id": { kind: "resolver", loaderName: "loadSourceTeamId" },
   "POST /sources/:id/rotate-key": { kind: "resolver", loaderName: "loadSourceTeamId" },
+  "POST /sources/:id/reveal": { kind: "resolver", loaderName: "loadSourceTeamId" },
 
   // --- Explicit, justified allowlist (never a silent skip) ---
   "POST /ingest/:sourceId": {

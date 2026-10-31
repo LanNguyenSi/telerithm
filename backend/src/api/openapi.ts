@@ -76,7 +76,7 @@ export const openApiSpec = {
       get: {
         summary: "List log sources for a team",
         description:
-          "Each source carries its ingest key (`apiKey`) only for OWNER and ADMIN; for MEMBER and VIEWER the field is absent from the response.",
+          "Each source carries a masked key hint (`keyHint`, for example `lf_****a7c1`) only for OWNER and ADMIN; for MEMBER and VIEWER the field is absent. No role gets the full `apiKey` here: OWNER and ADMIN read it with `POST /sources/{id}/reveal`.",
         tags: ["Sources"],
         parameters: [{ name: "teamId", in: "query", required: true, schema: { type: "string" } }],
         responses: {
@@ -87,7 +87,7 @@ export const openApiSpec = {
       post: {
         summary: "Create a new log source",
         description:
-          "The response includes the new source's ingest key (`apiKey`) for every role that may create a source, once; later reads return it only to OWNER and ADMIN.",
+          "The response includes the new source's full ingest key (`apiKey`) for every role that may create a source, once. Later reads return only the masked `keyHint` to OWNER and ADMIN; they read the full key with `POST /sources/{id}/reveal`.",
         tags: ["Sources"],
         requestBody: {
           required: true,
@@ -100,7 +100,7 @@ export const openApiSpec = {
       put: {
         summary: "Rename a log source",
         description:
-          "OWNER, ADMIN and MEMBER may rename; a VIEWER gets 403. A source of a team the caller is not in answers 404 like an unknown id. The response carries `apiKey` only for OWNER and ADMIN.",
+          "OWNER, ADMIN and MEMBER may rename; a VIEWER gets 403. A source of a team the caller is not in answers 404 like an unknown id. The response carries the masked `keyHint` only for OWNER and ADMIN and never the full `apiKey`.",
         tags: ["Sources"],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         requestBody: {
@@ -139,12 +139,26 @@ export const openApiSpec = {
       post: {
         summary: "Rotate a log source's ingest key",
         description:
-          "OWNER and ADMIN only; a MEMBER or VIEWER gets 403 and a source of a team the caller is not in answers 404 like an unknown id. The new key replaces the old one in place and the old key is rejected immediately (no grace period). The response carries the new `apiKey`; copy it from there.",
+          "OWNER and ADMIN only; a MEMBER or VIEWER gets 403 and a source of a team the caller is not in answers 404 like an unknown id. The new key replaces the old one in place and the old key is rejected immediately (no grace period). The response carries the new full `apiKey`; copy it from there.",
         tags: ["Sources"],
         parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
         responses: {
           200: { description: "Source with its new ingest key" },
           403: { description: "Role may not rotate keys" },
+          404: { description: "Source not found" },
+        },
+      },
+    },
+    "/sources/{id}/reveal": {
+      post: {
+        summary: "Reveal a log source's full ingest key",
+        description:
+          "OWNER and ADMIN only; a MEMBER or VIEWER gets 403 and a source of a team the caller is not in answers 404 like an unknown id. Returns `{ apiKey }` with `Cache-Control: no-store`. Every successful call writes one audit log line (source, team and user, never the key). List and rename responses carry only the masked `keyHint`.",
+        tags: ["Sources"],
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          200: { description: "The source's full ingest key, as { apiKey }" },
+          403: { description: "Role may not reveal keys" },
           404: { description: "Source not found" },
         },
       },

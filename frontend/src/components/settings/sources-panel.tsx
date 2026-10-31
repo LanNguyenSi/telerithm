@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
-import { createSource, deleteSource, renameSource, rotateSourceKey } from "@/lib/api/client";
+import { createSource, deleteSource, renameSource, revealSourceKey, rotateSourceKey } from "@/lib/api/client";
 import { canManageSources, canWriteTeam } from "@/lib/auth/roles";
 import { SOURCE_TYPES, type Source, type SourceType, type TeamRole } from "@/types";
 
@@ -14,47 +14,42 @@ const inputClass =
 const rowButtonClass =
   "rounded-lg border border-line px-2.5 py-1 text-xs text-ink transition hover:border-slate-400 disabled:opacity-50";
 
-/** Keys shorter than this reveal too much of themselves when only partly masked. */
-const MIN_PARTIALLY_MASKED_LENGTH = 12;
-
-/** Upper bound on the visible prefix, so a long prefix cannot expose the key. */
-const MAX_MASKED_PREFIX_LENGTH = 8;
-
 /** How long a row keeps the "Copied" label before it falls back to "Copy". */
 const COPIED_RESET_MS = 2000;
 
-/**
- * Masks an ingest key for the list: the prefix through the first underscore
- * (at most 8 characters), then `****`, then the last four characters
- * (e.g. `tlm_****a7c1`). A key shorter than 12 characters is masked whole
- * (`****`), because 8 prefix characters plus 4 tail characters would leave
- * little of a short key hidden.
- */
-function maskApiKey(apiKey: string): string {
-  if (apiKey.length < MIN_PARTIALLY_MASKED_LENGTH) return "****";
-  const underscore = apiKey.indexOf("_");
-  const prefix =
-    underscore >= 0 ? apiKey.slice(0, Math.min(underscore + 1, MAX_MASKED_PREFIX_LENGTH)) : "";
-  return `${prefix}****${apiKey.slice(-4)}`;
+function describeFailure(action: "reveal" | "copy", err: unknown): string {
+  const detail = err instanceof Error && err.message ? err.message : "request failed";
+  return `Could not ${action} the key (${detail}).`;
 }
 
 /**
- * A listed source's key, masked until the row's Reveal toggle is pressed. The
- * row lives as long as the page, so its copy feedback is transient ("Copied"
- * reverts on a timer) and single sided (a failing copy clears "Copied" and
- * clears the stale error before each write). A rotation hands this same
- * instance the new key, so revealing, copying and errors reset with it.
+ * A listed source's key: the masked hint from the list until the row's Reveal
+ * button is pressed. Reveal asks the API for the full key (an audited call, so
+ * only on click), keeps it in this component's state and shows it; Hide drops
+ * it again. Copy fetches the key the same way and writes it to the clipboard
+ * without showing it or keeping it, unless the row is already revealed. The
+ * key is never stored anywhere else: a hide, a changed hint, a rotation (the
+ * panel remounts the row) and an unmount all clear it, and a reply that
+ * arrives after any of those is dropped. Copy feedback is transient ("Copied"
+ * reverts on a timer) and single sided (a failure clears "Copied" and a new
+ * attempt clears the stale error).
  */
-function SourceKey({ name, apiKey }: { name: string; apiKey: string }) {
-  const [revealed, setRevealed] = useState(false);
+function SourceKey({ id, name, keyHint, token }: { id: string; name: string; keyHint: string; token: string }) {
+  const [fullKey, setFullKey] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Bumped whenever an in-flight request must be ignored: hide, new hint. (An
+  // unmount needs no bump: the state goes with the component.)
+  const generation = useRef(0);
 
   useEffect(() => {
-    setRevealed(false);
+    generation.current += 1;
+    setFullKey(null);
+    setLoading(false);
     setCopied(false);
     setError(null);
-  }, [apiKey]);
+  }, [keyHint]);
 
   useEffect(() => {
     if (!copied) return;
@@ -62,44 +57,77 @@ function SourceKey({ name, apiKey }: { name: string; apiKey: string }) {
     return () => clearTimeout(timer);
   }, [copied]);
 
+  /** Asks the API for the key; resolves null when the reply is stale or failed (error already set). */
+  const fetchKey = async (action: "reveal" | "copy"): Promise<string | null> => {
+    const ticket = generation.current;
+    setLoading(true);
+    setError(null);
+    setCopied(false);
+    try {
+      const { apiKey } = await revealSourceKey(id, token);
+      return ticket === generation.current ? apiKey : null;
+    } catch (err) {
+      if (ticket === generation.current) setError(describeFailure(action, err));
+      return null;
+    } finally {
+      if (ticket === generation.current) setLoading(false);
+    }
+  };
+
+  const toggleReveal = async () => {
+    if (fullKey !== null) {
+      generation.current += 1;
+      setFullKey(null);
+      return;
+    }
+    const apiKey = await fetchKey("reveal");
+    if (apiKey !== null) setFullKey(apiKey);
+  };
+
   const copyKey = async () => {
+    const apiKey = fullKey ?? (await fetchKey("copy"));
+    if (apiKey === null) return;
     setError(null);
     try {
       await navigator.clipboard.writeText(apiKey);
       setCopied(true);
     } catch {
       setCopied(false);
-      setError("Copy failed. Select the key and copy it manually.");
+      setError("Copy failed. Reveal the key and copy it manually.");
     }
   };
 
+  const revealed = fullKey !== null;
+
   return (
-    <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+    <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto" aria-busy={loading}>
       <span
         data-testid="source-api-key"
         className="rounded-full bg-cyan-100 px-3 py-1 font-mono text-xs text-cyan-800 dark:bg-cyan-900/30 dark:text-cyan-300"
       >
-        {revealed ? apiKey : maskApiKey(apiKey)}
+        {fullKey ?? keyHint}
       </span>
       <button
         type="button"
-        onClick={() => setRevealed((value) => !value)}
+        onClick={() => void toggleReveal()}
+        disabled={loading}
         aria-pressed={revealed}
         aria-label={`${revealed ? "Hide" : "Reveal"} API key of ${name}`}
         className={rowButtonClass}
       >
-        {revealed ? "Hide" : "Reveal"}
+        {loading ? "Loading..." : revealed ? "Hide" : "Reveal"}
       </button>
       <button
         type="button"
         onClick={() => void copyKey()}
+        disabled={loading}
         aria-label={`${copied ? "Copied" : "Copy"} API key of ${name}`}
         className={rowButtonClass}
       >
         {copied ? "Copied" : "Copy"}
       </button>
       <p role="status" aria-live="polite" data-testid="source-key-status" className="sr-only">
-        {error ?? (copied ? "Copied" : "")}
+        {error ?? (loading ? "Loading the key" : copied ? "Copied" : "")}
       </p>
       {error ? (
         <p role="alert" className="w-full text-xs text-rose-600 dark:text-rose-400">
@@ -176,9 +204,9 @@ function ShowOnceKey({
  * key the same way. The key is not logged or stored by the page. The create
  * control is rendered only for roles that may write; the per-source controls
  * only for OWNER and ADMIN (the API refuses everyone else with 403 either way).
- * A listed key is shown masked (see maskApiKey); the full key enters the DOM
- * only while the row's Reveal toggle is pressed, and Copy puts it on the
- * clipboard without revealing it.
+ * A listed key is shown as the API's masked hint (see SourceKey); the full key
+ * is fetched on a click, enters the DOM only while the row's Reveal toggle is
+ * pressed, and Copy puts it on the clipboard without revealing it.
  */
 export function SourcesPanel({
   sources,
@@ -205,6 +233,9 @@ export function SourcesPanel({
   const [rotating, setRotating] = useState<Source | null>(null);
   const [rotated, setRotated] = useState<Source | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  // Per source, how often its key was rotated here. It is part of the row's React
+  // key, so a rotation remounts the row and drops any key it had revealed.
+  const [rotations, setRotations] = useState<Record<string, number>>({});
   const [actionError, setActionError] = useState<string | null>(null);
 
   const openDialog = () => {
@@ -283,6 +314,7 @@ export function SourcesPanel({
     setActionError(null);
     try {
       const { source } = await rotateSourceKey(target.id, token);
+      setRotations((current) => ({ ...current, [target.id]: (current[target.id] ?? 0) + 1 }));
       setRotated(source);
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Rotating the key failed.");
@@ -354,7 +386,15 @@ export function SourcesPanel({
                   <p className="text-sm font-medium text-ink">{source.name}</p>
                   <p className="mt-0.5 text-xs text-muted">{source.type}</p>
                 </div>
-                {source.apiKey ? <SourceKey name={source.name} apiKey={source.apiKey} /> : null}
+                {source.keyHint ? (
+                  <SourceKey
+                    key={`${source.id}:${rotations[source.id] ?? 0}`}
+                    id={source.id}
+                    name={source.name}
+                    keyHint={source.keyHint}
+                    token={token}
+                  />
+                ) : null}
               </div>
               {manageable ? (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -504,7 +544,7 @@ export function SourcesPanel({
             open={rotating !== null}
             variant="confirm"
             title={`Rotate the key of "${rotating?.name ?? ""}"?`}
-            description="The current key stops working at once. Update every sender with the new key, which is shown only once."
+            description="The current key stops working at once. Update every sender with the new key, which is shown right after the rotation. Owners and admins can reveal it again later in the source list."
             confirmLabel="Rotate key"
             cancelLabel="Cancel"
             onClose={() => setRotating(null)}
@@ -525,8 +565,9 @@ export function SourcesPanel({
                   intro={
                     <>
                       Copy the new API key for <span className="font-medium text-ink">{rotated.name}</span>{" "}
-                      now. The old key no longer works. After you close this dialog the key is shown masked to
-                      owners and admins in the source list, where you can reveal or copy it.
+                      now. The old key no longer works. After you close this dialog the source list shows only a
+                      masked hint of the key; owners and admins can reveal or copy the full key there on
+                      demand, and each reveal is logged.
                     </>
                   }
                   apiKey={rotated.apiKey}

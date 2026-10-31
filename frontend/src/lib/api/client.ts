@@ -147,11 +147,20 @@ export async function deleteSource(id: string, token: string) {
   return authedRequest<void>(`/sources/${encodeURIComponent(id)}`, token, { method: "DELETE" });
 }
 
-// Hard cutover: the response carries the new key, the only time it is shown to
-// the caller besides the OWNER/ADMIN source list; the old key stops working at
-// once.
+// Hard cutover: the response carries the new key, shown to the caller once
+// (OWNER and ADMIN can read it again with revealSourceKey); the old key stops
+// working at once.
 export async function rotateSourceKey(id: string, token: string) {
   return authedRequest<{ source: Source }>(`/sources/${encodeURIComponent(id)}/rotate-key`, token, {
+    method: "POST",
+  });
+}
+
+// The only read path to a stored ingest key (OWNER and ADMIN; others get 403,
+// an unknown or foreign id 404). The backend writes an audit line per call, so
+// call it on a click, never to prefetch.
+export async function revealSourceKey(id: string, token: string) {
+  return authedRequest<{ apiKey: string }>(`/sources/${encodeURIComponent(id)}/reveal`, token, {
     method: "POST",
   });
 }

@@ -18,6 +18,7 @@ export const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
   "PUT /sources/:id": { kind: "write" },
   "DELETE /sources/:id": { kind: "write" },
   "POST /sources/:id/rotate-key": { kind: "write" },
+  "POST /sources/:id/reveal": { kind: "write" },
   "POST /alerts/rules": { kind: "write" },
   "PUT /alerts/rules/:id": { kind: "write" },
   "DELETE /alerts/rules/:id": { kind: "write" },

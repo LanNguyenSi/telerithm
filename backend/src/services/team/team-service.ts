@@ -33,9 +33,35 @@ function sanitizeUser(user: {
   };
 }
 
-// Maps a logSource row to the API shape. The ingest key is added only when the
-// caller's role may see it: the field is omitted rather than masked, so a
-// response for a read-only or ordinary member carries no `apiKey` at all.
+/** Keys shorter than this are hinted as `****` only: prefix plus tail would leave too little hidden. */
+const MIN_PARTIALLY_HINTED_LENGTH = 12;
+
+/** Upper bound on the visible prefix, so a long prefix cannot expose the key. */
+const MAX_HINT_PREFIX_LENGTH = 8;
+
+/**
+ * The display hint for an ingest key: the prefix through the first underscore
+ * (at most 8 characters), then `****`, then the last four characters (for a
+ * generated key `lf_****a7c1`). A key shorter than 12 characters, including
+ * the empty string, becomes `****`; a key without an underscore has no prefix
+ * (`****a7c1`). The hint is all a list response carries of a key; the full
+ * key leaves the server only through create, rotate and the audited reveal.
+ */
+export function sourceKeyHint(apiKey: string): string {
+  if (apiKey.length < MIN_PARTIALLY_HINTED_LENGTH) return "****";
+  const underscore = apiKey.indexOf("_");
+  const prefix = underscore >= 0 ? apiKey.slice(0, Math.min(underscore + 1, MAX_HINT_PREFIX_LENGTH)) : "";
+  return `${prefix}****${apiKey.slice(-4)}`;
+}
+
+// What a source response carries of the ingest key: nothing (MEMBER, VIEWER),
+// the masked hint (OWNER and ADMIN lists and renames) or the full key (create
+// and rotate, once). The field is omitted rather than masked when nothing is
+// shown, so a response for a read-only or ordinary member has neither
+// `apiKey` nor `keyHint`.
+export type SourceKeyView = "none" | "hint" | "full";
+
+// Maps a logSource row to the API shape.
 function toLogSource(
   s: {
     id: string;
@@ -47,7 +73,7 @@ function toLogSource(
     createdAt: Date;
     apiKey: string;
   },
-  includeApiKey: boolean,
+  keyView: SourceKeyView,
 ): LogSource {
   return {
     id: s.id,
@@ -57,7 +83,8 @@ function toLogSource(
     config: s.config as Record<string, unknown>,
     retentionDays: s.retentionDays,
     createdAt: s.createdAt.toISOString(),
-    ...(includeApiKey ? { apiKey: s.apiKey } : {}),
+    ...(keyView === "full" ? { apiKey: s.apiKey } : {}),
+    ...(keyView === "hint" ? { keyHint: sourceKeyHint(s.apiKey) } : {}),
   };
 }
 
@@ -171,9 +198,9 @@ export class TeamService {
     };
   }
 
-  async listSources(teamId: string, options: { includeApiKey: boolean }): Promise<LogSource[]> {
+  async listSources(teamId: string, options: { keyView: SourceKeyView }): Promise<LogSource[]> {
     const sources = await prisma.logSource.findMany({ where: { teamId } });
-    return sources.map((s) => toLogSource(s, options.includeApiKey));
+    return sources.map((s) => toLogSource(s, options.keyView));
   }
 
   // Renames a source. The update is scoped by id AND team so a caller can never
@@ -183,17 +210,17 @@ export class TeamService {
     teamId: string,
     sourceId: string,
     name: string,
-    options: { includeApiKey: boolean },
+    options: { keyView: SourceKeyView },
   ): Promise<LogSource> {
     const source = await prisma.logSource.update({
       where: { id: sourceId, teamId },
       data: { name },
     });
     log.info({ sourceId, teamId }, "Source renamed");
-    return toLogSource(source, options.includeApiKey);
+    return toLogSource(source, options.keyView);
   }
 
-  // The create response is the one place a writer who may not list keys (a
+  // The create response is the one place a writer who may not reveal keys (a
   // MEMBER) sees the new source's key, once, so it can start sending logs.
   async createSource(teamId: string, name: string, type: LogSource["type"]): Promise<LogSource> {
     const apiKey = generateSourceApiKey();
@@ -201,7 +228,7 @@ export class TeamService {
       data: { teamId, name, type, config: {}, retentionDays: 7, apiKey },
     });
     log.info({ sourceId: source.id, teamId }, "Source created");
-    return toLogSource(source, true);
+    return toLogSource(source, "full");
   }
 
   // Deletes the source row and nothing else. Ingest authenticates by looking
@@ -216,15 +243,26 @@ export class TeamService {
 
   // Replaces the source's ingest key in place (hard cutover: the old key is
   // rejected by the next ingest request, no grace window). The returned source
-  // carries the new key; the route sends it once and no list returns it to a
-  // role without key visibility.
+  // carries the new key; the route sends it once and no list returns it, only
+  // the hint.
   async rotateSourceKey(teamId: string, sourceId: string): Promise<LogSource> {
     const source = await prisma.logSource.update({
       where: { id: sourceId, teamId },
       data: { apiKey: generateSourceApiKey() },
     });
     log.info({ sourceId, teamId }, "Source key rotated");
-    return toLogSource(source, true);
+    return toLogSource(source, "full");
+  }
+
+  // Reads one source's full ingest key for the audited reveal route. Scoped by
+  // id AND team so a guessed id of another team's source yields null (the route
+  // maps it to 404). The caller decides who may ask; this method does not log.
+  async revealSourceKey(teamId: string, sourceId: string): Promise<string | null> {
+    const source = await prisma.logSource.findUnique({
+      where: { id: sourceId, teamId },
+      select: { apiKey: true },
+    });
+    return source?.apiKey ?? null;
   }
 
   async findSourceById(sourceId: string) {

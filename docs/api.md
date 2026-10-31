@@ -14,10 +14,11 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `POST`, `GET` | `/teams/:id/invites`       | Create and list team invites      |
 | `POST` | `/invites/:token/accept`          | Accept an invite (logged-in user) |
 | `DELETE` | `/invites/:id`                  | Revoke an invite                  |
-| `GET`, `POST` | `/sources`                 | Ingestion sources (list, create); the list includes each source's ingest key only for OWNER and ADMIN, the create response shows it once to the creator |
-| `PUT`  | `/sources/:id`                    | Rename a source (OWNER, ADMIN, MEMBER; VIEWER gets 403) |
+| `GET`, `POST` | `/sources`                 | Ingestion sources (list, create); the list carries a masked `keyHint` (for example `lf_****a7c1`) only for OWNER and ADMIN and never the full `apiKey`, the create response shows the full key once to the creator |
+| `PUT`  | `/sources/:id`                    | Rename a source (OWNER, ADMIN, MEMBER; VIEWER gets 403). The response carries `keyHint` for OWNER and ADMIN, never `apiKey` |
 | `DELETE` | `/sources/:id`                  | Delete a source (OWNER, ADMIN; others get 403). Removes the row and invalidates its key at once; stored logs stay until the 30-day retention expires |
 | `POST` | `/sources/:id/rotate-key`         | Replace a source's ingest key (OWNER, ADMIN; others get 403). The old key is rejected at once, no grace window; the response carries the new `apiKey` |
+| `POST` | `/sources/:id/reveal`             | Read a source's full ingest key as `{ "apiKey" }` with `Cache-Control: no-store` (OWNER, ADMIN; others get 403, an unknown or foreign id gets 404). Every successful call logs one audit line with source, team and user, never the key |
 | `POST` | `/ingest/:sourceId`, `/ingest/:sourceId/raw` | Ingest logs (API key)             |
 | `POST` | `/logs/search`                    | Search logs (also `GET /logs`)    |
 | `GET`  | `/logs/:id`                       | One log entry                     |
