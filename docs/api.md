@@ -18,7 +18,7 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `PUT`  | `/sources/:id`                    | Rename a source (OWNER, ADMIN, MEMBER; VIEWER gets 403). The response carries `keyHint` for OWNER and ADMIN, never `apiKey` |
 | `DELETE` | `/sources/:id`                  | Delete a source (OWNER, ADMIN; others get 403). Removes the row and invalidates its key at once; stored logs stay until the 30-day retention expires |
 | `POST` | `/sources/:id/rotate-key`         | Replace a source's ingest key (OWNER, ADMIN; others get 403). The old key is rejected at once, no grace window; the response carries the new `apiKey` |
-| `POST` | `/sources/:id/reveal`             | Read a source's full ingest key as `{ "apiKey" }` with `Cache-Control: no-store` (OWNER, ADMIN; others get 403, an unknown or foreign id gets 404). Every call logs one audit line with source, team and user, never the key |
+| `POST` | `/sources/:id/reveal`             | Read a source's full ingest key as `{ "apiKey" }` with `Cache-Control: no-store` (OWNER, ADMIN; others get 403, an unknown or foreign id gets 404). Every successful call logs one audit line with source, team and user, never the key |
 | `POST` | `/ingest/:sourceId`, `/ingest/:sourceId/raw` | Ingest logs (API key)             |
 | `POST` | `/logs/search`                    | Search logs (also `GET /logs`)    |
 | `GET`  | `/logs/:id`                       | One log entry                     |
