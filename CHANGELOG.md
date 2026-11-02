@@ -15,6 +15,10 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Changed
+
+- Dependency updates: `renovate.json` extends the shared `github>LanNguyenSi/renovate-config` preset (weekly grouped patch/minor pull requests, 7-day minimum release age, no automerge, majors only through the Dependency Dashboard). The `overrides` entries that equal a direct dependency now reference it (`"postcss": "$postcss"` in `frontend/package.json`), so updating that dependency no longer fails with `EOVERRIDE`.
+
 ## [0.5.0] - 2026-11-01
 
 ### Upgrade notes
