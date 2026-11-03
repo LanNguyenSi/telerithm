@@ -15,6 +15,11 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Security
+
+- **Inside a team, `DELETE /invites/:id` and `POST /logs/views/:id/duplicate` no longer reveal whether an id exists.** A member without the invite-manage role (MEMBER, VIEWER) used to get 403 for an existing invite and 404 for an unknown one, and a duplicate of a teammate's private view was 403 while an unknown view was 404. Both now answer the unknown-id 404 (`{ "error": "Invite not found" }` and `{ "error": "Saved view not found" }`, identical bodies). OWNER and ADMIN keep 204 and 404 on invites, readable views still duplicate with 201, and the list and create invite routes take a team id, not an invite id, so they are unchanged. API contract change: a client that treated these 403s as "exists but not yours" now sees 404.
+- **Responses that carry a full ingest key are marked `Cache-Control: no-store`.** `POST /sources`, `POST /sources/:id/rotate-key` and every answer of the handler of `POST /sources/:id/reveal`, error answers included (the 404 for a source that vanished after the team lookup used to go out without the header).
+
 ### Changed
 
 - Dependency updates: `renovate.json` extends the shared `github>LanNguyenSi/renovate-config` preset (weekly grouped patch/minor pull requests, 7-day minimum release age, no automerge, majors only through the Dependency Dashboard). The `overrides` entries that equal a direct dependency now reference it (`"postcss": "$postcss"` in `frontend/package.json`), so updating that dependency no longer fails with `EOVERRIDE`.

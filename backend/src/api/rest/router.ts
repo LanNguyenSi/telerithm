@@ -377,7 +377,9 @@ apiRouter.get(
   }),
 );
 
+// The response carries the full ingest key once, so it is never cached.
 writeRoute("post", "/sources", teamFromBody(createSourceSchema), async ({ res, input }) => {
+  res.set("Cache-Control", "no-store");
   const source = await teamService.createSource(input.teamId, input.name, input.type);
   res.status(201).json({ source });
 });
@@ -436,12 +438,14 @@ writeRoute(
 
 // Hard cutover: the new key replaces the old one in place, so the next ingest
 // request with the old key is a 403. The response is the only place the new
-// key is returned to this caller besides the audited reveal below.
+// key is returned to this caller besides the audited reveal below. Like the
+// reveal, every answer of the handler is marked no-store.
 writeRoute(
   "post",
   "/sources/:id/rotate-key",
   teamFromResource(loadSourceTeamId, "Source not found"),
   async ({ req, res, teamId, role }) => {
+    res.set("Cache-Control", "no-store");
     if (!canManageSources(role)) {
       res.status(403).json({ error: "Forbidden" });
       return;
@@ -460,7 +464,8 @@ writeRoute(
 // masked hint, never the key. OWNER and ADMIN only (canSeeSourceKeys); writeRoute
 // has already refused a VIEWER and answered a non-member of the owning team
 // like an unknown id, and a MEMBER passes the write gate, so the handler
-// answers 403 before the key is read. The response is never cached. Every
+// answers 403 before the key is read. No answer of the handler is cached, error
+// answers included (the header is set before anything else). Every
 // successful reveal leaves one audit line with who looked at which source; the
 // line never carries the key.
 writeRoute(
@@ -468,6 +473,7 @@ writeRoute(
   "/sources/:id/reveal",
   teamFromResource(loadSourceTeamId, "Source not found"),
   async ({ req, res, userId, teamId, role }) => {
+    res.set("Cache-Control", "no-store");
     if (!canSeeSourceKeys(role)) {
       res.status(403).json({ error: "Forbidden" });
       return;
@@ -479,7 +485,6 @@ writeRoute(
       return;
     }
     log.info({ sourceId, teamId, userId }, "Source key revealed");
-    res.set("Cache-Control", "no-store");
     res.json({ apiKey });
   },
 );
@@ -1785,12 +1790,13 @@ apiRouter.delete(
       res.status(404).json({ error: "Invite not found" });
       return;
     }
-    // A non-member gets the same 404 as for an unknown id; a member without
-    // the manage role keeps the 403, which reveals nothing about other teams.
+    // A non-member and a member without the manage role both get the same 404
+    // as for an unknown id, so the status reveals whether an invite exists
+    // neither across teams nor inside one.
     const role = await requireTeamRole(userId, invite.teamId, res, "Invite not found");
     if (role === null) return;
     if (!canManageInvites(role)) {
-      res.status(403).json({ error: "Forbidden" });
+      res.status(404).json({ error: "Invite not found" });
       return;
     }
     try {

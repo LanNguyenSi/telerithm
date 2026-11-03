@@ -2449,9 +2449,11 @@ describe("API Routes", () => {
       expect(res.body.error).toBe("Saved view not found");
     });
 
-    it("maps a duplicate of another user's private view to 403 (POST /logs/views/:id/duplicate)", async () => {
+    it("answers a duplicate of a teammate's private view like an unknown id (POST /logs/views/:id/duplicate)", async () => {
       // Regression: log-view-service threw a plain Error("Forbidden") that
-      // the router never caught, so this fell through to a 500.
+      // the router never caught, so this fell through to a 500. The refusal is
+      // now a 404 with the unknown-id body, so the status does not reveal that
+      // the private view exists.
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-2" }));
       mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
         id: "member-2",
@@ -2477,8 +2479,61 @@ describe("API Routes", () => {
         .set("Authorization", "Bearer sess_admin")
         .send({ teamId: "t1" });
 
-      expect(res.status).toBe(403);
-      expect(res.body.error).toBe("Forbidden");
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-2" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-2",
+        teamId: "t1",
+        userId: "user-2",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+      mockedPrisma.logView.findUnique.mockResolvedValueOnce(null);
+      const unknown = await app
+        .post("/api/v1/logs/views/missing-view/duplicate")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1" });
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: "Saved view not found" });
+      expect(unknown.status).toBe(404);
+      expect(res.status).toBe(unknown.status);
+      expect(res.text).toBe(unknown.text);
+      expect(mockedPrisma.logView.create).not.toHaveBeenCalled();
+    });
+
+    it("still duplicates the caller's own private view and a teammate's shared view (POST /logs/views/:id/duplicate)", async () => {
+      const view = (overrides: Record<string, unknown>) => ({
+        id: "view-6",
+        teamId: "t1",
+        ownerUserId: "user-1",
+        name: "Mine",
+        isShared: false,
+        isDefault: false,
+        definition: { filters: [], columns: [], facets: [], exclusions: [], pageSize: 50 },
+        createdAt: new Date("2026-03-23T00:00:00.000Z"),
+        updatedAt: new Date("2026-03-23T00:00:00.000Z"),
+        ...overrides,
+      });
+      for (const existing of [view({}), view({ ownerUserId: "user-9", isShared: true })]) {
+        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+          id: "member-1",
+          teamId: "t1",
+          userId: "user-1",
+          role: "MEMBER",
+          joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+        });
+        mockedPrisma.logView.findUnique.mockResolvedValueOnce(existing);
+        mockedPrisma.logView.create.mockResolvedValueOnce(view({ id: "copy", isShared: false }));
+
+        const res = await app
+          .post("/api/v1/logs/views/view-6/duplicate")
+          .set("Authorization", "Bearer sess_admin")
+          .send({ teamId: "t1" });
+
+        expect(res.status).toBe(201);
+      }
+      expect(mockedPrisma.logView.create).toHaveBeenCalledTimes(2);
     });
 
     it("maps a missing saved view to 404 (DELETE /logs/views/:id)", async () => {
@@ -3069,21 +3124,78 @@ describe("API Routes", () => {
         expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
       });
 
-      it("rejects a plain MEMBER of the invite's team with 403", async () => {
-        mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "member-1" }));
-        mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeTeamInvite({ teamId: "t1" }));
-        mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
-          id: "member-1",
-          teamId: "t1",
-          userId: "member-1",
-          role: "MEMBER",
-          joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      // The status of a revoke must not tell a caller whether an invite id
+      // exists, inside the team any more than across teams: every member
+      // without the manage role gets the unknown-id answer for every id.
+      describe.each(["MEMBER", "VIEWER"] as const)("a %s of the invite's team (no manage role)", (role) => {
+        it("gets the unknown-invite 404, body for body, for an existing invite and never deletes", async () => {
+          mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "member-1" }));
+          mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeTeamInvite({ teamId: "t1" }));
+          mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+            id: "member-1",
+            teamId: "t1",
+            userId: "member-1",
+            role,
+            joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+          });
+          const existing = await app
+            .delete("/api/v1/invites/inv-1")
+            .set("Authorization", "Bearer sess_admin");
+
+          mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "member-1" }));
+          mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(null);
+          const unknown = await app
+            .delete("/api/v1/invites/missing")
+            .set("Authorization", "Bearer sess_admin");
+
+          expect(unknown.status).toBe(404);
+          expect(existing.status).toBe(unknown.status);
+          expect(existing.body).toEqual({ error: "Invite not found" });
+          expect(existing.text).toBe(unknown.text);
+          expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
         });
 
-        const res = await app.delete("/api/v1/invites/inv-1").set("Authorization", "Bearer sess_admin");
+        it("gets the same 404 for an invite id that does not exist", async () => {
+          mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "member-1" }));
+          mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(null);
 
-        expect(res.status).toBe(403);
-        expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
+          const res = await app.delete("/api/v1/invites/missing").set("Authorization", "Bearer sess_admin");
+
+          expect(res.status).toBe(404);
+          expect(res.body).toEqual({ error: "Invite not found" });
+          expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
+        });
+      });
+
+      describe.each(["OWNER", "ADMIN"] as const)("an %s of the invite's team (manage role)", (role) => {
+        it("keeps 204 for an existing invite and the same 404 body as before for an unknown id", async () => {
+          mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "mgr-1" }));
+          mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeTeamInvite({ teamId: "t1" }));
+          mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+            id: "member-1",
+            teamId: "t1",
+            userId: "mgr-1",
+            role,
+            joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+          });
+          mockedPrisma.teamInvite.deleteMany.mockResolvedValueOnce({ count: 1 });
+          const existing = await app
+            .delete("/api/v1/invites/inv-1")
+            .set("Authorization", "Bearer sess_admin");
+
+          mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "mgr-1" }));
+          mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(null);
+          const unknown = await app
+            .delete("/api/v1/invites/missing")
+            .set("Authorization", "Bearer sess_admin");
+
+          expect(existing.status).toBe(204);
+          expect(unknown.status).toBe(404);
+          expect(unknown.body).toEqual({ error: "Invite not found" });
+          expect(mockedPrisma.teamInvite.deleteMany).toHaveBeenCalledExactlyOnceWith({
+            where: { id: "inv-1", teamId: "t1" },
+          });
+        });
       });
 
       it("revokes the invite for an ADMIN of the invite's team, scoped to that team", async () => {
@@ -4059,6 +4171,23 @@ describe("API Routes", () => {
         });
       });
 
+      it("POST /sources: the response carries the full key and is never cached", async () => {
+        asRole("OWNER");
+        mockedPrisma.logSource.create.mockResolvedValueOnce(
+          makeSourceRow({ apiKey: "lf_0123456789abcdef01234567" }),
+        );
+
+        const res = await authed(writeApp.post("/api/v1/sources")).send({
+          teamId: "t1",
+          name: "prod",
+          type: "HTTP",
+        });
+
+        expect(res.status).toBe(201);
+        expect(res.body.source.apiKey).toBe("lf_0123456789abcdef01234567");
+        expect(res.headers["cache-control"]).toBe("no-store");
+      });
+
       it("PUT /sources/:id: stores the trimmed name", async () => {
         asRole("OWNER");
         mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
@@ -4301,6 +4430,7 @@ describe("API Routes", () => {
           expect(written).not.toBe("lf_key");
           expect(res.body.source).toMatchObject({ id: "src-1", teamId: "t1", name: "web" });
           expect(res.body.source.apiKey).toBe(written);
+          expect(res.headers["cache-control"]).toBe("no-store");
           expect(clickhouseCalls()).toEqual([]);
         },
       );
@@ -4320,6 +4450,16 @@ describe("API Routes", () => {
         },
       );
 
+      it("POST /sources/:id/rotate-key: the handler's 403 for a MEMBER is marked no-store too", async () => {
+        asRole("MEMBER");
+        mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+
+        const res = await authed(writeApp.post("/api/v1/sources/src-1/rotate-key"));
+
+        expect(res.status).toBe(403);
+        expect(res.headers["cache-control"]).toBe("no-store");
+      });
+
       it("POST /sources/:id/rotate-key: maps P2025 to 404 when the source vanishes between the lookup and the update", async () => {
         asRole("ADMIN");
         mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
@@ -4331,6 +4471,7 @@ describe("API Routes", () => {
 
         expect(res.status).toBe(404);
         expect(res.body.error).toBe("Source not found");
+        expect(res.headers["cache-control"]).toBe("no-store");
       });
 
       describe("POST /sources/:id/reveal", () => {
@@ -4378,6 +4519,18 @@ describe("API Routes", () => {
           expect(childLog.info).not.toHaveBeenCalledWith(expect.anything(), "Source key revealed");
         });
 
+        // A VIEWER is refused by the write gate before the handler runs, so only
+        // the handler's own 403 (a MEMBER) is covered by the handler's header.
+        it("the handler's 403 for a MEMBER is marked no-store too", async () => {
+          asRole("MEMBER");
+          mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "t1" });
+
+          const res = await reveal();
+
+          expect(res.status).toBe(403);
+          expect(res.headers["cache-control"]).toBe("no-store");
+        });
+
         it("a member of another team gets the same 404 as an unknown id, and no key lookup runs", async () => {
           mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
           mockedPrisma.logSource.findUnique.mockResolvedValueOnce({ teamId: "other-team" });
@@ -4404,7 +4557,9 @@ describe("API Routes", () => {
 
           expect(res.status).toBe(404);
           expect(res.body).toEqual({ error: "Source not found" });
-          expect(res.headers["cache-control"]).not.toBe("no-store");
+          // The header is set before the handler's first branch, so error
+          // answers are marked too, not only the one that carries the key.
+          expect(res.headers["cache-control"]).toBe("no-store");
           expect(childLog.info).not.toHaveBeenCalledWith(expect.anything(), "Source key revealed");
         });
 
@@ -4876,15 +5031,15 @@ describe("API Routes", () => {
         });
       }
 
-      it("DELETE /invites/:id: a member of the invite's team without the manage role still gets 403", async () => {
+      it("DELETE /invites/:id: a member of the invite's team without the manage role gets the unknown-invite 404", async () => {
         await readCases[3].found("t1");
         mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
         mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(membership("MEMBER"));
 
         const res = await readCases[3].send();
 
-        expect(res.status).toBe(403);
-        expect(res.body).toEqual({ error: "Forbidden" });
+        expect(res.status).toBe(404);
+        expect(res.body).toEqual({ error: "Invite not found" });
         expect(mockedPrisma.teamInvite.deleteMany).not.toHaveBeenCalled();
       });
     });
