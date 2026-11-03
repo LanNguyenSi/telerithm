@@ -3,7 +3,7 @@ type: invariant
 title: Notification delivery trust boundary - every subscriber URL is vetted and then dialled at the vetted address by safeFetch
 description: Webhook, Slack and Teams targets are caller-supplied strings stored in AlertSubscription.config; the three senders (sendWebhook, sendSlackMessage in the dispatcher, sendMsTeamsMessage) each hand the exact URL to safeFetch, which vets it with resolveSafeTarget and then connects only to the addresses that call vetted (the name is resolved once, the connect-time lookup answers from that set), never follows a redirect and times out after 10 s; that delivery-time check is the only one that runs on every path, because the input-boundary check in router.ts does not run on every write. EMAIL sends nothing. Also covers who can configure a target, what leaves the system, and the test route.
 tags: [notifications, ssrf, url-guard, subscriptions, security]
-timestamp: 2026-10-31T07:22:00Z
+timestamp: 2026-11-03T10:25:10Z
 sources:
   - backend/src/services/notification/url-guard.ts
   - backend/src/services/notification/safe-fetch.ts
