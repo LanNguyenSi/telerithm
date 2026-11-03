@@ -149,8 +149,10 @@ export class LogViewService {
     if (!existing || existing.teamId !== input.teamId) {
       throw new NotFoundError("Saved view not found");
     }
+    // A teammate's private view answers like an unknown id, so the status does
+    // not reveal that the view exists.
     if (!this.canRead(existing, input.userId)) {
-      throw new ForbiddenError("Forbidden");
+      throw new NotFoundError("Saved view not found");
     }
     const duplicate = await prisma.logView.create({
       data: {

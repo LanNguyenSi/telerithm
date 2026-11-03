@@ -13,12 +13,12 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `GET`, `POST` | `/teams`                   | Teams (list, create)              |
 | `POST`, `GET` | `/teams/:id/invites`       | Create and list team invites      |
 | `POST` | `/invites/:token/accept`          | Accept an invite (logged-in user) |
-| `DELETE` | `/invites/:id`                  | Revoke an invite                  |
-| `GET`, `POST` | `/sources`                 | Ingestion sources (list, create); the list carries a masked `keyHint` (for example `lf_****a7c1`) only for OWNER and ADMIN and never the full `apiKey`, the create response shows the full key once to the creator |
+| `DELETE` | `/invites/:id`                  | Revoke an invite (OWNER, ADMIN). Any other caller, a non-member or a member without the manage role, gets the same 404 as for an unknown id |
+| `GET`, `POST` | `/sources`                 | Ingestion sources (list, create); the list carries a masked `keyHint` (for example `lf_****a7c1`) only for OWNER and ADMIN and never the full `apiKey`, the create response shows the full key once to the creator, with `Cache-Control: no-store` |
 | `PUT`  | `/sources/:id`                    | Rename a source (OWNER, ADMIN, MEMBER; VIEWER gets 403). The response carries `keyHint` for OWNER and ADMIN, never `apiKey` |
 | `DELETE` | `/sources/:id`                  | Delete a source (OWNER, ADMIN; others get 403). Removes the row and invalidates its key at once; stored logs stay until the 30-day retention expires |
-| `POST` | `/sources/:id/rotate-key`         | Replace a source's ingest key (OWNER, ADMIN; others get 403). The old key is rejected at once, no grace window; the response carries the new `apiKey` |
-| `POST` | `/sources/:id/reveal`             | Read a source's full ingest key as `{ "apiKey" }` with `Cache-Control: no-store` (OWNER, ADMIN; others get 403, an unknown or foreign id gets 404). Every successful call logs one audit line with source, team and user, never the key |
+| `POST` | `/sources/:id/rotate-key`         | Replace a source's ingest key (OWNER, ADMIN; others get 403). The old key is rejected at once, no grace window; the response carries the new `apiKey` with `Cache-Control: no-store` |
+| `POST` | `/sources/:id/reveal`             | Read a source's full ingest key as `{ "apiKey" }` with `Cache-Control: no-store` on every answer of the handler (OWNER, ADMIN; others get 403, an unknown or foreign id gets 404). Every successful call logs one audit line with source, team and user, never the key |
 | `POST` | `/ingest/:sourceId`, `/ingest/:sourceId/raw` | Ingest logs (API key)             |
 | `POST` | `/logs/search`                    | Search logs (also `GET /logs`)    |
 | `GET`  | `/logs/:id`                       | One log entry                     |
@@ -26,7 +26,7 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `POST` | `/logs/facets`, `/logs/histogram`, `/logs/patterns` | Faceted search, timelines, pattern clustering |
 | `GET`  | `/query/jobs/:id`                 | Result of an async facet, histogram or pattern job |
 | `GET`, `POST`, `PUT`, `DELETE` | `/logs/views`, `/logs/views/:id` | Saved views (list, create, update, delete) |
-| `POST` | `/logs/views/:id/duplicate`       | Duplicate a saved view            |
+| `POST` | `/logs/views/:id/duplicate`       | Duplicate a saved view; a teammate's private view gets the same 404 as an unknown id |
 | `POST` | `/query/natural`                  | Translate NL to query plan        |
 | `GET`  | `/stream/logs`                    | SSE live tail                     |
 | `GET`, `POST` | `/alerts/rules`            | Alert rules (list, create)        |
@@ -77,7 +77,7 @@ An incident is `OPEN`, `ACKNOWLEDGED` or `RESOLVED`. The actions only apply from
 
 Any other combination answers `409` with a message such as `Cannot acknowledge an incident that is RESOLVED; acknowledge applies to OPEN incidents`, and writes nothing (no status change, no timeline event). `409` is also the answer when another request changed the status between the check and the write. An unknown id answers `404`, and so does an incident of a team the caller does not belong to (same body), so the answer does not reveal whether an id exists. A member of the incident's team without write access (`VIEWER`) gets `403`.
 
-The by-id read routes follow the same rule: `GET /issues/:id`, `GET /alerts/incidents/:id/timeline` and `GET /query/jobs/:id` answer a caller who is not a member of the owning team with the `404` and the body they give for an unknown id (`Issue not found`, `Incident not found`, `Job not found`), and so does `DELETE /invites/:id` (`Invite not found`). A member of the invite's team who may not manage invites gets `403`. If the membership lookup itself fails, the route answers `500`, never `403` or `404`.
+The by-id read routes follow the same rule: `GET /issues/:id`, `GET /alerts/incidents/:id/timeline` and `GET /query/jobs/:id` answer a caller who is not a member of the owning team with the `404` and the body they give for an unknown id (`Issue not found`, `Incident not found`, `Job not found`), and so does `DELETE /invites/:id` (`Invite not found`). A member of the invite's team who may not manage invites gets the same `404` and body (`Invite not found`), so the status does not reveal inside a team either whether an invite exists. If the membership lookup itself fails, the route answers `500`, never `403` or `404`.
 
 ### Subscription channels
 
