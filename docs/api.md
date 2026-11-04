@@ -25,7 +25,7 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `POST` | `/logs/context`                   | Surrounding log lines             |
 | `POST` | `/logs/facets`, `/logs/histogram`, `/logs/patterns` | Faceted search, timelines, pattern clustering |
 | `GET`  | `/query/jobs/:id`                 | Result of an async facet, histogram or pattern job |
-| `GET`, `POST`, `PUT`, `DELETE` | `/logs/views`, `/logs/views/:id` | Saved views (list, create, update, delete) |
+| `GET`, `POST`, `PUT`, `DELETE` | `/logs/views`, `/logs/views/:id` | Saved views (list, create, update, delete); update and delete of a teammate's private view get the same 404 as an unknown id |
 | `POST` | `/logs/views/:id/duplicate`       | Duplicate a saved view; a teammate's private view gets the same 404 as an unknown id |
 | `POST` | `/query/natural`                  | Translate NL to query plan        |
 | `GET`  | `/stream/logs`                    | SSE live tail                     |
