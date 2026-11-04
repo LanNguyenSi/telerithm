@@ -104,6 +104,7 @@ export class LogViewService {
     if (!existing || existing.teamId !== input.teamId) {
       throw new NotFoundError("Saved view not found");
     }
+    this.assertVisible(existing, input);
     if (this.isTeamWideState(existing) && !input.canManageShared) {
       throw new ForbiddenError("Forbidden");
     }
@@ -175,6 +176,7 @@ export class LogViewService {
     if (!existing || existing.teamId !== input.teamId) {
       throw new NotFoundError("Saved view not found");
     }
+    this.assertVisible(existing, input);
     if (this.isTeamWideState(existing) && !input.canManageShared) {
       throw new ForbiddenError("Forbidden");
     }
@@ -182,6 +184,22 @@ export class LogViewService {
       throw new ForbiddenError("Forbidden");
     }
     await prisma.logView.delete({ where: { id } });
+  }
+
+  // A teammate's private view answers like an unknown id (as in duplicate), so
+  // the status does not reveal that the view exists. The one exception is a
+  // foreign private default view for OWNER/ADMIN, who may clean it up (see
+  // isForeignPrivateDefault); they learn that it exists, which is accepted.
+  private assertVisible(
+    view: { isShared: boolean; isDefault: boolean; ownerUserId: string | null },
+    input: { userId: string; canManageShared: boolean },
+  ): void {
+    if (
+      !this.canRead(view, input.userId) &&
+      !(input.canManageShared && this.isForeignPrivateDefault(view, input.userId))
+    ) {
+      throw new NotFoundError("Saved view not found");
+    }
   }
 
   private canRead(view: { isShared: boolean; ownerUserId: string | null }, userId: string): boolean {
