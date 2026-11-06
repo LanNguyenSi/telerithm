@@ -23,6 +23,8 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ### Fixed
 
+- **The sidebar user menu now reports its state and closes on Escape.** The trigger carries `aria-expanded`, `aria-haspopup` and an `aria-controls` that points at the popover (an id per instance, since the menu is rendered in the desktop sidebar and in the mobile drawer), and Escape closes the popover and returns focus to the trigger. Inside the mobile drawer the first Escape closes only the menu and the second closes the drawer.
+- **The log volume histogram bars are visible and have accessible names.** The bars used a fill of about 1.1:1 contrast on the light card (`bg-line`); they now use `slate-500` in the light scheme (about 4.7:1) and `slate-400` in the dark scheme, and each bucket button has an `aria-label` of the form `<start time>: <count> events` (it keeps its `title`).
 - **The admin Approve button is readable in both colour schemes.** It was white on the signal colour (3.68:1 light, 1.81:1 dark); it now uses the app's primary button pattern (slate in light, white in dark).
 - **Warn and info log-level labels and the "click to expand" hint reach 4.5:1 on the light page background.** Warn was `amber-600` (2.98:1) and info/hint used the signal colour (3.44:1); light now uses `amber-700` and `sky-700`, dark keeps `amber-400` and the signal colour. The hint grew from 10px to 11px.
 - **The Settings theme switch exposes its state to assistive technology.** Light and Dark carry `aria-pressed`, sit in an "Appearance" group and their icons are hidden from the accessibility tree. The pressed button is `sky-700` in the light scheme (it was the signal colour at about 3.4:1) and keeps the signal colour in dark.

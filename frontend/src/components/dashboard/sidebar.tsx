@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { logoutAction } from "@/lib/auth/actions";
 import { useDrawerA11y } from "./use-drawer-a11y";
 import type { SessionUser } from "@/types";
@@ -82,6 +82,8 @@ function isActive(pathname: string, href: string) {
 function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
   const pathname = usePathname();
   const settingsActive = isActive(pathname, "/settings");
 
@@ -90,14 +92,31 @@ function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => 
     function handleClick(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     }
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      // Capture phase: inside the mobile drawer the first Escape only closes
+      // the menu, the drawer's own Escape handler then sees the second one.
+      e.stopPropagation();
+      e.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    }
     document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("mousedown", handleClick);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
   }, [open]);
 
   return (
     <div ref={ref} className="relative">
       <button
+        ref={triggerRef}
         type="button"
+        aria-expanded={open}
+        aria-haspopup="true"
+        aria-controls={menuId}
         onClick={() => setOpen((v) => !v)}
         className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-2 transition ${
           open ? "bg-white/10" : "hover:bg-white/6"
@@ -118,7 +137,7 @@ function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => 
       </button>
 
       {open && (
-        <div className="absolute bottom-full left-0 right-0 mb-1.5 rounded-lg border border-white/8 bg-[#1a2028] py-1 shadow-xl">
+        <div id={menuId} className="absolute bottom-full left-0 right-0 mb-1.5 rounded-lg border border-white/8 bg-[#1a2028] py-1 shadow-xl">
           <Link
             href="/settings"
             onClick={() => { setOpen(false); onNavigate?.(); }}
