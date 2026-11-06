@@ -59,6 +59,21 @@ describe("ThemeSwitch: pressed state", () => {
     expect(localStorage.getItem("theme")).toBe("dark");
   });
 
+  it("colours the pressed button sky-700 in light and signal in dark, never bare text-signal", () => {
+    render(<ThemeSwitch />);
+    const pressed = screen.getByRole("button", { name: "Dark" });
+    expect(pressed).toHaveAttribute("aria-pressed", "true");
+    expect(pressed.className).toContain("text-sky-700");
+    expect(pressed.className).toContain("dark:text-signal");
+    expect(pressed.className.split(/\s+/)).not.toContain("text-signal");
+
+    fireEvent.click(screen.getByRole("button", { name: "Light" }));
+    const light = screen.getByRole("button", { name: "Light" });
+    expect(light).toHaveAttribute("aria-pressed", "true");
+    expect(light.className).toContain("text-sky-700");
+    expect(light.className.split(/\s+/)).not.toContain("text-signal");
+  });
+
   it("groups the buttons as Appearance and hides the decorative icons", () => {
     const { container } = render(<ThemeSwitch />);
     expect(screen.getByRole("group", { name: "Appearance" })).toBeInTheDocument();

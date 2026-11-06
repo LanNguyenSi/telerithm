@@ -25,7 +25,7 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 - **The admin Approve button is readable in both colour schemes.** It was white on the signal colour (3.68:1 light, 1.81:1 dark); it now uses the app's primary button pattern (slate in light, white in dark).
 - **Warn and info log-level labels and the "click to expand" hint reach 4.5:1 on the light page background.** Warn was `amber-600` (2.98:1) and info/hint used the signal colour (3.44:1); light now uses `amber-700` and `sky-700`, dark keeps `amber-400` and the signal colour. The hint grew from 10px to 11px.
-- **The Settings theme switch exposes its state to assistive technology.** Light and Dark carry `aria-pressed`, sit in an "Appearance" group and their icons are hidden from the accessibility tree.
+- **The Settings theme switch exposes its state to assistive technology.** Light and Dark carry `aria-pressed`, sit in an "Appearance" group and their icons are hidden from the accessibility tree. The pressed button is `sky-700` in the light scheme (it was the signal colour at about 3.4:1) and keeps the signal colour in dark.
 
 ### Changed
 
