@@ -119,3 +119,23 @@ describe("LogTable: details button target size (WCAG 2.5.8)", () => {
     }
   });
 });
+
+describe("LogTable: message wrapping", () => {
+  it("wraps the expanded message at word boundaries, not mid-word", () => {
+    const longMessage =
+      "Slow query detected: SELECT * FROM orders WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 500 - consider adding an index";
+    render(<LogTable logs={[makeLog({ id: "wrap-log", message: longMessage })]} />);
+
+    const rows = screen.getAllByRole("row");
+    fireEvent.click(rows[1]);
+
+    const spans = screen.getAllByText(longMessage);
+    expect(spans.length).toBeGreaterThan(0);
+    for (const span of spans) {
+      expect(span.className).toContain("whitespace-pre-wrap");
+      expect(span.className).toContain("break-words");
+      expect(span.className).toContain("[overflow-wrap:anywhere]");
+      expect(span.className).not.toContain("break-all");
+    }
+  });
+});

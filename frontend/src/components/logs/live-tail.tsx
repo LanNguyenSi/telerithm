@@ -126,7 +126,7 @@ export function LiveTail({ teamId, token }: { teamId: string; token: string }) {
                 <span>{decodeHtml(log.service)}</span>
                 <span>{log.level}</span>
               </div>
-              <p className="mt-1.5 break-all text-sm text-ink">{decodeHtml(log.message)}</p>
+              <p className="mt-1.5 break-words [overflow-wrap:anywhere] text-sm text-ink">{decodeHtml(log.message)}</p>
             </article>
           ))
         )}

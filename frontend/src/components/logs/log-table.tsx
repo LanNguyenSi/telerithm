@@ -123,7 +123,7 @@ export function LogTable({
                             <span className="text-[10px] text-signal">click to expand</span>
                           </span>
                         ) : (
-                          <span className="whitespace-pre-wrap break-all">{msg}</span>
+                          <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg}</span>
                         )}
                         <div className="mt-1.5">
                           <button
@@ -176,7 +176,7 @@ export function LogTable({
                     <span className="text-muted">...</span>
                   </span>
                 ) : (
-                  <span className="whitespace-pre-wrap break-all">{msg}</span>
+                  <span className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{msg}</span>
                 )}
               </p>
               <div className="mt-1.5 flex flex-wrap gap-2 text-[11px] text-muted">

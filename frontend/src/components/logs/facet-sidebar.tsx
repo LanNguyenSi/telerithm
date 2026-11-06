@@ -49,7 +49,7 @@ export function FacetSidebar({
                       <button
                         type="button"
                         onClick={() => onToggle(facet.field, bucket.value)}
-                        className={`flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-xs transition ${
+                        className={`flex min-h-6 w-full items-center justify-between rounded-md px-2 py-1 text-left text-xs transition ${
                           isActive
                             ? "bg-slate-950 text-white"
                             : "bg-slate-900/5 text-ink hover:bg-slate-900/10 dark:bg-white/5 dark:hover:bg-white/10"

@@ -26,6 +26,12 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 - Dependency updates: `renovate.json` extends the shared `github>LanNguyenSi/renovate-config` preset (weekly grouped patch/minor pull requests, 7-day minimum release age, no automerge, majors only through the Dependency Dashboard). The `overrides` entries that equal a direct dependency now reference it (`"postcss": "$postcss"` in `frontend/package.json`), so updating that dependency no longer fails with `EOVERRIDE`.
 - Removed the `GHSA-vfj7-8cjw-p6xm` (braces) entry from `.github/audit-allowlist.json`: GitHub withdrew the advisory on 2026-10-23, and `npm audit` no longer reports it in this repo's lockfile tree(s), so the gate stays CLEAN with an empty `entries` list. `scripts/audit-gate.mjs` is unchanged.
 
+### Fixed
+
+- **Facet chips, field explorer chips and the subscriptions Enabled toggle now meet the 24 CSS px minimum target size (WCAG 2.5.8).** On the log search page the facet value chips (21 px tall) and the field explorer value chips and "Add as column" buttons (21 to 23 px tall) got `min-h-6` (the field explorer buttons also `py-1` instead of `py-0.5`), and the "Enabled" checkbox on `/alerts/subscriptions` (13 px, label 16 px) copies the alert rules panel pattern: `min-h-6` on the label and `size-4` on the checkbox (`frontend/src/components/logs/facet-sidebar.tsx`, `frontend/src/components/logs/field-explorer.tsx`, `frontend/src/app/(dashboard)/alerts/subscriptions/subscriptions-view.tsx`).
+
+- **The Back button on a log detail page now falls back to `/logs` on a direct load, and long log messages wrap at word boundaries.** `router.back()` on `/logs/<id>` did nothing when the page was opened directly (no history entry); the button now pushes `/logs` when `window.history.length` is 1, and it carries `min-h-6` (20 px before) (`frontend/src/components/logs/logs-tab-nav.tsx`). The expanded messages in the log table and the live tail rows replaced `break-all` with `break-words [overflow-wrap:anywhere]`, so a long message at 390 px breaks at word boundaries instead of mid-word (`frontend/src/components/logs/log-table.tsx`, `frontend/src/components/logs/live-tail.tsx`).
+
 ## [0.5.0] - 2026-11-01
 
 ### Upgrade notes
