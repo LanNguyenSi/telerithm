@@ -20,10 +20,10 @@ export function levelTone(level: string): string {
     return "text-danger";
   }
   if (level === "warn") {
-    return "text-amber-600";
+    return "text-amber-700 dark:text-amber-400";
   }
   if (level === "info") {
-    return "text-signal";
+    return "text-sky-700 dark:text-signal";
   }
   return "text-muted";
 }

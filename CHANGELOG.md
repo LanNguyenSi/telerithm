@@ -21,6 +21,12 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 - **`PUT` and `DELETE /logs/views/:id` no longer reveal whether a teammate's private view exists.** Any caller, OWNER and ADMIN included, used to get 403 for a teammate's private non-default view (MEMBER and VIEWER also for a teammate's private default view) and 404 for an unknown id; both now answer 404 `{ "error": "Saved view not found" }` with identical bodies, as `duplicate` does. Views the caller can read (own, shared) keep their 403 and 200/204 behaviour. OWNER and ADMIN keep the clean-up of a teammate's private default view (clear the default flag, delete), so they still learn that such a view exists. API contract change: a client that treated these 403s as "exists but not yours" now sees 404.
 - **Responses that carry a full ingest key are marked `Cache-Control: no-store`.** `POST /sources`, `POST /sources/:id/rotate-key` and every answer of the handler of `POST /sources/:id/reveal`, error answers included (the 404 for a source that vanished after the team lookup used to go out without the header).
 
+### Fixed
+
+- **The admin Approve button is readable in both colour schemes.** It was white on the signal colour (3.68:1 light, 1.81:1 dark); it now uses the app's primary button pattern (slate in light, white in dark).
+- **Warn and info log-level labels and the "click to expand" hint reach 4.5:1 on the light page background.** Warn was `amber-600` (2.98:1) and info/hint used the signal colour (3.44:1); light now uses `amber-700` and `sky-700`, dark keeps `amber-400` and the signal colour. The hint grew from 10px to 11px.
+- **The Settings theme switch exposes its state to assistive technology.** Light and Dark carry `aria-pressed`, sit in an "Appearance" group and their icons are hidden from the accessibility tree.
+
 ### Changed
 
 - Dependency updates: `renovate.json` extends the shared `github>LanNguyenSi/renovate-config` preset (weekly grouped patch/minor pull requests, 7-day minimum release age, no automerge, majors only through the Dependency Dashboard). The `overrides` entries that equal a direct dependency now reference it (`"postcss": "$postcss"` in `frontend/package.json`), so updating that dependency no longer fails with `EOVERRIDE`.

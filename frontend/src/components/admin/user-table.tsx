@@ -145,7 +145,7 @@ export function UserTable({
                         type="button"
                         disabled={pendingId === user.id}
                         onClick={() => void approve(user.id)}
-                        className="rounded-lg bg-signal px-3 py-1.5 text-sm font-medium text-white transition hover:brightness-110 disabled:opacity-50"
+                        className="rounded-lg bg-slate-950 px-3 py-1.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50 dark:bg-white dark:text-slate-950 dark:hover:bg-slate-200"
                       >
                         {pendingId === user.id ? "Approving..." : "Approve"}
                       </button>

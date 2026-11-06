@@ -75,17 +75,31 @@ describe("LogTable — level formatting", () => {
 
   it("renders warn level", () => {
     render(<LogTable logs={[makeLog({ level: "warn" })]} />);
-    expect(screen.getAllByText("warn").length).toBeGreaterThan(0);
+    const labels = screen.getAllByText("warn");
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) expect(label.className).toContain("text-amber-700");
   });
 
   it("renders info level", () => {
     render(<LogTable logs={[makeLog({ level: "info" })]} />);
-    expect(screen.getAllByText("info").length).toBeGreaterThan(0);
+    const labels = screen.getAllByText("info");
+    expect(labels.length).toBeGreaterThan(0);
+    for (const label of labels) expect(label.className).toContain("text-sky-700");
   });
 
   it("renders debug level", () => {
     render(<LogTable logs={[makeLog({ level: "debug" })]} />);
     expect(screen.getAllByText("debug").length).toBeGreaterThan(0);
+  });
+});
+
+describe("LogTable — expand hint", () => {
+  it("renders the hint in a light-readable colour at 11px", () => {
+    render(<LogTable logs={[makeLog({ message: "x".repeat(2000) })]} />);
+    const hint = screen.getAllByText("click to expand")[0];
+    expect(hint.className).toContain("text-sky-700");
+    expect(hint.className).toContain("text-[11px]");
+    expect(hint.className).not.toContain("text-[10px]");
   });
 });
 

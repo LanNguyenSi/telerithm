@@ -19,11 +19,11 @@ describe("levelTone", () => {
   });
 
   it("returns amber for warn", () => {
-    expect(levelTone("warn")).toBe("text-amber-600");
+    expect(levelTone("warn")).toBe("text-amber-700 dark:text-amber-400");
   });
 
   it("returns signal for info", () => {
-    expect(levelTone("info")).toBe("text-signal");
+    expect(levelTone("info")).toBe("text-sky-700 dark:text-signal");
   });
 
   it("returns muted for debug", () => {
