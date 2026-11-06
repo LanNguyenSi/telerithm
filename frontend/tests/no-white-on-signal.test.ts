@@ -13,7 +13,12 @@ function sourceFiles(dir: string): string[] {
   });
 }
 
-/** Quoted and template strings of a source file, the places a className lives. */
+/**
+ * Quoted and template strings of a source file, the places a className lives.
+ * Best-effort guard: both tokens must sit in the same literal. A className
+ * assembled from separate clsx arguments (clsx("bg-signal", cond && "text-white"))
+ * is not caught.
+ */
 function stringLiterals(source: string): string[] {
   return source.match(/"[^"\n]*"|`[^`]*`|'[^'\n]*'/g) ?? [];
 }
