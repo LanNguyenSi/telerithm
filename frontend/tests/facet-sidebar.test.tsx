@@ -15,7 +15,7 @@ const facets: LogFacet[] = [
   },
 ];
 
-describe("FacetSidebar — chip target size (WCAG 2.5.8)", () => {
+describe("FacetSidebar: chip target size (WCAG 2.5.8)", () => {
   it("gives every facet chip the min-h-6 sizing class", () => {
     render(
       <FacetSidebar facets={facets} active={[]} loading={false} onToggle={vi.fn()} />,

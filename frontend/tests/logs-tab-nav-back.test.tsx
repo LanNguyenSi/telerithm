@@ -24,7 +24,7 @@ afterEach(() => {
   Reflect.deleteProperty(window.history, "length");
 });
 
-describe("LogsTabNav — Back fallback on a direct load", () => {
+describe("LogsTabNav: Back fallback on a direct load", () => {
   it("pushes /logs when there is no history entry to go back to", () => {
     stubHistoryLength(1);
     render(<LogsTabNav />);

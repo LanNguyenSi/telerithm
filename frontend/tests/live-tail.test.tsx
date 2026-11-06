@@ -28,7 +28,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("LiveTail — message wrapping", () => {
+describe("LiveTail: message wrapping", () => {
   it("wraps the streamed message at word boundaries instead of breaking mid-word", () => {
     const listeners: Record<string, (event: { data: string }) => void> = {};
     mocks.streamLogs.mockReturnValue({
