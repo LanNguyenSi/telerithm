@@ -17,17 +17,18 @@ export function ThemeSwitch() {
   }
 
   return (
-    <div className="flex gap-2">
+    <div role="group" aria-label="Appearance" className="flex gap-2">
       <button
         type="button"
+        aria-pressed={!dark}
         onClick={() => select("light")}
         className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm transition ${
           !dark
-            ? "border-signal bg-signal/10 font-medium text-signal"
+            ? "border-sky-700 bg-sky-700/10 font-medium text-sky-700 dark:border-signal dark:bg-signal/10 dark:text-signal"
             : "border-line text-muted hover:border-slate-400 hover:text-ink"
         }`}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="5" />
           <line x1="12" y1="1" x2="12" y2="3" />
           <line x1="12" y1="21" x2="12" y2="23" />
@@ -42,14 +43,15 @@ export function ThemeSwitch() {
       </button>
       <button
         type="button"
+        aria-pressed={dark}
         onClick={() => select("dark")}
         className={`flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm transition ${
           dark
-            ? "border-signal bg-signal/10 font-medium text-signal"
+            ? "border-sky-700 bg-sky-700/10 font-medium text-sky-700 dark:border-signal dark:bg-signal/10 dark:text-signal"
             : "border-line text-muted hover:border-slate-400 hover:text-ink"
         }`}
       >
-        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
         </svg>
         Dark

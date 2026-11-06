@@ -29,16 +29,18 @@ export function HistogramStrip({
           {buckets.map((bucket) => {
             const ratio = max > 0 ? bucket.count / max : 0;
             const height = Math.max(6, Math.round(ratio * 100));
+            const start = new Date(bucket.start).toLocaleString("de-DE");
             return (
               <button
                 key={bucket.start}
                 type="button"
                 onClick={() => onSelectBucket(bucket)}
-                title={`${new Date(bucket.start).toLocaleString("de-DE")} - ${bucket.count}`}
+                title={`${start} - ${bucket.count}`}
+                aria-label={`${start}: ${bucket.count} events`}
                 className="group flex h-full items-end"
               >
                 <span
-                  className="w-3 rounded-xs bg-line transition group-hover:bg-signal dark:bg-white/10"
+                  className="w-3 rounded-xs bg-slate-500 transition group-hover:bg-signal dark:bg-slate-400"
                   style={{ height: `${height}%` }}
                 />
               </button>
