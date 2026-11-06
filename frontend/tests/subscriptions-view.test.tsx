@@ -281,4 +281,13 @@ describe("enable, disable and test", () => {
     expect(screen.queryByRole("button", { name: /Send test/ })).toBeNull();
     expect(screen.getByRole("button", { name: /^Delete EMAIL subscription/ })).toBeInTheDocument();
   });
+
+  it("meets the 24 px target on the Enabled label and its checkbox", () => {
+    renderView();
+    const checkbox = screen.getByRole("checkbox", { name: /^Enabled: SLACK subscription/ });
+    expect(checkbox.className).toContain("size-4");
+    const label = checkbox.closest("label");
+    expect(label).not.toBeNull();
+    expect((label as HTMLElement).className).toContain("min-h-6");
+  });
 });

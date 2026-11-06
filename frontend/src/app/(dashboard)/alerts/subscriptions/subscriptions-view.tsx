@@ -170,13 +170,14 @@ export function SubscriptionsView({
               <p className="mt-2 text-sm font-medium text-ink">{subscriptionRuleLabel(sub)}</p>
               <p className="mt-1 text-xs text-muted">Created {formatDate(sub.createdAt)}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <label className="flex items-center gap-1.5 text-xs text-ink">
+                <label className="flex min-h-6 items-center gap-1.5 text-xs text-ink">
                   <input
                     type="checkbox"
                     checked={sub.enabled}
                     disabled={busyId === sub.id}
                     onChange={() => void toggleEnabled(sub)}
                     aria-label={`Enabled: ${sub.channel} subscription for ${targetDescription(sub)}`}
+                    className="size-4"
                   />
                   Enabled
                 </label>
