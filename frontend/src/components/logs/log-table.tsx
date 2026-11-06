@@ -120,7 +120,7 @@ export function LogTable({
                           <span>
                             {msg.slice(0, MAX_MSG_LENGTH)}
                             <span className="text-muted">... </span>
-                            <span className="text-[10px] text-signal">click to expand</span>
+                            <span className="text-[11px] text-sky-700 dark:text-signal">click to expand</span>
                           </span>
                         ) : (
                           <span className="whitespace-pre-wrap break-all">{msg}</span>

@@ -37,6 +37,22 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+describe("UserTable: Approve button contrast", () => {
+  it("uses the slate primary pattern with a dark flip, not white on the signal colour", () => {
+    render(
+      <UserTable
+        initialUsers={[{ ...user, status: "PENDING" }]}
+        teams={[{ ...team, memberCount: 1 }] as Array<Team & { memberCount: number }>}
+        token="tok"
+      />,
+    );
+    const button = screen.getByRole("button", { name: "Approve" });
+    expect(button.className).toContain("bg-slate-950");
+    expect(button.className).toContain("dark:bg-white");
+    expect(button.className).not.toContain("bg-signal");
+  });
+});
+
 describe("UserTable: Remove is a 24x24 target (WCAG 2.5.8)", () => {
   it("gives the Remove button min-h-6 and min-w-6 sizing classes", () => {
     renderTable();
