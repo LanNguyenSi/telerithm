@@ -21,6 +21,11 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 - **`PUT` and `DELETE /logs/views/:id` no longer reveal whether a teammate's private view exists.** Any caller, OWNER and ADMIN included, used to get 403 for a teammate's private non-default view (MEMBER and VIEWER also for a teammate's private default view) and 404 for an unknown id; both now answer 404 `{ "error": "Saved view not found" }` with identical bodies, as `duplicate` does. Views the caller can read (own, shared) keep their 403 and 200/204 behaviour. OWNER and ADMIN keep the clean-up of a teammate's private default view (clear the default flag, delete), so they still learn that such a view exists. API contract change: a client that treated these 403s as "exists but not yours" now sees 404.
 - **Responses that carry a full ingest key are marked `Cache-Control: no-store`.** `POST /sources`, `POST /sources/:id/rotate-key` and every answer of the handler of `POST /sources/:id/reveal`, error answers included (the 404 for a source that vanished after the team lookup used to go out without the header).
 
+### Fixed
+
+- **The sidebar user menu now reports its state and closes on Escape.** The trigger carries `aria-expanded`, `aria-haspopup` and an `aria-controls` that points at the popover (an id per instance, since the menu is rendered in the desktop sidebar and in the mobile drawer), and Escape closes the popover and returns focus to the trigger. Inside the mobile drawer the first Escape closes only the menu and the second closes the drawer.
+- **The log volume histogram bars are visible and have accessible names.** The bars used a fill of about 1.1:1 contrast on the light card (`bg-line`); they now use `slate-500` in the light scheme (about 4.8:1) and `slate-400` in the dark scheme, and each bucket button has an `aria-label` of the form `<start time>: <count> events` (it keeps its `title`).
+
 ### Changed
 
 - Dependency updates: `renovate.json` extends the shared `github>LanNguyenSi/renovate-config` preset (weekly grouped patch/minor pull requests, 7-day minimum release age, no automerge, majors only through the Dependency Dashboard). The `overrides` entries that equal a direct dependency now reference it (`"postcss": "$postcss"` in `frontend/package.json`), so updating that dependency no longer fails with `EOVERRIDE`.
