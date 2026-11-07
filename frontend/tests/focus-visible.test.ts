@@ -99,6 +99,14 @@ describe("focus-visible outline rule in globals.css", () => {
     expect(outline![3], "outline color custom property").toBe("color-ink");
   });
 
+  it("keeps the outline off the element with an offset of at least 2 px", () => {
+    const rule = focusVisibleRule();
+    expect(rule).not.toBeNull();
+    const offset = /outline-offset:\s*([\d.]+)px/.exec(rule![1]);
+    expect(offset, "the rule must set outline-offset in px").not.toBeNull();
+    expect(Number(offset![1]), "outline offset").toBeGreaterThanOrEqual(2);
+  });
+
   it("light --color-ink reaches 3:1 against light --color-paper", () => {
     expect(contrastRatio(customProp(lightScheme(), "color-ink"), customProp(lightScheme(), "color-paper"))).toBeGreaterThanOrEqual(
       WCAG_22_FOCUS_APPEARANCE,
