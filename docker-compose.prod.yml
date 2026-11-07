@@ -5,6 +5,12 @@
 # production volumes (telerithm_pgdata, telerithm_chdata, telerithm_redisdata);
 # its own volumes are telerithm-standalone_*. scripts/clickhouse-config-guard.sh
 # fails when this name collides with the one in docker-compose.traefik.yml.
+#
+# POSTGRES_PASSWORD is required: both places that use it interpolate it with
+# the :? form, so compose refuses to start this file when the variable is unset
+# or empty instead of falling back to a default. Keep it that way
+# (scripts/compose-required-password.test.sh, a CI step, fails when a default
+# comes back).
 name: telerithm-standalone
 
 # Bounded container logs: without this the json-file driver grows unbounded
@@ -22,7 +28,7 @@ services:
     logging: *default-logging
     environment:
       POSTGRES_USER: telerithm
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telerithm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}
       POSTGRES_DB: telerithm
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -106,7 +112,7 @@ services:
       HOST: 0.0.0.0
       PORT: 4000
       NODE_ENV: production
-      DATABASE_URL: postgresql://telerithm:${POSTGRES_PASSWORD:-telerithm}@postgres:5432/telerithm?connection_limit=20&pool_timeout=10
+      DATABASE_URL: postgresql://telerithm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@postgres:5432/telerithm?connection_limit=20&pool_timeout=10
       CLICKHOUSE_URL: http://clickhouse:8123
       REDIS_URL: redis://redis:6379
       REGISTRATION_MODE: ${REGISTRATION_MODE:-approval}
