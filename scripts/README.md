@@ -277,6 +277,12 @@ bash scripts/compose-required-password.test.sh
 bash scripts/backend-migrate.test.sh
 ```
 
+`backend-prisma-cli.test.sh` first requires `prisma` to be a key of `dependencies` in `backend/package.json` (the install alone keeps it through the optional peer of `@prisma/client`, even from `devDependencies`), then does the production install of the runtime image (`npm ci --omit=dev --ignore-scripts`) in a scratch copy of `backend/package.json` and `backend/package-lock.json`, and fails when `node_modules/.bin/prisma` is absent, because `backend/scripts/migrate.sh` starts it there. It needs node and network access to the npm registry, not docker. An optional argument names another directory holding the two files. CI runs it in the "Backend entrypoint" job.
+
+```bash
+bash scripts/backend-prisma-cli.test.sh
+```
+
 ### Check the Relay Config
 
 `relay-config.test.sh` parses `.relay.yml` with js-yaml (root devDependency) the way agent-relay's loader reads it and fails when a `pre_update` or `post_update` entry is not a string or when `pre_update` is present but not a list (an empty `pre_update:` key parses as null and every deploy then fails), flags any `pre_update` entry that builds images (pre_update runs against the pre-pull tree, so such a build uses the old code; the deploy system builds the pulled commit itself), and flags any hook entry that changes the Postgres schema (`prisma db push`, `migrate deploy`, `dev`, `reset`, `resolve`; the backend entrypoint is the only schema writer, read-only `migrate diff` and `migrate status` pass). A file without hooks is accepted, which is the committed state. Self-check lists of build and non-build and of schema-changing and read-only samples guard the matchers. CI runs it in the "Relay config" job.
