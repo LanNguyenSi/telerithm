@@ -266,12 +266,12 @@ export function Sidebar({ user }: SidebarProps) {
   return (
     <>
       {/* Desktop sidebar */}
-      <aside ref={asideRef} className="fixed inset-y-0 left-0 z-40 hidden w-52 flex-col border-r border-white/6 bg-[#0f1419] lg:flex">
+      <aside ref={asideRef} className="fixed inset-y-0 left-0 z-40 hidden w-52 flex-col border-r border-white/6 bg-[#0f1419] focus-on-dark lg:flex">
         {navContent}
       </aside>
 
       {/* Mobile top bar */}
-      <div ref={topBarRef} className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-line bg-[#0f1419] px-4 lg:hidden">
+      <div ref={topBarRef} className="fixed inset-x-0 top-0 z-40 flex h-14 items-center justify-between border-b border-line bg-[#0f1419] focus-on-dark px-4 lg:hidden">
         <p className="font-mono text-[10px] uppercase tracking-[0.4em] text-slate-400">Telerithm</p>
         <button
           type="button"
@@ -308,7 +308,7 @@ export function Sidebar({ user }: SidebarProps) {
             aria-modal="true"
             aria-label="Navigation menu"
             tabIndex={-1}
-            className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col bg-[#0f1419] shadow-2xl lg:hidden"
+            className="fixed inset-y-0 left-0 z-50 flex w-60 flex-col bg-[#0f1419] focus-on-dark shadow-2xl lg:hidden"
           >
             {navContent}
           </div>

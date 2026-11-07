@@ -105,3 +105,12 @@
   outline: 2px solid var(--color-ink);
   outline-offset: 2px;
 }
+
+/*
+  The sidebar surfaces are always dark (#0f1419), so in the light scheme
+  var(--color-ink) would draw an invisible ring there: these surfaces get the
+  light slate instead. Unlayered and after the rule above so it wins.
+*/
+.focus-on-dark :focus-visible {
+  outline-color: #e2e8f0;
+}

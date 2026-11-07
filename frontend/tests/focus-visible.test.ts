@@ -4,6 +4,10 @@ import { describe, expect, it } from "vitest";
 
 const globalsCss = readFileSync(resolve(process.cwd(), "src/app/globals.css"), "utf8");
 const css = globalsCss.replace(/\/\*[\s\S]*?\*\//g, "");
+const sidebarTsx = readFileSync(
+  resolve(process.cwd(), "src/components/dashboard/sidebar.tsx"),
+  "utf8",
+);
 
 /** End index (exclusive) of the last top-level `@layer ... { ... }` block, or -1. */
 function lastLayerEnd(): number {
@@ -24,6 +28,19 @@ function lastLayerEnd(): number {
 
 function focusVisibleRule(): RegExpMatchArray | null {
   return /:focus-visible\s*\{([^}]*)\}/.exec(css);
+}
+
+function focusOnDarkRule(): RegExpMatchArray | null {
+  return /\.focus-on-dark\s+:focus-visible\s*\{([^}]*)\}/.exec(css);
+}
+
+const DARK_SURFACE = "#0f1419";
+
+function focusOnDarkOutlineColor(block: RegExpMatchArray | null): string {
+  if (!block) throw new Error("globals.css has no .focus-on-dark :focus-visible rule");
+  const value = /outline-color:\s*(#[0-9a-fA-F]{6})\s*;?/.exec(block[1])?.[1];
+  if (!value) throw new Error("the .focus-on-dark rule must set a six digit hex outline-color");
+  return value.toLowerCase();
 }
 
 function customProp(block: RegExpMatchArray | null, name: string): string {
@@ -98,5 +115,44 @@ describe("focus-visible outline rule in globals.css", () => {
     expect(contrastRatio(customProp(lightScheme(), "color-ink"), WHITE)).toBeGreaterThanOrEqual(
       WCAG_22_FOCUS_APPEARANCE,
     );
+  });
+});
+
+describe("focus-on-dark override for the dark navigation surfaces", () => {
+  it("declares a .focus-on-dark :focus-visible rule", () => {
+    expect(focusOnDarkRule(), "globals.css must declare a .focus-on-dark :focus-visible rule").not.toBeNull();
+  });
+
+  it("declares it unlayered, after the last @layer block", () => {
+    const rule = focusOnDarkRule();
+    expect(rule, "globals.css must declare a .focus-on-dark :focus-visible rule").not.toBeNull();
+    expect(rule!.index!, "rule must start after the last @layer block").toBeGreaterThan(lastLayerEnd());
+  });
+
+  it("comes after the plain :focus-visible rule", () => {
+    const dark = focusOnDarkRule();
+    const plain = focusVisibleRule();
+    expect(dark, "globals.css must declare a .focus-on-dark :focus-visible rule").not.toBeNull();
+    expect(plain, "globals.css must declare a :focus-visible rule").not.toBeNull();
+    expect(
+      dark!.index!,
+      "the .focus-on-dark rule must come after the plain :focus-visible rule",
+    ).toBeGreaterThan(plain!.index!);
+  });
+
+  it("sets an outline-color that reaches 3:1 against the #0f1419 surface", () => {
+    const color = focusOnDarkOutlineColor(focusOnDarkRule());
+    expect(contrastRatio(color, DARK_SURFACE)).toBeGreaterThanOrEqual(WCAG_22_FOCUS_APPEARANCE);
+  });
+
+  it("marks every bg-[#0f1419] element in sidebar.tsx with focus-on-dark", () => {
+    const surfaces = [...sidebarTsx.matchAll(/className="[^"]*bg-\[#0f1419\][^"]*"/g)];
+    expect(surfaces.length, "expected three dark surface elements").toBe(3);
+    for (const surface of surfaces) {
+      expect(
+        surface[0],
+        "every bg-[#0f1419] element must also carry focus-on-dark",
+      ).toContain("focus-on-dark");
+    }
   });
 });
