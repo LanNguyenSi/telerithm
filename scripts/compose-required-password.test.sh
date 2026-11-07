@@ -33,9 +33,19 @@
 # When docker compose is available the check also renders the file, which is
 # client-side and needs no daemon: with POSTGRES_PASSWORD unset
 # `docker compose config` must fail and name the variable, and with a sentinel
-# value both rendered uses must carry it. Without docker the section prints a
-# visible skip line; the ClickHouse config job, which has Docker, runs this file
-# with COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER=1, which turns that skip into a
+# value both rendered uses must carry it. The sentinel must also appear exactly
+# twice in the whole rendered document, once per required use: a third
+# interpolation of the variable elsewhere in the file (a defaulted or a bare use
+# on another service, which the two per-use rules cannot see) renders it a third
+# time and fails there. A third use written as a literal stays out of scope:
+# nothing in the rendered document says where a literal came from. render passes
+# --env-file /dev/null, so a .env next to the compose file is never read as the
+# source of the variable, and a failure message quotes compose's stderr and never
+# its rendered output, so a value that a host keeps in a real .env cannot be
+# printed by this test. A control puts a .env in the compose directory to keep
+# both of those true. Without docker the section prints a visible skip line; the
+# ClickHouse config job, which has Docker, runs this file with
+# COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER=1, which turns that skip into a
 # failure, so the behaviour assertion always runs somewhere in CI.
 #
 # The controls run the same check on mutated copies and must fail with the
@@ -49,6 +59,10 @@ FILE="docker-compose.prod.yml"
 # A password that is not the old fallback, so a rendered use that still says
 # telerithm cannot pass for a substituted one.
 SENTINEL="ci-sentinel-not-the-fallback"
+# The value of the .env of the control below. Not the sentinel, so a render that
+# read that file instead of refusing cannot pass for a substituted sentinel, and
+# the control can require this value to be absent from the test output.
+DOTENV_VALUE="ci-value-from-a-dotenv-that-must-not-appear"
 REQUIRE_DOCKER="${COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER:-0}"
 
 # The shipped line of each use, as the mutation target of the controls.
@@ -148,8 +162,9 @@ fresh_copy() {
 }
 
 # compose_dir <name>: a fresh copy of the file in a directory of its own, so a
-# compose run never picks up an .env file or another compose file, and prints
-# the directory.
+# compose run never picks up another compose file, and prints the directory. A
+# .env is kept away by the --env-file /dev/null of render, which is what lets the
+# control below put one in such a directory on purpose.
 compose_dir() {
   local dir="$work/compose/$1"
   rm -rf "$dir"
@@ -183,26 +198,33 @@ expect_fail() {
 # render <dir> <env-args...>: the rendered compose config of that directory, so
 # that the env arguments (a -u or a POSTGRES_PASSWORD=...) are the only source of
 # the variable; stderr goes to $work/render.stderr for the failure messages.
+# --env-file /dev/null: without it compose auto-loads an .env next to the compose
+# file, which is both a second source of the variable (the run below that unsets
+# it would be accepted on a host that has one) and a way for a real value of that
+# host to reach the output of this test.
 render() {
   local dir="$1"
   shift
-  ( cd "$dir" && env "$@" docker compose -f "$FILE" config 2>"$work/render.stderr" )
+  ( cd "$dir" && env "$@" docker compose --env-file /dev/null -f "$FILE" config 2>"$work/render.stderr" )
 }
 
 # check_docker <dir>: behaviour of real compose on that copy. Prints one FAIL
 # line per problem, returns 1 when any. The caller must have POSTGRES_PASSWORD
 # exported, so that the unset run below has to clear it itself.
 check_docker() {
-  local dir="$1" out log
+  local dir="$1" err out
 
   if out="$(render "$dir" -u POSTGRES_PASSWORD)"; then
-    printf 'FAIL: docker compose config accepted %s with POSTGRES_PASSWORD unset (it must refuse): %s\n' "$FILE" "$out"
+    # No rendered output here: a render that did pick up a value from a host's
+    # .env must not print it. The message stays identifiable by its tail.
+    printf 'FAIL: docker compose config accepted %s with POSTGRES_PASSWORD unset (it must refuse)\n' "$FILE"
     return 1
   fi
-  log="$out
-$(cat "$work/render.stderr" 2>/dev/null)"
-  if ! grep -qF -- "POSTGRES_PASSWORD" <<<"$log"; then
-    printf 'FAIL: docker compose config failed on %s without naming POSTGRES_PASSWORD: %s\n' "$FILE" "$log"
+  # A refused run prints nothing on stdout, so only stderr is quoted in messages.
+  err="$(cat "$work/render.stderr" 2>/dev/null || true)"
+  if ! grep -qF -- "POSTGRES_PASSWORD" <<<"$out
+$err"; then
+    printf 'FAIL: docker compose config failed on %s without naming POSTGRES_PASSWORD: %s\n' "$FILE" "$err"
     return 1
   fi
 
@@ -222,7 +244,8 @@ except ImportError:
     sys.exit(1)
 
 with open(path) as fh:
-    doc = yaml.safe_load(fh)
+    text = fh.read()
+doc = yaml.safe_load(text)
 services = (doc or {}).get("services") or {}
 env = (services.get("postgres") or {}).get("environment") or {}
 url = (services.get("backend") or {}).get("environment") or {}
@@ -239,6 +262,16 @@ got = url.get("DATABASE_URL") if isinstance(url, dict) else None
 # not this check's business, so it is not compared.
 if not isinstance(got, str) or not got.startswith(expected_url_prefix) or got.count(sentinel) != 1:
     print(f"FAIL: the rendered {name} does not render the sentinel for services.backend.environment.DATABASE_URL (got {got!r})")
+    fails += 1
+# The sentinel must appear exactly twice in the whole rendered document, once per
+# required use. The two checks above only read those two uses, so a third
+# interpolation of POSTGRES_PASSWORD anywhere else in the file (a defaulted or a
+# bare one on another service) passes them and is caught only here, by its third
+# rendering of the sentinel. A third use written as a literal is out of scope:
+# the rendered document does not say where a literal came from.
+occurrences = text.count(sentinel)
+if occurrences != 2:
+    print(f"FAIL: the rendered {name} carries the sentinel {occurrences} times in the whole document, expected it exactly twice, once per required use")
     fails += 1
 sys.exit(1 if fails else 0)
 PY
@@ -266,8 +299,8 @@ fresh_copy
 mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telerithm}'
 expect_fail "default back (:-) on the postgres environment" "lets POSTGRES_PASSWORD fall back to a default"
 
-# Default back on the backend DATABASE_URL, with the :? dropped on the other line
-# so this line alone is the problem.
+# Default back on the backend DATABASE_URL. The postgres environment line keeps
+# its :?, so this line alone is what the check has to catch.
 fresh_copy
 mutate "$work/tree/$FILE" "$URL_USE" 'postgresql://telerithm:${POSTGRES_PASSWORD:-telerithm}@postgres'
 expect_fail "default back (:-) on the backend DATABASE_URL" "lets POSTGRES_PASSWORD fall back to a default"
@@ -282,8 +315,10 @@ fresh_copy
 mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}'
 expect_fail "bare interpolation without :?" "must require POSTGRES_PASSWORD with the"
 
-# The same without the braces: a shell form compose does not interpolate at all,
-# so the container would get the literal text.
+# The same without the braces: Compose does interpolate this form (measured with
+# `docker compose config`: the value when the variable is set, a blank string and
+# a warning when it is not), but it requires nothing, so the container starts with
+# that value or with an empty password.
 fresh_copy
 mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: $POSTGRES_PASSWORD'
 expect_fail "shell form without braces" "must require POSTGRES_PASSWORD with the"
@@ -411,6 +446,23 @@ if docker compose version >/dev/null 2>&1; then
   mutate "$dir/$FILE" "$URL_USE" 'postgresql://telerithm:${POSTGRES_PASSWORD}@postgres'
   expect_docker_fail "docker check catches a file compose accepts unset" "$dir" "with POSTGRES_PASSWORD unset (it must refuse)"
 
+  # A .env next to the compose file must not be the source of the variable and its
+  # value must not reach the output of this test: render passes --env-file
+  # /dev/null, so compose never reads that file. Without that flag compose
+  # auto-loads it, the unset run of check_docker is accepted instead of refused,
+  # and a message that quoted the rendered config would print the value a real
+  # .env holds. The messages of check_docker therefore quote compose's stderr only,
+  # and the branch that reports the value prints no output of the check at all.
+  dir="$(compose_dir dotenv)"
+  printf 'POSTGRES_PASSWORD=%s\n' "$DOTENV_VALUE" > "$dir/.env"
+  if out="$(check_docker "$dir" 2>&1)" && ! grep -qF -- "$DOTENV_VALUE" <<<"$out"; then
+    ok ".env in the compose directory is not read: the unset refusal stands and the output holds no value from that file"
+  elif grep -qF -- "$DOTENV_VALUE" <<<"$out"; then
+    bad ".env in the compose directory: the docker check output holds the value from that file (it is not quoted here for that reason)"
+  else
+    bad ".env in the compose directory: docker check failed on that copy: $out"
+  fi
+
   # A compose run that fails for another reason must not be mistaken for the
   # refusal this check expects: a broken file with no POSTGRES_PASSWORD in it.
   dir="$(compose_dir broken-schema)"
@@ -440,6 +492,22 @@ if docker compose version >/dev/null 2>&1; then
   dir="$(compose_dir sentinel-twice)"
   mutate "$dir/$FILE" "$URL_USE" "postgresql://telerithm:\${POSTGRES_PASSWORD:?m}@postgres:5432/${SENTINEL}"
   expect_docker_fail "docker check requires the sentinel to be the interpolated password only" "$dir" "does not render the sentinel for services.backend.environment.DATABASE_URL"
+
+  # A third interpolation of POSTGRES_PASSWORD elsewhere in the file: both per-use
+  # rules still hold on it, so only the count over the whole rendered document
+  # sees it. The two forms that pass the per-use rules, a defaulted and a bare
+  # one, on the backend. A third use written as a literal stays out of scope: the
+  # count would catch the sentinel itself in a literal, but nothing in the
+  # rendered document says where any other literal came from.
+  dir="$(compose_dir third-defaulted)"
+  mutate "$dir/$FILE" 'REDIS_URL: redis://redis:6379' "REDIS_URL: redis://redis:6379
+      PGPASSWORD: \${POSTGRES_PASSWORD:-telerithm}"
+  expect_docker_fail "docker check catches a defaulted third use of the variable" "$dir" "carries the sentinel 3 times in the whole document"
+
+  dir="$(compose_dir third-bare)"
+  mutate "$dir/$FILE" 'REDIS_URL: redis://redis:6379' "REDIS_URL: redis://redis:6379
+      PGPASSWORD: \${POSTGRES_PASSWORD}"
+  expect_docker_fail "docker check catches a bare third use of the variable" "$dir" "carries the sentinel 3 times in the whole document"
 
   # The use gone from the rendered document (a comment in its place): a value
   # that is not a string at all is not the sentinel either.
