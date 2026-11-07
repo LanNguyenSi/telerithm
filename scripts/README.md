@@ -269,7 +269,7 @@ bash scripts/clickhouse-config-guard.test.sh
 bash scripts/backend-migrate.test.sh
 ```
 
-`backend-prisma-cli.test.sh` does the production install of the runtime image (`npm ci --omit=dev --ignore-scripts`) in a scratch copy of `backend/package.json` and `backend/package-lock.json`, and fails when `node_modules/.bin/prisma` is absent, because `backend/scripts/migrate.sh` starts it there. It needs node and network access to the npm registry, not docker. An optional argument names another directory holding the two files. CI runs it in the "Backend entrypoint" job.
+`backend-prisma-cli.test.sh` first requires `prisma` to be a key of `dependencies` in `backend/package.json` (the install alone keeps it through the optional peer of `@prisma/client`, even from `devDependencies`), then does the production install of the runtime image (`npm ci --omit=dev --ignore-scripts`) in a scratch copy of `backend/package.json` and `backend/package-lock.json`, and fails when `node_modules/.bin/prisma` is absent, because `backend/scripts/migrate.sh` starts it there. It needs node and network access to the npm registry, not docker. An optional argument names another directory holding the two files. CI runs it in the "Backend entrypoint" job.
 
 ```bash
 bash scripts/backend-prisma-cli.test.sh
