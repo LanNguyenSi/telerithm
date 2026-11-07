@@ -21,7 +21,7 @@ backend/
       ingestion/          Error fingerprinting (fingerprint.ts)
       streaming/          SSE live tail
       team/               Tenancy, sources, invites, RBAC
-      notification/       Channels: webhook, slack, msteams, email (log only)
+      notification/       Channels: webhook, msteams, email (log only); Slack lives in notification-dispatcher.ts
       subscription/       Notification subscriptions
       dashboard/          Overview dashboard
       log-view/           Saved views
