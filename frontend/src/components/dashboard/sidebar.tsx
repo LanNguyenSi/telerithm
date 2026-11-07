@@ -79,6 +79,8 @@ function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(href + "/");
 }
 
+const drawerId = "mobile-nav-drawer";
+
 function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => void }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -94,11 +96,19 @@ function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => 
     }
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
-      // Capture phase: inside the mobile drawer the first Escape only closes
-      // the menu, the drawer's own Escape handler then sees the second one.
+      setOpen(false);
+      // Stop Escape only when it comes from inside the menu or the sidebar or
+      // drawer that contains it; an Escape aimed elsewhere closes the menu and
+      // keeps traveling to the other listeners. Inside the mobile drawer the
+      // first Escape therefore closes only the menu, and the drawer's own
+      // Escape handler sees the second one. Focus returns to the trigger only
+      // in the handled case: elsewhere the focus belongs to another consumer.
+      const target = e.target instanceof Node ? e.target : null;
+      const host = ref.current?.closest(`aside, #${drawerId}`) ?? null;
+      const handled = target !== null && (ref.current?.contains(target) === true || host?.contains(target) === true);
+      if (!handled) return;
       e.stopPropagation();
       e.preventDefault();
-      setOpen(false);
       triggerRef.current?.focus();
     }
     document.addEventListener("mousedown", handleClick);
@@ -279,7 +289,7 @@ export function Sidebar({ user }: SidebarProps) {
           onClick={() => setMobileOpen((v) => !v)}
           aria-label="Toggle navigation"
           aria-expanded={mobileOpen}
-          aria-controls="mobile-nav-drawer"
+          aria-controls={drawerId}
           className="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition hover:text-white"
         >
           {mobileOpen ? (
@@ -302,7 +312,7 @@ export function Sidebar({ user }: SidebarProps) {
         <>
           <div className="fixed inset-0 z-40 bg-black/50 lg:hidden" onClick={() => setMobileOpen(false)} />
           <div
-            id="mobile-nav-drawer"
+            id={drawerId}
             ref={drawerRef}
             role="dialog"
             aria-modal="true"

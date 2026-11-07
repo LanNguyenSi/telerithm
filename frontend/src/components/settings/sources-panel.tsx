@@ -28,34 +28,44 @@ function describeFailure(action: "reveal" | "copy", err: unknown): string {
  * only on click), keeps it in this component's state and shows it; Hide drops
  * it again. Copy fetches the key the same way and writes it to the clipboard
  * without showing it or keeping it, unless the row is already revealed. The
- * key is never stored anywhere else: a hide, a changed hint, a rotation (the
- * panel remounts the row) and an unmount all clear it, and a reply that
- * arrives after any of those is dropped. Copy feedback is transient ("Copied"
- * reverts on a timer) and single sided (a failure clears "Copied" and a new
- * attempt clears the stale error).
+ * key is never stored anywhere else: a hide and an unmount clear it, and a
+ * reply that arrives after either is dropped. A source whose key changed (a
+ * rotation here or a new hint from the API) never reuses this instance: the
+ * panel keys the row on the hint too, so the row remounts and starts fresh;
+ * a render with the new hint can therefore not show an unmasked key of the
+ * old one, and an in-flight copy of the old key cannot mark the new row
+ * Copied (its component is already unmounted). Copy feedback is transient
+ * ("Copied" reverts on a timer) and single sided (a failure clears "Copied"
+ * and a new attempt clears the stale error); the timer lives in a ref so a
+ * second copy restarts the full 2 s, and an unmount clears it.
  */
 function SourceKey({ id, name, keyHint, token }: { id: string; name: string; keyHint: string; token: string }) {
   const [fullKey, setFullKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Bumped whenever an in-flight request must be ignored: hide, new hint. (An
-  // unmount needs no bump: the state goes with the component.)
+  // Bumped whenever an in-flight request must be ignored: a hide. (An unmount
+  // needs no bump: the state goes with the component. A key change remounts
+  // the row, so the in-flight request of the old row lands on nothing.)
   const generation = useRef(0);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    generation.current += 1;
-    setFullKey(null);
-    setLoading(false);
-    setCopied(false);
-    setError(null);
-  }, [keyHint]);
+  const clearCopiedTimer = () => {
+    if (copiedTimer.current !== null) {
+      clearTimeout(copiedTimer.current);
+      copiedTimer.current = null;
+    }
+  };
 
-  useEffect(() => {
-    if (!copied) return;
-    const timer = setTimeout(() => setCopied(false), COPIED_RESET_MS);
-    return () => clearTimeout(timer);
-  }, [copied]);
+  // The row is remounted whenever the hint changes (it is part of the row's
+  // React key), so there is nothing to reset on a keyHint change here; only
+  // the pending "Copied" revert must not outlive the row.
+  useEffect(
+    () => () => {
+      if (copiedTimer.current !== null) clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
 
   /** Asks the API for the key; resolves null when the reply is stale or failed (error already set). */
   const fetchKey = async (action: "reveal" | "copy"): Promise<string | null> => {
@@ -63,6 +73,7 @@ function SourceKey({ id, name, keyHint, token }: { id: string; name: string; key
     setLoading(true);
     setError(null);
     setCopied(false);
+    clearCopiedTimer();
     try {
       const { apiKey } = await revealSourceKey(id, token);
       return ticket === generation.current ? apiKey : null;
@@ -91,8 +102,17 @@ function SourceKey({ id, name, keyHint, token }: { id: string; name: string; key
     try {
       await navigator.clipboard.writeText(apiKey);
       setCopied(true);
+      // A new copy restarts the full revert window, even while a previous
+      // "Copied" is still showing (setCopied(true) alone would not re-run
+      // an effect, so the timer is held in a ref and re-armed here).
+      if (copiedTimer.current !== null) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => {
+        copiedTimer.current = null;
+        setCopied(false);
+      }, COPIED_RESET_MS);
     } catch {
       setCopied(false);
+      clearCopiedTimer();
       setError("Copy failed. Reveal the key and copy it manually.");
     }
   };
@@ -233,8 +253,9 @@ export function SourcesPanel({
   const [rotating, setRotating] = useState<Source | null>(null);
   const [rotated, setRotated] = useState<Source | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  // Per source, how often its key was rotated here. It is part of the row's React
-  // key, so a rotation remounts the row and drops any key it had revealed.
+  // Per source, how often its key was rotated here. Together with the hint it
+  // is part of the row's React key, so a rotation (or any new hint from the
+  // list) remounts the row and drops any key it had revealed or copied.
   const [rotations, setRotations] = useState<Record<string, number>>({});
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -388,7 +409,7 @@ export function SourcesPanel({
                 </div>
                 {source.keyHint ? (
                   <SourceKey
-                    key={`${source.id}:${rotations[source.id] ?? 0}`}
+                    key={`${source.id}:${source.keyHint}:${rotations[source.id] ?? 0}`}
                     id={source.id}
                     name={source.name}
                     keyHint={source.keyHint}

@@ -372,6 +372,72 @@ describe("SourcesPanel: key hint and reveal in the list", () => {
     expect(view.container.textContent).not.toMatch(/lf_existing_key/);
   });
 
+  it("never renders an unmasked key of a source whose hint changed, not even for one frame", async () => {
+    const view = renderPanel("OWNER");
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    await screen.findByRole("button", { name: "Hide API key of web" });
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(FULL_KEY);
+
+    view.rerender(
+      <SourcesPanel
+        sources={[{ ...source, keyHint: "lf_****_new" }]}
+        teamId="team-1"
+        token="tok"
+        role="OWNER"
+      />,
+    );
+
+    // The same committed render that carries the new hint is already a fresh
+    // row: it shows the masked hint and never the unmasked old key.
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent(/^lf_\*\*\*\*_new$/);
+    expect(screen.getByRole("button", { name: "Reveal API key of web" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(view.container.textContent).not.toMatch(/lf_existing_key/);
+    expect(view.container.textContent).not.toMatch(/lf_new_full/);
+
+    // The new key arrives only through a fresh reveal of the new row.
+    mocks.revealSourceKey.mockResolvedValueOnce({ apiKey: "lf_new_full" });
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    await screen.findByRole("button", { name: "Hide API key of web" });
+    expect(screen.getByTestId("source-api-key")).toHaveTextContent("lf_new_full");
+  });
+
+  it("does not mark the row Copied when a copy of the old key lands after the hint changed", async () => {
+    let resolveWrite!: () => void;
+    const writeText = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveWrite = resolve;
+        }),
+    );
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const view = renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(FULL_KEY));
+
+    view.rerender(
+      <SourcesPanel
+        sources={[{ ...source, keyHint: "lf_****_new" }]}
+        teamId="team-1"
+        token="tok"
+        role="OWNER"
+      />,
+    );
+    await act(async () => {
+      resolveWrite();
+      await Promise.resolve();
+    });
+
+    // The copy of the old key belonged to the previous row: the new row shows
+    // neither its "Copied" label nor its live-region announcement.
+    expect(screen.getByRole("button", { name: "Copy API key of web" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copied API key of web" })).toBeNull();
+    expect(screen.getByTestId("source-key-status")).toBeEmptyDOMElement();
+  });
+
   it("drops the revealed key when the source's key is rotated, even before the list refreshes", async () => {
     mocks.rotateSourceKey.mockResolvedValue({ source: { ...source, apiKey: "lf_rotated" } });
     const { container } = renderPanel("OWNER");
@@ -498,6 +564,38 @@ describe("SourcesPanel: the copy feedback of a listed key is transient and singl
     expect(writeText).toHaveBeenCalledTimes(2);
     expect(writeText).toHaveBeenNthCalledWith(2, FULL_KEY);
     expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+  });
+
+  it("restarts the full revert window when a revealed key is copied again within it", async () => {
+    vi.useFakeTimers();
+    stubClipboard("ok", "ok");
+    renderPanel("OWNER");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal API key of web" }));
+    await settle();
+    fireEvent.click(copyButton());
+    await settle();
+    expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+
+    // A revealed copy fetches nothing, so the label is already "Copied" and a
+    // plain setCopied(true) would not restart the revert: at 2.5 s from the
+    // first copy only a restarted timer can still show "Copied".
+    fireEvent.click(screen.getByRole("button", { name: "Copied API key of web" }));
+    await settle();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.getByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1001);
+    });
+    expect(screen.getByRole("button", { name: "Copy API key of web" })).toBeInTheDocument();
   });
 
   it("clears the failure note when a later copy succeeds", async () => {
