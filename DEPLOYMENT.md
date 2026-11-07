@@ -414,26 +414,32 @@ docker compose -f docker-compose.traefik.yml exec postgres \
   pg_dump -U telerithm telerithm > backup_$(date +%Y%m%d).sql
 ```
 
-Restore into an empty target, in this order, with the backend stopped:
+Restore into an empty target, in this order, with the backend stopped from step 2 on (step 1 reads the live database while it is still up):
 
 ```bash
-# 1. Stop the backend (see the note below)
+# 1. Check the dump and keep what is there now
+test -s backup.sql
+docker compose -f docker-compose.traefik.yml exec -T postgres \
+  pg_dump -U telerithm telerithm > pre-restore.sql
+test -s pre-restore.sql
+
+# 2. Stop the backend (see the note below)
 docker compose -f docker-compose.traefik.yml stop backend
 
-# 2. Recreate the database empty
+# 3. Recreate the database empty
 docker compose -f docker-compose.traefik.yml exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U telerithm -d postgres \
   -c 'DROP DATABASE telerithm' -c 'CREATE DATABASE telerithm OWNER telerithm'
 
-# 3. Restore
-cat backup.sql | docker compose -f docker-compose.traefik.yml exec -T postgres \
-  psql -v ON_ERROR_STOP=1 --single-transaction -U telerithm telerithm
+# 4. Restore
+docker compose -f docker-compose.traefik.yml exec -T postgres \
+  psql -v ON_ERROR_STOP=1 --single-transaction -U telerithm telerithm < backup.sql
 
-# 4. Bring the backend back
+# 5. Bring the backend back
 docker compose -f docker-compose.traefik.yml start backend
 ```
 
-The order and the two `psql` flags are what make a failed restore visible. The backend is stopped first because it applies the Prisma migrations at every start (see [Database migrations](#database-migrations)): a backend that comes up mid-restore migrates a half-restored database, and while it is up its own connection also makes step 2 fail at `DROP DATABASE`. The dump is a plain `pg_dump` of the whole `telerithm` database, so against a non-empty target its `CREATE` statements fail on the existing objects and its `COPY` statements fail or partly apply against the existing rows; plain `psql` prints those errors and still exits 0, so the operator reads a green command over a database that holds a mixture of old and new rows. `-v ON_ERROR_STOP=1` makes psql exit non-zero at the first error instead, and `--single-transaction` wraps the whole restore, so that error rolls back and leaves the empty database from step 2 rather than a partial one. A scratch test of a backup starts from empty volumes with the backend stopped, so it exercises this path and not the partial-apply one.
+The order, the two `test -s` checks, the `< backup.sql` redirect on the restore and the two `psql` flags are what make a failed restore visible, and they only work if you stop at the first command that fails: bring the backend back only after step 4 exited 0. `test -s backup.sql` is what catches an empty or missing dump before anything is destroyed, and it has to be a check of its own: psql exits 0 on empty input (measured), and a pipe reports only its last command's status, so the form this section used before (a `cat` of the dump into psql) read as a green restore over an empty database whenever `backup.sql` was missing or the `gunzip -c` that produced it had failed; `< backup.sql` makes an unreadable dump fail step 4 instead. Step 1 also copies what is in the database now to `pre-restore.sql` before step 3 drops it, and `test -s pre-restore.sql` checks that copy, so a `pg_dump` that wrote nothing is caught while the live database is still there; if the restore then fails, repeat step 4 with `pre-restore.sql` to go back. A failed restore leaves the database empty (step 3 recreated it, step 4's transaction rolled back), so the backend stays stopped: `backend/scripts/migrate.sh` treats an empty database as new, applies the baseline migration and the server comes up blank and healthy, so nothing later reports the failure. The backend is stopped before step 3 because it applies the Prisma migrations at every start (see [Database migrations](#database-migrations)): a backend that comes up mid-restore migrates a half-restored database, and while it is up its own connection also makes step 3 fail at `DROP DATABASE`. The dump is a plain `pg_dump` of the whole `telerithm` database, so against a non-empty target its `CREATE` statements fail on the existing objects and its `COPY` statements fail on tables with a unique key and append duplicates on tables without one; each `COPY` is atomic, so a table gains all of its rows or none. Without the two flags psql prints those errors and still exits 0, so the operator reads a green command over a database that holds a mixture of old and new rows; `-v ON_ERROR_STOP=1` makes psql exit non-zero at the first error instead, and `--single-transaction` wraps the whole restore, so that error rolls back and leaves the empty database from step 3 rather than a partial one. A scratch test of a backup starts from empty volumes with the backend stopped, so it exercises this path and not the partial-apply one. `pre-restore.sql` may be left where it is: `require-clean-tree` in the Makefile lists tracked files only (`git status --porcelain --untracked-files=no`) and `.relay.yml` has no clean-tree check, so an untracked file in the checkout blocks neither `make deploy` nor a relay deploy; keep it outside the checkout only when the checkout itself must hold nothing but tracked files.
 
 ### ClickHouse
 
@@ -471,7 +477,7 @@ docker compose -f docker-compose.traefik.yml exec postgres \
 
 ### Disk (monthly)
 
-`make deploy` builds with `--pull --no-cache`, and so does the manual rebuild under [Updating](#updating), so a deploy writes a fresh copy of every layer instead of reusing what the last build left. The old layers, the build cache, the container logs and the data volumes all live on the host's root filesystem: the `telerithm_pgdata`, `telerithm_chdata` and `telerithm_redisdata` volumes and (by default) `/var/lib/docker` are on it, and a backup directory on the same disk shares it too. Nothing in the deploy path prunes anything, so a deploy on a full disk fails, and ClickHouse is the first service to break when the disk runs out: a MergeTree merge and its system log tables both need free space (see [docs/okf/clickhouse-retention-and-memory-limits.md](docs/okf/clickhouse-retention-and-memory-limits.md), which records a system log table that reached 133 GiB). Look before you clean:
+`make deploy` builds with `--pull --no-cache`, and so does the manual rebuild under [Updating](#updating): those two are what write a fresh copy of every layer instead of reusing what the last build left, while a deploy-panel / agent-relay deploy builds from the build cache (see [Updating](#updating)) and reuses it. The old layers, the build cache, the container logs and the data volumes all live on the host's root filesystem: the `telerithm_pgdata`, `telerithm_chdata` and `telerithm_redisdata` volumes and (by default) `/var/lib/docker` are on it, and a backup directory on the same disk shares it too. Nothing in the deploy path prunes anything, so a deploy on a full disk fails, and ClickHouse is the first service to break when the disk runs out: a MergeTree merge and its system log tables both need free space (see [docs/okf/clickhouse-retention-and-memory-limits.md](docs/okf/clickhouse-retention-and-memory-limits.md), which records a system log table that reached 133 GiB). Look before you clean:
 
 ```bash
 # Space left on the root filesystem, and what Docker holds
@@ -485,7 +491,7 @@ docker image prune -f
 docker builder prune -f --filter until=168h
 ```
 
-What each one leaves alone. `docker image prune -f` removes only dangling images, the untagged images a newer build replaced: the image every running container was built from keeps its tag and stays, and so does every other tagged image, including the base images. `docker builder prune -f --filter until=168h` removes only build cache entries created more than 7 days ago, so the cache of this week's builds is still there. Neither command touches a volume: `telerithm_pgdata`, `telerithm_chdata` and `telerithm_redisdata` and everything under the backup directory are untouched, and neither removes a container (a stopped container's writable layer stays until the container itself is removed). Nothing here shrinks the data or the backups; the 30-day TTL of the `logs` table (top of this section) and the retention in `scripts/backup.sh` are what keep those bounded.
+What each one leaves alone. `docker image prune -f` removes only dangling images, the untagged images a newer build replaced: the image every running container was built from keeps its tag and stays, and so does every other tagged image, including the base images. `docker builder prune -f --filter until=168h` removes only build cache entries created more than 7 days ago, so the cache of this week's builds is still there; it also runs without `-a`, which is the flag that would remove every unused cache entry rather than only the dangling ones, so what it reclaims can be less than the build cache total `docker system df` reports. Neither command touches a volume: `telerithm_pgdata`, `telerithm_chdata` and `telerithm_redisdata` and everything under the backup directory are untouched, and neither removes a container (a stopped container's writable layer stays until the container itself is removed). Nothing here shrinks the data or the backups; the 30-day TTL of the `logs` table (top of this section) and the retention in `scripts/backup.sh` are what keep those bounded.
 
 ## Troubleshooting
 
