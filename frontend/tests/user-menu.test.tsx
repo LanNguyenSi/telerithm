@@ -65,6 +65,58 @@ describe("UserMenu trigger and popover", () => {
     expect(document.activeElement).toBe(document.body);
   });
 
+  it("stops an Escape aimed at the menu so no other listener sees it", () => {
+    render(<Sidebar user={admin} />);
+    const trigger = desktopTrigger();
+    fireEvent.click(trigger);
+    const spy = vi.fn();
+    document.addEventListener("keydown", spy);
+    try {
+      fireEvent.keyDown(popover(trigger)!, { key: "Escape" });
+    } finally {
+      document.removeEventListener("keydown", spy);
+    }
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(spy).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("handles an Escape from the sidebar nav containing the menu without passing it on", () => {
+    render(<Sidebar user={admin} />);
+    const trigger = desktopTrigger();
+    fireEvent.click(trigger);
+    const navLink = screen.getByRole("link", { name: "Logs" });
+    navLink.focus();
+    const spy = vi.fn();
+    document.addEventListener("keydown", spy);
+    try {
+      fireEvent.keyDown(navLink, { key: "Escape" });
+    } finally {
+      document.removeEventListener("keydown", spy);
+    }
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(spy).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("closes on an Escape from elsewhere and lets it reach other document listeners", () => {
+    render(<Sidebar user={admin} />);
+    const trigger = desktopTrigger();
+    fireEvent.click(trigger);
+    const spy = vi.fn();
+    document.addEventListener("keydown", spy);
+    try {
+      fireEvent.keyDown(document.body, { key: "Escape" });
+    } finally {
+      document.removeEventListener("keydown", spy);
+    }
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(spy).toHaveBeenCalledTimes(1);
+    // Focus stays where the Escape came from: the menu only returns it to the
+    // trigger when it handled the key.
+    expect(document.activeElement).not.toBe(trigger);
+  });
+
   it("still closes on a mousedown outside and stays open on one inside", () => {
     render(<Sidebar user={admin} />);
     const trigger = desktopTrigger();
@@ -105,12 +157,14 @@ describe("UserMenu inside the mobile drawer", () => {
     fireEvent.click(trigger);
     expect(trigger.getAttribute("aria-expanded")).toBe("true");
 
-    fireEvent.keyDown(document, { key: "Escape" });
+    // The Escape comes from inside the open menu (focus sits on the trigger or
+    // a menu item), so the menu handles it and stops it: the drawer stays open.
+    fireEvent.keyDown(trigger, { key: "Escape" });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByRole("dialog", { name: "Navigation menu" })).not.toBeNull();
     expect(document.activeElement).toBe(trigger);
 
-    fireEvent.keyDown(document, { key: "Escape" });
+    fireEvent.keyDown(trigger, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Navigation menu" })).toBeNull();
   });
 });

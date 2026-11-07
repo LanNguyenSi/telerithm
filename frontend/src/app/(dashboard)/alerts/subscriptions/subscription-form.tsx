@@ -49,10 +49,12 @@ export function SubscriptionForm({
   const dialogRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
 
+  // The full reset runs only on open transitions: initialRuleId is deliberately
+  // not a dependency, because a rule change while the dialog is open must not
+  // wipe what the user already typed (the next effect updates the rule alone).
   useEffect(() => {
     if (!open) return;
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setRuleId(initialRuleId);
     setChannel("WEBHOOK");
     setUrl("");
     setSecret("");
@@ -65,6 +67,13 @@ export function SubscriptionForm({
       setUrl("");
       setSecret("");
     };
+  }, [open]);
+
+  // The rule select follows initialRuleId when the dialog opens and when the
+  // id changes while it is open; no other field is touched.
+  useEffect(() => {
+    if (!open) return;
+    setRuleId(initialRuleId);
   }, [open, initialRuleId]);
 
   useEffect(() => {
