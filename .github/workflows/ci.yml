@@ -360,6 +360,15 @@ jobs:
       - name: Migration decision tests
         run: bash scripts/backend-migrate.test.sh
 
+      # The runtime image installs with `npm ci --omit=dev` and then starts
+      # node_modules/.bin/prisma; fail when a production install leaves it out.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Prisma CLI in the production install
+        run: bash scripts/backend-prisma-cli.test.sh
+
   relay-config:
     name: Relay config
     runs-on: ubuntu-latest
