@@ -47,12 +47,13 @@ CI also enforces coverage floors for the backend, frontend and SDK tests; `.gith
 
 CI also runs five cross-cutting jobs (Sender configs, Shell script tests, ClickHouse config, Backend entrypoint, Relay config); if you changed a compose file, `deploy/`, `.relay.yml`, `backend/entrypoint.sh` or `scripts/`, run the commands of the jobs that guard them locally:
 
-- compose files (dev): `bash scripts/dev-compose-loopback.test.sh` and `bash scripts/compose-image-pins.test.sh`
+- any compose file: `bash scripts/compose-image-pins.test.sh`
+- compose files (dev): `bash scripts/dev-compose-loopback.test.sh`
 - compose files and `backend/clickhouse/` (prod): `bash scripts/clickhouse-config-guard.sh`, controls `bash scripts/clickhouse-config-guard.test.sh`
-- `deploy/` sender configs: `bash scripts/validate-sender-configs.sh`
+- `deploy/` sender configs (needs Docker): `bash scripts/validate-sender-configs.sh`
 - `scripts/` shell scripts: `shellcheck --severity=warning scripts/*.sh backend/entrypoint.sh backend/scripts/*.sh`, `bash scripts/backup.test.sh`, `bash scripts/make-deploy.test.sh`, `bash scripts/collect-docker-logs.test.sh`, `bash scripts/test-scratch-safety.test.sh`
 - `backend/entrypoint.sh` and `backend/scripts/migrate.sh`: `bash scripts/backend-migrate.test.sh`
-- `.relay.yml`: `bash scripts/relay-config.test.sh`
+- `.relay.yml`: `npm ci` at the repository root, then `bash scripts/relay-config.test.sh`
 
 - New state-changing API routes are registered through `writeRoute` or need a justified allowlist entry in `backend/tests/unit/route-guards.ts`; see [docs/okf/api-authz-and-team-scoping.md](docs/okf/api-authz-and-team-scoping.md).
 - Keep commits focused. One logical change per commit.
