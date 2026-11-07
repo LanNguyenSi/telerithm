@@ -375,7 +375,7 @@ It publishes default Node process metrics plus Telerithm series for HTTP request
 
 ## Backup
 
-`scripts/backup.sh` dumps both datastores of the stack this guide deploys (`docker-compose.traefik.yml`, with `.env.production` when it exists). It exits non-zero without writing anything when that compose file is missing or its `postgres` or `clickhouse` service is not running, so a scheduled run cannot report success for a stack that is not the production one.
+`scripts/backup.sh` dumps both datastores of the stack this guide deploys (`docker-compose.traefik.yml`, with `.env.production` when it exists). The ClickHouse part of it is the `logs` table only (`scripts/backup.sh:152`); `backend/clickhouse/init.sql:17` also creates an `anomalies` table, which no code writes today (see [docs/okf/clickhouse-retention-and-memory-limits.md](docs/okf/clickhouse-retention-and-memory-limits.md)), so today the dump covers every ClickHouse table that can hold data. Nothing detects the gap when that stops being true: a new ClickHouse table that code starts writing is not dumped until `scripts/backup.sh` and the restore steps below are extended for it. The script exits non-zero without writing anything when that compose file is missing or its `postgres` or `clickhouse` service is not running, so a scheduled run cannot report success for a stack that is not the production one.
 
 ```bash
 # Manual run
@@ -412,11 +412,28 @@ The commands below are the manual equivalents and the restore steps. The script'
 # Backup
 docker compose -f docker-compose.traefik.yml exec postgres \
   pg_dump -U telerithm telerithm > backup_$(date +%Y%m%d).sql
-
-# Restore
-cat backup.sql | docker compose -f docker-compose.traefik.yml exec -T postgres \
-  psql -U telerithm telerithm
 ```
+
+Restore into an empty target, in this order, with the backend stopped:
+
+```bash
+# 1. Stop the backend (see the note below)
+docker compose -f docker-compose.traefik.yml stop backend
+
+# 2. Recreate the database empty
+docker compose -f docker-compose.traefik.yml exec -T postgres \
+  psql -v ON_ERROR_STOP=1 -U telerithm -d postgres \
+  -c 'DROP DATABASE telerithm' -c 'CREATE DATABASE telerithm OWNER telerithm'
+
+# 3. Restore
+cat backup.sql | docker compose -f docker-compose.traefik.yml exec -T postgres \
+  psql -v ON_ERROR_STOP=1 --single-transaction -U telerithm telerithm
+
+# 4. Bring the backend back
+docker compose -f docker-compose.traefik.yml start backend
+```
+
+The order and the two `psql` flags are what make a failed restore visible. The backend is stopped first because it applies the Prisma migrations at every start (see [Database migrations](#database-migrations)): a backend that comes up mid-restore migrates a half-restored database, and while it is up its own connection also makes step 2 fail at `DROP DATABASE`. The dump is a plain `pg_dump` of the whole `telerithm` database, so against a non-empty target its `CREATE` statements fail on the existing objects and its `COPY` statements fail or partly apply against the existing rows; plain `psql` prints those errors and still exits 0, so the operator reads a green command over a database that holds a mixture of old and new rows. `-v ON_ERROR_STOP=1` makes psql exit non-zero at the first error instead, and `--single-transaction` wraps the whole restore, so that error rolls back and leaves the empty database from step 2 rather than a partial one. A scratch test of a backup starts from empty volumes with the backend stopped, so it exercises this path and not the partial-apply one.
 
 ### ClickHouse
 
@@ -427,10 +444,14 @@ Export the `logs` table in ClickHouse's Native format; this needs no server conf
 docker compose -f docker-compose.traefik.yml exec -T clickhouse \
   clickhouse-client --query "SELECT * FROM logs FORMAT Native" > logs_backup.native
 
-# Restore
+# Restore: empty the table first (see the note below)
+docker compose -f docker-compose.traefik.yml exec -T clickhouse \
+  clickhouse-client --query "TRUNCATE TABLE logs"
 docker compose -f docker-compose.traefik.yml exec -T clickhouse \
   clickhouse-client --query "INSERT INTO logs FORMAT Native" < logs_backup.native
 ```
+
+`INSERT INTO logs FORMAT Native` appends and exits 0 whatever the table already holds, so without the `TRUNCATE` a restore into a non-empty `logs` leaves every row twice. `TRUNCATE` is not reversible, so run it only as part of a restore.
 
 The shipped ClickHouse configuration (`backend/clickhouse/config.d/limits.xml`, `backend/clickhouse/config.d/system-logs.xml`, `backend/clickhouse/users.d/limits.xml`) defines no backup disk, so `BACKUP ... TO Disk(...)` is not set up. To use it, add a file that defines a backup disk and lists it under `<backups><allowed_disk>` to `backend/clickhouse/config.d/` (the directory is mounted into both `docker-compose.traefik.yml` and `docker-compose.prod.yml`, which must stay mirrored, see [docs/okf/compose-file-topology-and-drift.md](docs/okf/compose-file-topology-and-drift.md)), and keep that disk off the `chdata` volume so a backup survives the loss of the data volume.
 
@@ -447,6 +468,24 @@ docker compose -f docker-compose.traefik.yml exec clickhouse \
 docker compose -f docker-compose.traefik.yml exec postgres \
   vacuumdb -U telerithm -z telerithm
 ```
+
+### Disk (monthly)
+
+`make deploy` builds with `--pull --no-cache`, and so does the manual rebuild under [Updating](#updating), so a deploy writes a fresh copy of every layer instead of reusing what the last build left. The old layers, the build cache, the container logs and the data volumes all live on the host's root filesystem: the `telerithm_pgdata`, `telerithm_chdata` and `telerithm_redisdata` volumes and (by default) `/var/lib/docker` are on it, and a backup directory on the same disk shares it too. Nothing in the deploy path prunes anything, so a deploy on a full disk fails, and ClickHouse is the first service to break when the disk runs out: a MergeTree merge and its system log tables both need free space (see [docs/okf/clickhouse-retention-and-memory-limits.md](docs/okf/clickhouse-retention-and-memory-limits.md), which records a system log table that reached 133 GiB). Look before you clean:
+
+```bash
+# Space left on the root filesystem, and what Docker holds
+df -h /
+docker system df
+
+# Dangling images: the untagged leftovers of a superseded build
+docker image prune -f
+
+# Build cache entries older than 7 days
+docker builder prune -f --filter until=168h
+```
+
+What each one leaves alone. `docker image prune -f` removes only dangling images, the untagged images a newer build replaced: the image every running container was built from keeps its tag and stays, and so does every other tagged image, including the base images. `docker builder prune -f --filter until=168h` removes only build cache entries created more than 7 days ago, so the cache of this week's builds is still there. Neither command touches a volume: `telerithm_pgdata`, `telerithm_chdata` and `telerithm_redisdata` and everything under the backup directory are untouched, and neither removes a container (a stopped container's writable layer stays until the container itself is removed). Nothing here shrinks the data or the backups; the 30-day TTL of the `logs` table (top of this section) and the retention in `scripts/backup.sh` are what keep those bounded.
 
 ## Troubleshooting
 
