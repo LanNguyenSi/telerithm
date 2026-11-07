@@ -3,57 +3,126 @@
 # The file used to interpolate it as ${POSTGRES_PASSWORD:-telerithm}, so a host
 # that forgot the variable in .env.production started Postgres with a password
 # that is public with the repository, and the backend connected with it
-# silently. docker-compose.traefik.yml (the deployed variant) never had the
-# default; the non-Traefik variant now requires the variable too, with the
-# :? form, so compose refuses to start instead of substituting anything. Every
-# interpolation of POSTGRES_PASSWORD in the file must use :?: a :- or -
-# default is the fallback back, and a bare ${POSTGRES_PASSWORD} substitutes an
-# empty password. A file with no interpolation of the variable at all is a
-# failure too: the check would be a no-op on the file it exists to guard.
+# silently. Both places that use it (the postgres service environment and the
+# backend DATABASE_URL) now interpolate it with the :? form, so compose refuses
+# to start instead of substituting anything. Keep it that way.
 #
-# No Docker and no PyYAML needed: the interpolation is read as text off the
-# value lines (whole-line comments are skipped, so the header note of the
-# compose file is not a use). The controls at the end run the same check on
-# mutated copies and must fail with the message of their own branch.
+# docker-compose.traefik.yml (the deployed variant) has no default either, but
+# it interpolates the bare ${POSTGRES_PASSWORD} and so does NOT refuse: measured
+# with `docker compose -f docker-compose.traefik.yml config` and the variable
+# unset, compose exits 0, warns once per use that the variable is not set and
+# defaults to a blank string, and renders POSTGRES_PASSWORD: "" and
+# DATABASE_URL: postgresql://telerithm:@postgres... That is what
+# .env.production.example says about it too. This check is about this file only.
+#
+# The two uses are read as YAML values at their place in the document
+# (services.postgres.environment.POSTGRES_PASSWORD and
+# services.backend.environment.DATABASE_URL), not by scanning the file for
+# ${...} tokens: a tokeniser has to get nesting, $$ escapes, inline comments,
+# whole-line comments and variable-name boundaries right, and every one of those
+# was a way to pass a bad file (the controls below cover them one by one).
+# Reading the value is simpler and stricter: the whole value must be the
+# required form, so a nested default, a literal in front of or behind the
+# interpolation, an escaped $ or a variable whose name only contains
+# POSTGRES_PASSWORD cannot hide inside it. Needs python3 with PyYAML and fails
+# closed without it: the CI job that runs this file (Shell script tests) already
+# runs another compose check that requires PyYAML and fails closed without it
+# (dev-compose-loopback.test.sh), so nothing installs it and a runner that lost
+# it fails the job instead of skipping.
+#
+# When docker compose is available the check also renders the file, which is
+# client-side and needs no daemon: with POSTGRES_PASSWORD unset
+# `docker compose config` must fail and name the variable, and with a sentinel
+# value both rendered uses must carry it. Without docker the section prints a
+# visible skip line; the ClickHouse config job, which has Docker, runs this file
+# with COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER=1, which turns that skip into a
+# failure, so the behaviour assertion always runs somewhere in CI.
+#
+# The controls run the same check on mutated copies and must fail with the
+# message of their own branch.
 #
 # Usage: bash scripts/compose-required-password.test.sh
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 FILE="docker-compose.prod.yml"
+# A password that is not the old fallback, so a rendered use that still says
+# telerithm cannot pass for a substituted one.
+SENTINEL="ci-sentinel-not-the-fallback"
+REQUIRE_DOCKER="${COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER:-0}"
 
-# check <dir>: prints one FAIL line per problem, returns 1 when any.
+# The shipped line of each use, as the mutation target of the controls.
+ENV_USE='POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}'
+URL_USE='postgresql://telerithm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@postgres'
+
+# check <path>: reads the two uses out of the parsed document and prints one
+# FAIL line per problem, returns 1 when any.
 check() {
-  python3 - "$1/$FILE" <<'PY'
+  python3 - "$1" <<'PY'
 import re
 import sys
 
 path = sys.argv[1]
 try:
-    lines = open(path).read().splitlines()
+    text = open(path).read()
 except OSError as exc:
     print(f"FAIL: cannot read {path}: {exc}")
     sys.exit(1)
 
-uses = []
-for no, line in enumerate(lines, 1):
-    if line.lstrip().startswith("#"):
-        continue
-    for token in re.findall(r"\$\{[^{}]*\}", line):
-        if "POSTGRES_PASSWORD" in token:
-            uses.append((no, token))
-
-if not uses:
-    print(f"FAIL: {path} has no interpolation of POSTGRES_PASSWORD at all (the check would be a no-op)")
+try:
+    import yaml
+except ImportError:
+    print("FAIL: PyYAML (python3 -c 'import yaml') is required")
     sys.exit(1)
 
+try:
+    doc = yaml.safe_load(text)
+except yaml.YAMLError as exc:
+    print(f"FAIL: {path} does not parse as YAML: {exc}")
+    sys.exit(1)
+
+# The required form of the interpolation: the name POSTGRES_PASSWORD ends at the
+# :?, and the message holds no brace, so no other interpolation is nested in it.
+REQUIRED = r"\$\{POSTGRES_PASSWORD:\?[^{}]*\}"
+# (label, path in the document, whole-value pattern)
+USES = [
+    ("services.postgres.environment.POSTGRES_PASSWORD",
+     ("services", "postgres", "environment", "POSTGRES_PASSWORD"),
+     # the value IS the interpolation: anything around it is part of the password
+     re.compile(REQUIRED)),
+    ("services.backend.environment.DATABASE_URL",
+     ("services", "backend", "environment", "DATABASE_URL"),
+     # the interpolation sits in a URL, and no other $ may appear in it: that
+     # rules out a $$ escape and a ${OTHER:-${POSTGRES_PASSWORD:?m}} nest
+     re.compile(r"[^$]*" + REQUIRED + r"[^$]*")),
+]
+
+
+def lookup(document, keys):
+    node = document
+    for key in keys:
+        if not isinstance(node, dict) or key not in node:
+            return None
+        node = node[key]
+    return node
+
+
 fails = 0
-for no, token in uses:
-    if ":-" in token or re.search(r"\$\{POSTGRES_PASSWORD-", token):
-        print(f"FAIL: line {no} lets POSTGRES_PASSWORD fall back to a default: {token}")
+for label, keys, pattern in USES:
+    value = lookup(doc, keys)
+    if not isinstance(value, str):
+        print(f"FAIL: {path} has no interpolation of POSTGRES_PASSWORD at all for {label} (found {type(value).__name__}); the check would be a no-op on it")
         fails += 1
-    elif ":?" not in token:
-        print(f"FAIL: line {no} must require POSTGRES_PASSWORD with the :? form so compose refuses to start, found: {token}")
+    elif pattern.fullmatch(value):
+        continue
+    elif "$" not in value:
+        print(f"FAIL: {path} has no interpolation of POSTGRES_PASSWORD at all for {label}: compose starts with the value written in the file ({value})")
+        fails += 1
+    elif re.search(r"\$\{POSTGRES_PASSWORD:?-", value):
+        print(f"FAIL: {label} lets POSTGRES_PASSWORD fall back to a default: {value}")
+        fails += 1
+    else:
+        print(f"FAIL: {label} must require POSTGRES_PASSWORD with the :? form so compose refuses to start, found: {value}")
         fails += 1
 sys.exit(1 if fails else 0)
 PY
@@ -78,10 +147,21 @@ fresh_copy() {
   cp "$repo/$FILE" "$work/tree/$FILE"
 }
 
+# compose_dir <name>: a fresh copy of the file in a directory of its own, so a
+# compose run never picks up an .env file or another compose file, and prints
+# the directory.
+compose_dir() {
+  local dir="$work/compose/$1"
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  cp "$repo/$FILE" "$dir/$FILE"
+  printf '%s\n' "$dir"
+}
+
 # mutate <file> <old> <new>: exact single replacement, fails when <old> is
 # absent so a control cannot turn into a no-op.
 mutate() {
-  python3 - "$work/tree/$1" "$2" "$3" <<'PY'
+  python3 - "$1" "$2" "$3" <<'PY'
 import sys
 path, old, new = sys.argv[1:4]
 text = open(path).read()
@@ -93,39 +173,294 @@ PY
 
 expect_fail() {
   local name="$1" fragment="$2" out
-  if out="$(check "$work/tree" 2>&1)"; then
+  if out="$(check "$work/tree/$FILE" 2>&1)"; then
     bad "$name: check passed but must fail"
     return
   fi
   if grep -qF -- "$fragment" <<<"$out"; then ok "$name"; else bad "$name: failed for another reason (wanted: $fragment): $out"; fi
 }
 
-if out="$(check "$repo" 2>&1)"; then
-  ok "the shipped compose file requires POSTGRES_PASSWORD with :? in both places"
+# render <dir> <env-args...>: the rendered compose config of that directory, so
+# that the env arguments (a -u or a POSTGRES_PASSWORD=...) are the only source of
+# the variable; stderr goes to $work/render.stderr for the failure messages.
+render() {
+  local dir="$1"
+  shift
+  ( cd "$dir" && env "$@" docker compose -f "$FILE" config 2>"$work/render.stderr" )
+}
+
+# check_docker <dir>: behaviour of real compose on that copy. Prints one FAIL
+# line per problem, returns 1 when any. The caller must have POSTGRES_PASSWORD
+# exported, so that the unset run below has to clear it itself.
+check_docker() {
+  local dir="$1" out log
+
+  if out="$(render "$dir" -u POSTGRES_PASSWORD)"; then
+    printf 'FAIL: docker compose config accepted %s with POSTGRES_PASSWORD unset (it must refuse): %s\n' "$FILE" "$out"
+    return 1
+  fi
+  log="$out
+$(cat "$work/render.stderr" 2>/dev/null)"
+  if ! grep -qF -- "POSTGRES_PASSWORD" <<<"$log"; then
+    printf 'FAIL: docker compose config failed on %s without naming POSTGRES_PASSWORD: %s\n' "$FILE" "$log"
+    return 1
+  fi
+
+  if ! out="$(render "$dir" "POSTGRES_PASSWORD=$SENTINEL")"; then
+    printf 'FAIL: docker compose config failed on %s with POSTGRES_PASSWORD set: %s\n' "$FILE" "$(cat "$work/render.stderr")"
+    return 1
+  fi
+  printf '%s\n' "$out" > "$work/rendered.yml"
+  python3 - "$SENTINEL" "$FILE" "$work/rendered.yml" <<'PY'
+import sys
+
+sentinel, name, path = sys.argv[1:4]
+try:
+    import yaml
+except ImportError:
+    print("FAIL: PyYAML (python3 -c 'import yaml') is required")
+    sys.exit(1)
+
+with open(path) as fh:
+    doc = yaml.safe_load(fh)
+services = (doc or {}).get("services") or {}
+env = (services.get("postgres") or {}).get("environment") or {}
+url = (services.get("backend") or {}).get("environment") or {}
+expected_url_prefix = "postgresql://telerithm:%s@" % sentinel
+
+fails = 0
+got = env.get("POSTGRES_PASSWORD") if isinstance(env, dict) else None
+if got != sentinel:
+    print(f"FAIL: the rendered {name} does not render the sentinel for services.postgres.environment.POSTGRES_PASSWORD (got {got!r})")
+    fails += 1
+got = url.get("DATABASE_URL") if isinstance(url, dict) else None
+# The sentinel must be the password of the URL: right after the user, before the
+# host, and nowhere else. The rest of the URL (host, database, pool settings) is
+# not this check's business, so it is not compared.
+if not isinstance(got, str) or not got.startswith(expected_url_prefix) or got.count(sentinel) != 1:
+    print(f"FAIL: the rendered {name} does not render the sentinel for services.backend.environment.DATABASE_URL (got {got!r})")
+    fails += 1
+sys.exit(1 if fails else 0)
+PY
+}
+
+expect_docker_fail() {
+  local name="$1" dir="$2" fragment="$3" out
+  if out="$(check_docker "$dir" 2>&1)"; then
+    bad "$name: docker check passed but must fail"
+    return
+  fi
+  if grep -qF -- "$fragment" <<<"$out"; then ok "$name"; else bad "$name: failed for another reason (wanted: $fragment): $out"; fi
+}
+
+if out="$(check "$repo/$FILE" 2>&1)"; then
+  ok "the shipped compose file requires POSTGRES_PASSWORD with :? in both uses"
 else
   bad "the shipped compose file: $out"
 fi
 
-# The default back on the postgres service environment.
-fresh_copy
-mutate "$FILE" "POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}" "POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-telerithm}"
-expect_fail "default back on the postgres environment" "lets POSTGRES_PASSWORD fall back to a default"
+# --- the file must not fall back, and must not substitute anything else ------
 
-# The default back on the backend DATABASE_URL.
+# :- default back on the postgres service environment.
 fresh_copy
-mutate "$FILE" "postgresql://telerithm:\${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@postgres" "postgresql://telerithm:\${POSTGRES_PASSWORD:-telerithm}@postgres"
-expect_fail "default back on the backend DATABASE_URL" "lets POSTGRES_PASSWORD fall back to a default"
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-telerithm}'
+expect_fail "default back (:-) on the postgres environment" "lets POSTGRES_PASSWORD fall back to a default"
+
+# Default back on the backend DATABASE_URL, with the :? dropped on the other line
+# so this line alone is the problem.
+fresh_copy
+mutate "$work/tree/$FILE" "$URL_USE" 'postgresql://telerithm:${POSTGRES_PASSWORD:-telerithm}@postgres'
+expect_fail "default back (:-) on the backend DATABASE_URL" "lets POSTGRES_PASSWORD fall back to a default"
+
+# Same without the colon, the other default form compose accepts.
+fresh_copy
+mutate "$work/tree/$FILE" "$URL_USE" 'postgresql://telerithm:${POSTGRES_PASSWORD-telerithm}@postgres'
+expect_fail "default back (-) on the backend DATABASE_URL" "lets POSTGRES_PASSWORD fall back to a default"
 
 # The :? dropped: compose substitutes an empty password and still starts.
 fresh_copy
-mutate "$FILE" "POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}" "POSTGRES_PASSWORD: \${POSTGRES_PASSWORD}"
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}'
 expect_fail "bare interpolation without :?" "must require POSTGRES_PASSWORD with the"
+
+# The same without the braces: a shell form compose does not interpolate at all,
+# so the container would get the literal text.
+fresh_copy
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: $POSTGRES_PASSWORD'
+expect_fail "shell form without braces" "must require POSTGRES_PASSWORD with the"
+
+# A default that hides one nesting level down.
+fresh_copy
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-${FALLBACK:-telerithm}}'
+expect_fail "default one nesting level down" "lets POSTGRES_PASSWORD fall back to a default"
+
+# $$ escape: compose renders the literal text ${POSTGRES_PASSWORD:?...} as the
+# password and requires nothing. Both lines, because that is what the escape
+# does everywhere it appears.
+fresh_copy
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: $${POSTGRES_PASSWORD:?m}'
+mutate "$work/tree/$FILE" "$URL_USE" 'postgresql://telerithm:$${POSTGRES_PASSWORD:?m}@postgres'
+expect_fail "escaped dollar, so nothing is interpolated" "must require POSTGRES_PASSWORD with the"
+
+# The same escape on the DATABASE_URL alone, so it is that value's own rule
+# against a second $ that refuses it.
+fresh_copy
+mutate "$work/tree/$FILE" "$URL_USE" 'postgresql://telerithm:$${POSTGRES_PASSWORD:?m}@postgres'
+expect_fail "escaped dollar in the DATABASE_URL" "must require POSTGRES_PASSWORD with the"
+
+# Text around the interpolation on the environment line: compose would start
+# Postgres on that text plus the variable, not on the variable alone.
+fresh_copy
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: pw-${POSTGRES_PASSWORD:?m}-x'
+expect_fail "text around the interpolation on the environment line" "must require POSTGRES_PASSWORD with the"
+
+# A literal with the interpolation behind an inline comment: compose starts with
+# the public password; YAML stops the value at the comment.
+fresh_copy
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: telerithm # ${POSTGRES_PASSWORD:?m}'
+mutate "$work/tree/$FILE" "$URL_USE" 'postgresql://telerithm:ci-dummy@postgres'
+expect_fail "literal with the interpolation in an inline comment" "has no interpolation of POSTGRES_PASSWORD at all"
+
+# A literal on the environment line while the DATABASE_URL keeps the :? form.
+fresh_copy
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ci-dummy'
+expect_fail "literal on the environment line only" "has no interpolation of POSTGRES_PASSWORD at all for services.postgres.environment.POSTGRES_PASSWORD"
+
+# A different variable whose name merely contains POSTGRES_PASSWORD.
+fresh_copy
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_OLD:?x}'
+expect_fail "wrong variable on the environment line" "must require POSTGRES_PASSWORD with the"
+
+fresh_copy
+mutate "$work/tree/$FILE" "$URL_USE" 'postgresql://telerithm:${POSTGRES_PASSWORD_OLD:?x}@postgres'
+expect_fail "wrong variable in the DATABASE_URL" "must require POSTGRES_PASSWORD with the"
+
+# The right interpolation inside a wrong one: an outer default wins, so compose
+# starts with FALLBACK (or with nothing) and the inner :? is never evaluated.
+fresh_copy
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ${X:-${POSTGRES_PASSWORD:?m}}'
+expect_fail "nested inside another interpolation, environment line" "must require POSTGRES_PASSWORD with the"
+
+fresh_copy
+mutate "$work/tree/$FILE" "$URL_USE" 'postgresql://telerithm:${X:-${POSTGRES_PASSWORD:?m}}@postgres'
+expect_fail "nested inside another interpolation, DATABASE_URL" "must require POSTGRES_PASSWORD with the"
+
+# The interpolation only in whole-line comments, the real use a literal: the
+# file says nothing to compose.
+fresh_copy
+mutate "$work/tree/$FILE" "$ENV_USE" "# $ENV_USE
+      POSTGRES_PASSWORD: ci-dummy"
+mutate "$work/tree/$FILE" "$URL_USE" "# DATABASE_URL: $URL_USE
+      DATABASE_URL: postgresql://telerithm:ci-dummy@postgres"
+expect_fail "interpolation only in comments" "has no interpolation of POSTGRES_PASSWORD at all"
+
+# The use dropped from the mapping entirely, a comment in its place and nothing
+# else: the key is gone, so compose is told nothing about this use.
+fresh_copy
+mutate "$work/tree/$FILE" "$ENV_USE" "# $ENV_USE"
+expect_fail "environment use commented out with nothing in its place" "has no interpolation of POSTGRES_PASSWORD at all for services.postgres.environment.POSTGRES_PASSWORD (found NoneType)"
 
 # The variable gone from the file: the check would guard nothing.
 fresh_copy
-mutate "$FILE" "POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}" "POSTGRES_PASSWORD: ci-dummy"
-mutate "$FILE" "postgresql://telerithm:\${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@postgres" "postgresql://telerithm:ci-dummy@postgres"
+mutate "$work/tree/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ci-dummy'
+mutate "$work/tree/$FILE" "$URL_USE" 'postgresql://telerithm:ci-dummy@postgres'
 expect_fail "variable absent from the file" "has no interpolation of POSTGRES_PASSWORD at all"
+
+# --- the checker itself fails closed ----------------------------------------
+
+# A file that is not YAML at all is reported, not skipped.
+fresh_copy
+mutate "$work/tree/$FILE" 'name: telerithm-standalone' 'name: [unclosed'
+expect_fail "file that does not parse as YAML" "does not parse as YAML"
+
+# A missing file is reported, not skipped.
+fresh_copy
+rm -f "$work/tree/$FILE"
+expect_fail "file missing" "cannot read"
+
+# The checker fails closed when python3 cannot import yaml: run the same check()
+# above in a subshell with PYTHONPATH shadowing yaml by a module that raises
+# ImportError, and require a non-zero exit with the exact message.
+fakelib="$work/fakelib"
+mkdir -p "$fakelib"
+printf 'raise ImportError("no yaml here")\n' > "$fakelib/yaml.py"
+if out="$(PYTHONPATH="$fakelib" check "$repo/$FILE" 2>&1)"; then
+  bad "missing PyYAML: check passed but must fail"
+elif grep -qF -- "PyYAML (python3 -c 'import yaml') is required" <<<"$out"; then
+  ok "missing PyYAML fails the checker with the required message"
+else
+  bad "missing PyYAML fails the checker for another reason: $out"
+fi
+
+# --- behaviour against real compose -----------------------------------------
+
+if docker compose version >/dev/null 2>&1; then
+  # The exported value is a decoy: it is set on purpose here so that the unset
+  # run of check_docker has to clear it, which is what makes that check test
+  # something. Without the decoy a lost -u would go unnoticed on a host that
+  # happens not to have the variable.
+  export POSTGRES_PASSWORD="$SENTINEL"
+  if out="$(check_docker "$repo" 2>&1)"; then
+    ok "docker compose refuses an unset POSTGRES_PASSWORD and renders the sentinel in both uses"
+  else
+    bad "docker compose behaviour on the shipped file: $out"
+  fi
+
+  # The :? dropped: compose must refuse, so this copy must be caught.
+  dir="$(compose_dir no-required)"
+  mutate "$dir/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}'
+  mutate "$dir/$FILE" "$URL_USE" 'postgresql://telerithm:${POSTGRES_PASSWORD}@postgres'
+  expect_docker_fail "docker check catches a file compose accepts unset" "$dir" "with POSTGRES_PASSWORD unset (it must refuse)"
+
+  # A compose run that fails for another reason must not be mistaken for the
+  # refusal this check expects: a broken file with no POSTGRES_PASSWORD in it.
+  dir="$(compose_dir broken-schema)"
+  mutate "$dir/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ci-dummy'
+  mutate "$dir/$FILE" "$URL_USE" 'postgresql://telerithm:ci-dummy@postgres'
+  mutate "$dir/$FILE" 'name: telerithm-standalone' 'name: [unclosed'
+  expect_docker_fail "docker check requires the refusal to name the variable" "$dir" "without naming POSTGRES_PASSWORD"
+
+  # Each rendered use must carry the sentinel on its own: one of them written
+  # into the file instead of interpolated must not pass for the other one.
+  dir="$(compose_dir literal-env)"
+  mutate "$dir/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ci-dummy'
+  expect_docker_fail "docker check catches a literal in the rendered postgres environment" "$dir" "does not render the sentinel for services.postgres.environment.POSTGRES_PASSWORD"
+
+  dir="$(compose_dir literal-url)"
+  mutate "$dir/$FILE" "$URL_USE" 'postgresql://telerithm:ci-dummy@postgres'
+  expect_docker_fail "docker check catches a literal in the rendered DATABASE_URL" "$dir" "does not render the sentinel for services.backend.environment.DATABASE_URL"
+
+  # The sentinel must be the password, not merely somewhere in the URL: here it
+  # is the database name while the password is a literal.
+  dir="$(compose_dir sentinel-elsewhere)"
+  mutate "$dir/$FILE" "$URL_USE" "postgresql://telerithm:ci-dummy@postgres:5432/${SENTINEL}"
+  expect_docker_fail "docker check requires the sentinel in the password position" "$dir" "does not render the sentinel for services.backend.environment.DATABASE_URL"
+
+  # And it must be the only thing interpolated: a URL that also carries the
+  # value of the test somewhere else is not the URL this check is about.
+  dir="$(compose_dir sentinel-twice)"
+  mutate "$dir/$FILE" "$URL_USE" "postgresql://telerithm:\${POSTGRES_PASSWORD:?m}@postgres:5432/${SENTINEL}"
+  expect_docker_fail "docker check requires the sentinel to be the interpolated password only" "$dir" "does not render the sentinel for services.backend.environment.DATABASE_URL"
+
+  # The use gone from the rendered document (a comment in its place): a value
+  # that is not a string at all is not the sentinel either.
+  dir="$(compose_dir no-url-use)"
+  mutate "$dir/$FILE" "$URL_USE" "# DATABASE_URL: $URL_USE"
+  expect_docker_fail "docker check catches a rendered document without the DATABASE_URL" "$dir" "does not render the sentinel for services.backend.environment.DATABASE_URL"
+
+  # The rendered comparison fails closed without PyYAML too, so it cannot pass
+  # by not looking at the document at all.
+  if out="$(PYTHONPATH="$fakelib" check_docker "$repo" 2>&1)"; then
+    bad "missing PyYAML in the rendered comparison: check passed but must fail"
+  elif grep -qF -- "PyYAML (python3 -c 'import yaml') is required" <<<"$out"; then
+    ok "missing PyYAML fails the rendered comparison with the required message"
+  else
+    bad "missing PyYAML in the rendered comparison for another reason: $out"
+  fi
+elif [ "$REQUIRE_DOCKER" = "1" ]; then
+  bad "COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER=1 but docker compose is not available"
+else
+  echo "SKIP - docker compose not available: no behaviour assertion against real compose (the ClickHouse config CI job runs this file with COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER=1)"
+fi
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
