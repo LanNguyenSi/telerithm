@@ -261,6 +261,14 @@ bash scripts/clickhouse-config-guard.sh
 bash scripts/clickhouse-config-guard.test.sh
 ```
 
+### Check the Required Postgres Password
+
+`compose-required-password.test.sh` reads every `POSTGRES_PASSWORD` interpolation of `docker-compose.prod.yml` as text (python3, no Docker and no PyYAML needed) and fails when one of them falls back to a default (`:-` or `-`) or does not use the `:?` form that makes Compose refuse to start without the variable, and when the file has no interpolation of the variable at all (the check would guard nothing). Both uses in that file (the `postgres` service environment and the backend `DATABASE_URL`) use `:?`, so a host that left the variable out of `.env.production` gets an error instead of a Postgres that accepts the password published with the repository. `docker-compose.traefik.yml` never had the default and is not part of the check. Controls on mutated copies, each of which must make the check fail with the message of its own branch: the default back on either of the two lines, a bare `${POSTGRES_PASSWORD}` (Compose substitutes an empty password), and the variable absent from the file. CI runs it in the "Shell script tests" job.
+
+```bash
+bash scripts/compose-required-password.test.sh
+```
+
 ### Check the Backend Migration Step
 
 `backend-migrate.test.sh` runs every branch of the start-time migration decision (`backend/scripts/migrate.sh`, called by `backend/entrypoint.sh`) against a stub Prisma CLI, under `sh` and `dash`: migration history present, empty database, a database from before migrations that matches the schema (baseline recorded) or differs from it, and each check that errors. CI runs it in the "Backend entrypoint" job; the "Backend" job additionally runs the script against real Postgres.

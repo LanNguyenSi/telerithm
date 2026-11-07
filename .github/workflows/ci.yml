@@ -316,6 +316,13 @@ jobs:
       - name: Compose base image pins
         run: bash scripts/compose-image-pins.test.sh
 
+      # POSTGRES_PASSWORD interpolated with :? in docker-compose.prod.yml, so
+      # the non-Traefik variant refuses to start instead of falling back to the
+      # password that is public with the repository, plus controls on mutated
+      # copies. Needs only bash and python3.
+      - name: Compose requires POSTGRES_PASSWORD
+        run: bash scripts/compose-required-password.test.sh
+
       # Every scripts/*.test.sh started with a TMPDIR that does not exist, from
       # a directory holding one canary file: it must stop without deleting or
       # writing anything there (an unchecked mktemp let a cleanup trap delete
