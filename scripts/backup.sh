@@ -15,25 +15,25 @@ set -euo pipefail
 # Retention: after a successful backup it keeps the newest 10 backups and removes
 # those older than 10 days, but only directories named YYYYMMDD_HHMMSS that hold
 # both dumps (the ones this script writes). A real directory with such a name
-# that lacks one of the dumps (a run that was killed before its cleanup could
-# run) is removed once its modification time is more than 2 whole days old
-# (find -mtime +2, so at least 3 days) and only if everything in it is a regular
-# file this script writes: postgres.sql.gz, clickhouse_logs.native.gz and their
-# .partial names; one foreign file, a subdirectory or a symlink in it keeps the
-# whole directory. A younger one stays. Anything else in <backup_dir> (other
-# names, files, symlinks, such a directory with other content) is left alone,
-# with one note saying how many entries; the directory of this run is never
-# removed. An old backup or a stale incomplete directory that cannot be
-# removed is a WARNING on stderr naming the path and does not stop the run (the
-# loop goes on and the off-host hook still runs), but the run then exits 2 after
-# the hook block with an ERROR line: housekeeping that silently stops working
-# would fill the disk unnoticed. The new backup is complete and kept in that
-# case. An old backup that rm could only partly remove (its dumps gone, a locked
-# subdirectory left) is no longer a complete backup and holds a subdirectory, so
-# it is left alone from then on: the run whose removal failed exits 2, every
-# later run exits 0 and counts it in the note until it is removed by hand. An
-# old backup rm cannot remove at all stays complete, so every later run warns
-# and exits 2 again until it is removed.
+# that lacks one of the dumps (a run killed before its cleanup) goes once its
+# mtime is more than 2 whole days old (find -mtime +2: at least 3 days), only
+# if the running user can search and read it (an unsearchable one, mode 444
+# say, can be neither verified nor emptied by rm: left alone on every
+# platform) and only if everything in it is a regular file this script writes:
+# postgres.sql.gz, clickhouse_logs.native.gz and their .partial names (one
+# foreign file, a subdirectory or a symlink keeps the whole directory). A
+# younger one stays. Anything else (other names, files, symlinks, such a
+# directory with other content) is left alone too, counted in one note; the
+# run's own directory is never removed. An old backup or stale incomplete
+# directory rm cannot remove gets a WARNING on stderr naming the path; the
+# loop goes on, the off-host hook still runs, and the run exits 2 after the
+# hook block with an ERROR line (the new backup is complete and kept): silent
+# housekeeping failure fills the disk unnoticed. An old backup rm could only
+# partly remove (dumps gone, a locked subdirectory left) is no longer complete
+# and holds a subdirectory, so it is left alone from then on: the failing run
+# exits 2, later runs exit 0 and count it in the note until removed by hand.
+# An old backup rm cannot remove at all stays complete, so later runs keep
+# warning and exiting 2 again until it is removed.
 #
 # Exit codes: 0 success; 1 any other failure (checks before the dumps, a failed
 # dump, a failed off-host hook, any other command that fails, whatever its own
@@ -166,13 +166,18 @@ DUMPS_COMPLETE=1
 # as /backups instead of /backups/telerithm cannot delete anything unrelated.
 # The one exception is a stale incomplete directory: a real directory (not a
 # symlink) named YYYYMMDD_HHMMSS, not the one this run wrote, that lacks one of
-# the two dumps, whose modification time is more than 2 whole days old and that
-# holds nothing but regular files a killed run of this script can leave (see
-# only_killed_run_files). A run killed before its cleanup trap could run leaves
-# such a directory, and nothing else would ever remove it. A younger incomplete
-# directory is left alone, because another run may still be writing it, and so
-# is one with any other content, because it is then not only what this script
-# wrote.
+# the two dumps, whose modification time is more than 2 whole days old, that
+# the running user can search and read, and that holds nothing but regular
+# files a killed run of this script can leave (see only_killed_run_files). A
+# run killed before its cleanup trap could run leaves such a directory, and
+# nothing else would ever remove it. A directory whose entries cannot be
+# listed (mode 444: readable, not searchable) is never classified stale: it
+# cannot be verified, and rm -rf could not empty it either, so it is left
+# alone on every platform instead of failing the run every night (under GNU
+# find its listing even comes back empty, which without this check reads as
+# "only what a killed run left"). A younger incomplete directory is left
+# alone, because another run may still be writing it, and so is one with any
+# other content, because it is then not only what this script wrote.
 # "Newest" is decided by the timestamp in the name; the age rule uses the
 # directory's modification time. The backup written by this run is never
 # removed.
@@ -187,7 +192,11 @@ TIMESTAMP_RE='^[0123456789]{8}_[0123456789]{6}$'
 # clickhouse_logs.native.gz (the finished dumps) and the same two names with
 # .partial appended (a dump still being written, see the pipelines above). An
 # empty directory counts. Fail closed: a directory find cannot read entirely is
-# refused as well.
+# refused as well. Callers gate on [ -x ] && [ -r ] first so a directory the
+# running user cannot search or read never reaches find here at all; the -print
+# -quit inside would otherwise succeed with an empty listing under GNU find on
+# an unsearchable directory (mode 444), reading as "only what a killed run
+# left" for a directory that cannot be inspected and that rm -rf cannot empty.
 only_killed_run_files() {
   local found
   found="$(find "$1" -mindepth 1 \( ! -type f -o ! \( \
@@ -216,10 +225,14 @@ for entry in "${BACKUP_DIR}"/* "${BACKUP_DIR}"/.[!.]* "${BACKUP_DIR}"/..?*; do
     && [ -d "${entry}" ] && [ ! -L "${entry}" ] \
     && [ "${entry_name}" != "${TIMESTAMP}" ] \
     && [ -n "$(find "${entry}" -maxdepth 0 -mtime +2 2>/dev/null)" ] \
+    && [ -x "${entry}" ] && [ -r "${entry}" ] \
     && only_killed_run_files "${entry}"; then
     # Not a complete backup (the test above failed on the dumps), not this
-    # run's directory, older than 2 whole days and holding only what a killed
-    # run leaves: stale.
+    # run's directory, older than 2 whole days, searchable and readable (the
+    # -x/-r tests: a directory the running user cannot search or read cannot be
+    # verified and rm -rf could not empty it either, so it goes the left-alone
+    # path here on every platform instead of STALE_INCOMPLETE below), and
+    # holding only what a killed run leaves: stale.
     STALE_INCOMPLETE+=("${entry_name}")
   else
     LEFT_ALONE=$((LEFT_ALONE + 1))

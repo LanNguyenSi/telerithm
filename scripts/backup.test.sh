@@ -984,6 +984,24 @@ else
     && present "${D28}/20010101_000000/postgres.sql.gz.partial"; then
     ok "stale incomplete: an old directory whose entries cannot be listed is kept (fail closed)"
   else bad "unreadable stale directory: rc=${RC} out=${OUT}"; fi
+  # an old incomplete directory with mode 444 (readable, not searchable) that
+  # holds a killed-run file: never classified stale (the -x/-r gate), so it is
+  # left alone on both platforms: no warning, exit 0, counted by name-less left
+  # note. Under GNU find the old code listed it empty (rc 0), classified it
+  # stale and then failed every night on rm -rf; under BSD find the listing
+  # itself failed first, so on macOS this case cannot tell fix from no-fix.
+  D29="${SCRATCH}/b29"
+  mkdir -p "${D29}/20010101_000000"
+  : > "${D29}/20010101_000000/postgres.sql.gz.partial"
+  touch -t 200001010000 "${D29}/20010101_000000"
+  chmod 444 "${D29}/20010101_000000"
+  run_backup unsearchable_stale "${D29}"
+  chmod 755 "${D29}/20010101_000000"
+  if [ "${RC}" -eq 0 ] && grep -qF "Retention left 1 entry in ${D29} alone" <<< "${OUT}" \
+    && ! grep -q "WARNING" <<< "${OUT}" && ! grep -q "Removed the stale" <<< "${OUT}" \
+    && present "${D29}/20010101_000000/postgres.sql.gz.partial"; then
+    ok "stale incomplete: an old mode-444 directory with a killed-run file is left alone, exit 0, in the left-alone note"
+  else bad "mode-444 stale directory: rc=${RC} out=${OUT}"; fi
 fi
 chmod -R u+rwx "${SCRATCH}" 2>/dev/null
 

@@ -103,14 +103,17 @@ parse_level() {
   fi
 }
 
-# Send log batch to Telerithm
+# Send log batch to Telerithm. The payload goes to curl on stdin
+# (--data-binary @-), not as an argument: a large batch can exceed the argv
+# size limit (ARG_MAX), which would fail the POST at exec time. --data-binary
+# sends the bytes exactly as given (plain -d would also strip newlines).
 send_logs() {
   local logs_json="$1"
   
-  response=$(curl -s -w "\n%{http_code}" -X POST "$INGEST_URL" \
+  response=$(printf '%s' "$logs_json" | curl -s -w "\n%{http_code}" -X POST "$INGEST_URL" \
     -H "X-API-Key: $API_KEY" \
     -H "Content-Type: application/json" \
-    -d "$logs_json")
+    --data-binary @-)
   
   http_code=$(echo "$response" | tail -n1)
   body=$(echo "$response" | head -n-1)
@@ -177,20 +180,36 @@ load_state() {
 # after send_logs returned success, and only with a timestamp all of whose
 # lines were accepted (see the batch loop). The state stays frozen for the rest
 # of the container's processing once one of its sends has failed (see
-# note_send_failure); this freeze is per container.
+# note_send_failure); this freeze is per container. Written atomically: the
+# timestamp goes into a temp file made by mktemp in the state directory (same
+# directory, so the mv is a rename), chmod 600 and then mv -f over the state
+# file, so a reader never sees a truncated state and a write that fails midway
+# leaves the previous state untouched. mktemp already creates 0600; the chmod
+# re-applies it explicitly. A failed step removes the temp file and returns
+# non-zero (set -e then ends the run: a state that cannot be saved must not
+# look saved).
 save_state() {
   if [ "$SEND_FAILED" -ne 0 ]; then
     return 0
   fi
   local file="$1"
   local ts="$2"
-  (
-    umask 077
-    printf '%s\n' "$ts" > "$file"
-  )
-  # Not redundant with the umask: the redirect truncates a file that already
-  # exists, and a pre-existing file keeps whatever mode it had.
-  chmod 600 "$file"
+  local tmp
+  if ! tmp=$(mktemp "$file.XXXXXX"); then
+    return 1
+  fi
+  if ! printf '%s\n' "$ts" > "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! chmod 600 "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$file"; then
+    rm -f "$tmp"
+    return 1
+  fi
 }
 
 # Process logs from a container
@@ -265,7 +284,10 @@ process_container_logs() {
       # different timestamp, so the last timestamp of the batch is complete
       # and saving it cannot skip lines that belong to a later batch.
       if [ "$batch_full" -eq 1 ] && [ "$timestamp" != "$batch_last_ts" ]; then
-        payload=$(jq -n --argjson logs "$logs_array" '{logs: $logs}')
+        # The batch goes to jq on stdin (not as an argument: a large batch can
+        # exceed ARG_MAX); the output is byte-identical to the old
+        # `jq -n --argjson logs ... '{logs: $logs}'`.
+        payload=$(printf '%s' "$logs_array" | jq '{logs: .}')
         if send_logs "$payload"; then
           log_info "Sent $count logs from $container"
           if [ -n "$batch_last_ts" ]; then
@@ -304,7 +326,10 @@ process_container_logs() {
 EOF
 )
     
-    logs_array=$(echo "$logs_array" | jq ". += [$log_entry]")
+    # Both values come from stdin (the entry is not baked into the program
+    # string: a very long single log line could exceed ARG_MAX there); the
+    # output matches the old `jq ". += [$log_entry]"`.
+    logs_array=$(printf '%s\n%s' "$logs_array" "$log_entry" | jq -s '.[0] + [.[1]]')
     count=$((count + 1))
     
     # The batch is full once the size is reached; it is sent when the next
@@ -318,7 +343,8 @@ EOF
   # Send remaining logs: the stream ended, so the last timestamp seen is
   # complete and safe to save.
   if [ $count -gt 0 ]; then
-    payload=$(jq -n --argjson logs "$logs_array" '{logs: $logs}')
+    # Batch to jq on stdin, as in the mid-loop send above.
+    payload=$(printf '%s' "$logs_array" | jq '{logs: .}')
     if send_logs "$payload"; then
       log_info "Sent final $count logs from $container"
       if [ -n "$batch_last_ts" ]; then
