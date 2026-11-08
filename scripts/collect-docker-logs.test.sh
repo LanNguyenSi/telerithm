@@ -64,15 +64,23 @@ STUB
 # Every POST is appended to $STUB_CURL_LOG and every ACCEPTED payload to
 # $STUB_CURL_OK (which is only reset when a scenario says so, so acceptance
 # can be checked across runs); the call number is kept in $STUB_CURL_N
-# (reset per run_collector).
+# (reset per run_collector). A POST whose arguments carry `--data-binary @-`
+# reads its payload from stdin instead (one line appended to $STUB_CURL_STDIN
+# per such POST, so a scenario can prove the payload came through stdin).
 cat > "${STUB_DIR}/curl" <<'STUB'
 #!/bin/bash
 payload=""
 prev=""
+stdin_payload=0
 for a in "$@"; do
   if [ "${prev}" = "-d" ]; then payload="$a"; fi
+  if [ "${prev}" = "--data-binary" ] && [ "$a" = "@-" ]; then stdin_payload=1; fi
   prev="$a"
 done
+if [ "${stdin_payload}" -eq 1 ]; then
+  payload="$(cat)"
+  printf '%s\n' stdin >> "${STUB_CURL_STDIN}"
+fi
 printf '%s\n' "$payload" >> "${STUB_CURL_LOG}"
 n=1
 if [ -s "${STUB_CURL_N}" ]; then n=$(($(cat "${STUB_CURL_N}") + 1)); fi
@@ -90,10 +98,12 @@ export STUB_DOCKER_LOG="${SCRATCH}/docker.log"
 export STUB_CURL_LOG="${SCRATCH}/curl.log"
 export STUB_CURL_N="${SCRATCH}/curl.n"
 export STUB_CURL_OK="${SCRATCH}/curl-accepted.log"
+export STUB_CURL_STDIN="${SCRATCH}/curl.stdin"
 : > "${STUB_DOCKER_LOG}"
 : > "${STUB_CURL_LOG}"
 : > "${STUB_CURL_N}"
 : > "${STUB_CURL_OK}"
+: > "${STUB_CURL_STDIN}"
 export STUB_LOG_FILE="${SCRATCH}/logs.txt"
 export STUB_RUNNING="c1"
 
@@ -482,6 +492,66 @@ if [ ! -f "${STATE14}/src_test__c1" ]; then
   ok "per-container freeze: the container with the still-failing send stays frozen (no state)"
 else bad "per-container freeze: c1 advanced while its send kept failing"; fi
 export STUB_RUNNING="c1"
+
+# --- 15. a batch larger than ARG_MAX: payload goes through stdin ---------------
+# 51 lines of ~24 KiB messages: the first held-back batch (50 entries) is well
+# over 256 KiB and over macOS' ARG_MAX (1 MiB; Linux limits one argument to
+# 128 KiB), so a payload passed through argv (curl -d, jq --argjson, an entry
+# baked into the jq program) could not be execed at all. Every message must
+# arrive byte-exact, and both POSTs must have been read from stdin by the stub.
+LOGSBIG="${SCRATCH}/logsbig.txt"
+PAD="$(printf '%024000d' 0)"
+: > "${LOGSBIG}"
+i=0
+EXPECT_BIG_TOTAL=0
+EXPECT_BIG_FIRST=""
+EXPECT_BIG_LAST=""
+while [ "$i" -lt 51 ]; do
+  msg="M${i}-${PAD}"
+  EXPECT_BIG_TOTAL=$((EXPECT_BIG_TOTAL + ${#msg}))
+  [ "$i" -eq 0 ] && EXPECT_BIG_FIRST="${msg}"
+  EXPECT_BIG_LAST="${msg}"
+  printf '2026-05-01T00:00:%02d.000000000Z %s\n' "${i}" "${msg}" >> "${LOGSBIG}"
+  i=$((i + 1))
+done
+: > "${STUB_CURL_STDIN}"
+STUB_LOG_FILE="${LOGSBIG}" run_collector
+if [ "${RC}" -eq 0 ] && [ "$(batches)" = "2" ]; then
+  ok "256 KiB+ batch: exit 0, two batches (50 + 1)"
+else bad "256 KiB+ batch: rc=${RC} batches=$(batches) out=${OUT}"; fi
+if [ "$(jq -s '[.[].logs[]] | length' "${STUB_CURL_LOG}" 2>/dev/null)" = "51" ] \
+  && [ "$(jq -s '[.[].logs[].message | length] | add' "${STUB_CURL_LOG}" 2>/dev/null)" = "${EXPECT_BIG_TOTAL}" ]; then
+  ok "256 KiB+ batch: all 51 lines received with the expected total message size (payload intact)"
+else bad "256 KiB+ batch integrity: lines=$(jq -s '[.[].logs[]] | length' "${STUB_CURL_LOG}" 2>/dev/null) bytes=$(jq -s '[.[].logs[].message | length] | add' "${STUB_CURL_LOG}" 2>/dev/null) want=${EXPECT_BIG_TOTAL} out=${OUT}"; fi
+if [ "$(jq -s -r '.[0].logs[0].message' "${STUB_CURL_LOG}" 2>/dev/null)" = "${EXPECT_BIG_FIRST}" ] \
+  && [ "$(jq -s -r '.[-1].logs[-1].message' "${STUB_CURL_LOG}" 2>/dev/null)" = "${EXPECT_BIG_LAST}" ]; then
+  ok "256 KiB+ batch: the first and the last message are byte-exact"
+else bad "256 KiB+ batch: message endpoints differ"; fi
+if [ "$(grep -c '^stdin$' "${STUB_CURL_STDIN}" 2>/dev/null)" = "2" ]; then
+  ok "256 KiB+ batch: both POST payloads were read from stdin (--data-binary @-)"
+else bad "256 KiB+ batch stdin: stdin-flag lines=$(grep -c '^stdin$' "${STUB_CURL_STDIN}" 2>/dev/null)"; fi
+
+# --- 16. state write fails midway: the old state file survives -----------------
+# A fake `mv` on PATH (first entry, mv is the last step of the atomic state
+# write; the docker and curl stubs still resolve): the batch is accepted but
+# the state cannot be renamed into place. The old state file must be unchanged
+# (the write was atomic, not a truncation), the temp file must be gone, and the
+# run must exit non-zero (a state that cannot be saved is a failure).
+STATE16="${SCRATCH}/state16"
+mkdir -p "${STATE16}"
+printf '%s\n' "${TS2}" > "${STATE16}/src_test__c1"
+logs_lines "${STUB_LOG_FILE}" "${TS1}" "first" "${TS2}" "second" "${TS3}" "third"
+MVFAIL="${SCRATCH}/mvfail"
+mkdir -p "${MVFAIL}"
+printf '#!/bin/bash\nexit 1\n' > "${MVFAIL}/mv"
+chmod +x "${MVFAIL}/mv"
+run_collector TELERITHM_STATE_DIR="${STATE16}" PATH="${MVFAIL}:${PATH}"
+if [ "${RC}" -ne 0 ] && [ "$(cat "${STATE16}/src_test__c1")" = "${TS2}" ]; then
+  ok "state write fails midway (mv refuses): the old state file is unchanged, the run exits non-zero"
+else bad "state write midway: rc=${RC} state=$(cat "${STATE16}/src_test__c1" 2>/dev/null) out=${OUT}"; fi
+if [ "$(find "${STATE16}" -name 'src_test__c1.*' | wc -l | tr -d ' ')" = "0" ]; then
+  ok "state write fails midway: no temp file left in the state directory"
+else bad "state write midway: temp file left: $(find "${STATE16}")"; fi
 
 echo
 echo "passed: ${PASS}, failed: ${FAIL}"

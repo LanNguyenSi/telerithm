@@ -114,18 +114,29 @@ where it stopped instead of replaying the container history:
   timestamp. A saved timestamp therefore has all of its lines accepted for
   non-decreasing timestamps (docker merges stdout and stderr and can interleave
   them slightly out of order, but it does not replay a line at an older
-  timestamp).
+  timestamp). Residual: the hold-back has no size cap, so one timestamp group
+  spanning more lines than the batch size grows one batch without bound until a
+  line with a different timestamp arrives (a container logging thousands of
+  lines at one docker timestamp sends them as one large payload).
 - Follow mode (`TELERITHM_FOLLOW=true`, the systemd setup below) passes
   `--follow --since <state>` and writes the state after every accepted batch,
   so `systemctl restart` resumes; a first start with no state reads only the
   last `TELERITHM_TAIL_LINES` lines. After a failed send the follow run exits
-  non-zero immediately (see the systemd section below).
+  non-zero immediately (see the systemd section below). Residual: the
+  containers are processed one after another and `docker logs --follow` for the
+  first one never ends, so a follow run follows only the first container of
+  `TELERITHM_CONTAINERS`; run one unit per container (each with a single name
+  in `TELERITHM_CONTAINERS`) instead of listing several in a follow unit.
 - A container recreated under the same name starts its log at a new time: the
   stored timestamp is then newer than the new log, and `--since` returns
   nothing until the new log passes it. Delete the container's state file to
   start from now.
 - Lines from stdout and stderr are merged and the order inside one timestamp is
-  not guaranteed; at-least-once is the contract.
+  not guaranteed; at-least-once is the contract. Across containers there is no
+  ordering guarantee either: containers are collected one after another in the
+  order `TELERITHM_CONTAINERS` lists them and their batches are sent per
+  container, so interleaving between containers follows neither wall clock nor
+  log time.
 - Overlapping runs would double-send; the cron example below guards against
   them with `flock`.
 
@@ -164,13 +175,23 @@ is frozen for the rest of its processing either way, so continuing could only
 send duplicates, and exiting lets `Restart=always` restart the collector a few
 seconds later, where it resumes from the last good timestamp and can save state
 again (nothing more is sent after the failed send, so `RestartSec` is the delay
-before the collector resumes, not a bound on a growing duplicate window):
+before the collector resumes, not a bound on a growing duplicate window).
+
+In follow mode the collector follows only the first container named in
+`TELERITHM_CONTAINERS` (containers are processed one after another and
+`docker logs --follow` on the first never returns), so run one unit per
+container: the unit below is instantiated per container name (the `%i` in the
+file name and `Environment`), e.g. `telerithm-collector@triologue-api.service`
+and `telerithm-collector@traefik.service` for two containers. Listing several
+containers in one follow unit is not supported (only the first would be
+followed); it is correct only for a one-shot (cron) run, which does process
+every container in the list:
 
 ```bash
-# Create systemd service
-cat > /etc/systemd/system/telerithm-collector.service <<EOF
+# Create systemd service (one instance per container: %i is the container name)
+cat > /etc/systemd/system/telerithm-collector@.service <<EOF
 [Unit]
-Description=Telerithm Docker Log Collector
+Description=Telerithm Docker Log Collector for %i
 After=docker.service
 Requires=docker.service
 
@@ -180,7 +201,7 @@ User=root
 Environment="TELERITHM_API=http://localhost:4000/api/v1"
 Environment="TELERITHM_SOURCE_ID=src_abc123"
 Environment="TELERITHM_API_KEY=lf_xyz..."
-Environment="TELERITHM_CONTAINERS=triologue-api triologue-frontend traefik"
+Environment="TELERITHM_CONTAINERS=%i"
 Environment="TELERITHM_FOLLOW=true"
 ExecStart=/root/git/telerithm/scripts/collect-docker-logs.sh
 Restart=always
@@ -190,16 +211,16 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# Enable and start
+# Enable and start (one instance per container)
 systemctl daemon-reload
-systemctl enable telerithm-collector
-systemctl start telerithm-collector
+systemctl enable telerithm-collector@triologue-api
+systemctl start telerithm-collector@triologue-api
 
 # Check status
-systemctl status telerithm-collector
+systemctl status telerithm-collector@triologue-api
 
 # View logs
-journalctl -u telerithm-collector -f
+journalctl -u telerithm-collector@triologue-api -f
 ```
 
 Keep the default `KillMode=control-group` (do not set `KillMode=process`). On a
