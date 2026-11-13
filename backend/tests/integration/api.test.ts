@@ -74,6 +74,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
     team: {
       create: vi.fn(),
       findUnique: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       count: vi.fn().mockResolvedValue(0),
     },
@@ -139,6 +140,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
       findUnique: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       update: vi.fn(),
+      updateMany: vi.fn(),
       deleteMany: vi.fn(),
     },
     alertSubscription: {
@@ -208,6 +210,7 @@ const mockedPrisma = prisma as typeof prisma & {
   team: {
     create: ReturnType<typeof vi.fn>;
     findUnique: ReturnType<typeof vi.fn>;
+    findUniqueOrThrow: ReturnType<typeof vi.fn>;
     findMany: ReturnType<typeof vi.fn>;
     count: ReturnType<typeof vi.fn>;
   };
@@ -273,6 +276,7 @@ const mockedPrisma = prisma as typeof prisma & {
     findUnique: ReturnType<typeof vi.fn>;
     findMany: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    updateMany: ReturnType<typeof vi.fn>;
     deleteMany: ReturnType<typeof vi.fn>;
   };
   alertSubscription: {
@@ -3338,6 +3342,198 @@ describe("API Routes", () => {
         expect(mockedPrisma.teamInvite.deleteMany).toHaveBeenCalledWith({
           where: { id: "inv-1", teamId: "t1" },
         });
+      });
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Invite accept - error answers (the route must never echo raw Prisma text)
+  // ---------------------------------------------------------------------------
+
+  describe("POST /api/v1/invites/:token/accept - error answers", () => {
+    const TOKEN = "inv_accept_test_token_0001";
+
+    function makeAcceptInvite(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "inv-accept-1",
+        teamId: "t1",
+        email: null,
+        token: TOKEN,
+        role: "MEMBER",
+        createdBy: "admin-1",
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        usedAt: null,
+        createdAt: new Date("2026-03-23T00:00:00.000Z"),
+        ...overrides,
+      };
+    }
+
+    function authAsAccepter() {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-9" }));
+    }
+
+    // The interactive $transaction callback gets the same mock object as its
+    // tx client, and the guarded consume passes, so the test controls what
+    // the membership create answers.
+    function openTransaction() {
+      mockedPrisma.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+        fn(mockedPrisma),
+      );
+      mockedPrisma.teamInvite.updateMany.mockResolvedValue({ count: 1 });
+    }
+
+    function postAccept() {
+      return app.post(`/api/v1/invites/${TOKEN}/accept`).set("Authorization", "Bearer sess_admin");
+    }
+
+    // A real P2002 message is multi-line and quotes the server's source path
+    // with a code excerpt; this fake carries the same shape so the test fails
+    // if any part of it reaches the client.
+    function prismaP2002() {
+      const error = new Error(
+        [
+          "Unique constraint failed on the fields: (`teamId`,`userId`)",
+          "Invalid `prisma.teamMember.create()` invocation in",
+          "/srv/telerithm/backend/src/services/team/team-service.ts:392:34",
+          "",
+          "  389   await tx.teamMember.create(",
+          "\u2192 390     { data: { teamId, userId, role } },",
+        ].join("\n"),
+      ) as Error & { code: string };
+      error.name = "PrismaClientKnownRequestError";
+      error.code = "P2002";
+      return error;
+    }
+
+    it("answers a P2002 from the membership create with 400 Already a member, without any Prisma text", async () => {
+      authAsAccepter();
+      mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeAcceptInvite());
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+      openTransaction();
+      mockedPrisma.teamMember.create.mockRejectedValueOnce(prismaP2002());
+
+      const res = await postAccept();
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "Already a member of this team" });
+      expect(res.text).not.toContain("P2002");
+      expect(res.text).not.toContain("/srv/telerithm");
+      expect(res.text).not.toContain("teamMember");
+      expect(res.text).not.toContain(TOKEN);
+      // The conflict is an expected outcome, not an unexpected failure: no
+      // server-side error log either way about it.
+      expect(childLog.error).not.toHaveBeenCalled();
+    });
+
+    it("answers an unexpected failure with a generic 500, without its text, and logs the error", async () => {
+      const unexpected = new Error(
+        [
+          "boom from deep inside",
+          "    at acceptInvite (/srv/telerithm/backend/src/services/team/team-service.ts:392:34)",
+          "    at Layer.handle (/srv/telerithm/backend/node_modules/express/lib/router/layer.js:95:5)",
+        ].join("\n"),
+      );
+      authAsAccepter();
+      mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeAcceptInvite());
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+      openTransaction();
+      mockedPrisma.teamMember.create.mockRejectedValueOnce(unexpected);
+
+      const res = await postAccept();
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: "Could not accept the invite" });
+      expect(res.text).not.toContain("boom from deep inside");
+      expect(res.text).not.toContain("/srv/telerithm");
+      expect(res.text).not.toContain(TOKEN);
+      // The details go to the server log: the router logger was called with
+      // the error, and the invite token is not part of what was logged.
+      expect(childLog.error).toHaveBeenCalledWith(expect.objectContaining({ err: unexpected }), expect.any(String));
+      for (const call of childLog.error.mock.calls) {
+        expect(JSON.stringify(call)).not.toContain(TOKEN);
+      }
+    });
+
+    // Every deliberate rejection acceptInvite throws keeps its existing
+    // 400 + message answer: the no-leak mapping must not touch them.
+    describe.each([
+      {
+        name: "unknown token",
+        seed: () => mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(null),
+        message: "Invalid invite token",
+      },
+      {
+        name: "already-used token",
+        seed: () =>
+          mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(
+            makeAcceptInvite({ usedAt: new Date("2026-06-01T00:00:00.000Z") }),
+          ),
+        message: "Invite already used",
+      },
+      {
+        name: "expired token",
+        seed: () =>
+          mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(
+            makeAcceptInvite({ expiresAt: new Date(Date.now() - 1000) }),
+          ),
+        message: "Invite expired",
+      },
+      {
+        name: "email-restricted invite for another user",
+        seed: () => {
+          mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeAcceptInvite({ email: "target@team-a.com" }));
+          mockedPrisma.user.findUnique.mockResolvedValueOnce(makeUser({ id: "user-9", email: "someone-else@x.com" }));
+        },
+        message: "Invite is for a different email",
+      },
+      {
+        name: "user who is already a member",
+        seed: () => {
+          mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeAcceptInvite());
+          mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+            id: "member-1",
+            teamId: "t1",
+            userId: "user-9",
+            role: "MEMBER",
+            joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+          });
+        },
+        message: "Already a member of this team",
+      },
+    ])("keeps the existing answer for the $name", ({ seed, message }) => {
+      it("answers 400 with the same message as before and logs nothing", async () => {
+        authAsAccepter();
+        seed();
+
+        const res = await postAccept();
+
+        expect(res.status).toBe(400);
+        expect(res.body).toEqual({ error: message });
+        expect(childLog.error).not.toHaveBeenCalled();
+      });
+    });
+
+    it("still answers 200 with the team when the accept succeeds", async () => {
+      authAsAccepter();
+      mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeAcceptInvite());
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce(null);
+      openTransaction();
+      mockedPrisma.teamMember.create.mockResolvedValueOnce({ id: "member-1" });
+      mockedPrisma.team.findUniqueOrThrow.mockResolvedValueOnce({
+        id: "t1",
+        name: "Team One",
+        slug: "team-one",
+        createdAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+
+      const res = await postAccept();
+
+      expect(res.status).toBe(200);
+      expect(res.body.team).toEqual({
+        id: "t1",
+        name: "Team One",
+        slug: "team-one",
+        createdAt: "2026-03-23T00:00:00.000Z",
       });
     });
   });
