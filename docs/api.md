@@ -1,14 +1,15 @@
 # API
 
-The OpenAPI 3 spec (`backend/src/api/openapi.ts`, served at `GET /openapi.json` and rendered at `GET /docs`) covers the health, auth, team, source, ingest, log search, saved-view, NLQ, alert-rule and incident-list, dashboard and streaming routes. Subscriptions, issues, maintenance windows, incident actions and the incident timeline, rule mute and unmute, invites, admin routes, `GET /auth/settings`, `POST /ingest/:sourceId/raw` and `GET /logs/:id` are not in the spec yet; this page lists them. It also covers rate limiting.
+The OpenAPI 3 spec (`backend/src/api/openapi.ts`, served at `GET /openapi.json` and rendered at `GET /docs`) covers the health, auth, team, source, ingest, log search, saved-view, NLQ, alert-rule and incident-list, dashboard and streaming routes. `POST /auth/logout`, subscriptions, issues, maintenance windows, incident actions and the incident timeline, rule mute and unmute, invites, admin routes, `GET /auth/settings`, `POST /ingest/:sourceId/raw` and `GET /logs/:id` are not in the spec yet; this page lists them. It also covers rate limiting.
 
 ## Endpoints
 
-All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `/auth/*` (no auth) and `/ingest/*` (API key); `/stream/logs` also accepts the token as `?token=`.
+All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `/auth/register`, `/auth/login`, `/auth/settings` (no auth) and `/ingest/*` (API key); `/stream/logs` also accepts the token as `?token=`.
 
 | Method | Path                              | Description                       |
 | ------ | --------------------------------- | --------------------------------- |
 | `POST` | `/auth/register`, `/auth/login`   | Account creation, sign in         |
+| `POST` | `/auth/logout`                    | Sign out: deletes the session of the presented token and answers `204`, other sessions of the user stay. Bearer auth; a missing, expired or unknown token gets `401` |
 | `GET`  | `/auth/settings`                  | Registration mode (no auth)       |
 | `GET`, `POST` | `/teams`                   | Teams (list, create)              |
 | `POST`, `GET` | `/teams/:id/invites`       | Create and list team invites      |
@@ -44,7 +45,7 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `GET`, `POST` | `/maintenance-windows`     | Maintenance windows (list, create) |
 | `DELETE` | `/maintenance-windows/:id`      | Delete a maintenance window       |
 | `GET`  | `/admin/users`, `/admin/teams`, `/admin/teams/:id/members`, `/admin/stats` | Admin listings |
-| `PUT`, `POST`, `DELETE` | `/admin/users/:id`, `/admin/users/:id/approve`, `/admin/users/:id/add-to-team`, `/admin/users/:id/remove-from-team/:teamId`, `/admin/teams/:id/members/:userId` | Admin user and membership changes |
+| `PUT`, `POST`, `DELETE` | `/admin/users/:id`, `/admin/users/:id/approve`, `/admin/users/:id/add-to-team`, `/admin/users/:id/remove-from-team/:teamId`, `/admin/teams/:id/members/:userId` | Admin user and membership changes. `PUT /admin/users/:id` that leaves the user not `ACTIVE` (disabled, or set to `PENDING`) deletes all of that user's sessions; both member-removal routes also delete the removed member's subscriptions of that team |
 | `GET`  | `/health`                         | Health check                      |
 
 The `/admin/*` routes need the instance admin (global `ADMIN` user role, given to the `ADMIN_EMAIL` account at signup; team roles do not apply).
@@ -78,6 +79,10 @@ An incident is `OPEN`, `ACKNOWLEDGED` or `RESOLVED`. The actions only apply from
 Any other combination answers `409` with a message such as `Cannot acknowledge an incident that is RESOLVED; acknowledge applies to OPEN incidents`, and writes nothing (no status change, no timeline event). `409` is also the answer when another request changed the status between the check and the write. An unknown id answers `404`, and so does an incident of a team the caller does not belong to (same body), so the answer does not reveal whether an id exists. A member of the incident's team without write access (`VIEWER`) gets `403`.
 
 The by-id read routes follow the same rule: `GET /issues/:id`, `GET /alerts/incidents/:id/timeline` and `GET /query/jobs/:id` answer a caller who is not a member of the owning team with the `404` and the body they give for an unknown id (`Issue not found`, `Incident not found`, `Job not found`), and so does `DELETE /invites/:id` (`Invite not found`). A member of the invite's team who may not manage invites gets the same `404` and body (`Invite not found`), so the status does not reveal inside a team either whether an invite exists. If the membership lookup itself fails, the route answers `500`, never `403` or `404`.
+
+### Sessions
+
+`POST /auth/login` and `POST /auth/register` (when it signs the user in) return a `sess_` token that is valid for 7 days. Every authenticated request, `/stream/logs?token=` included, checks on each call that the token exists, has not expired and that its user is `ACTIVE`; otherwise the answer is `401`. So disabling a user locks out their tokens at once, and re-enabling the user does not revive them (the rows are deleted when the user is disabled): the user logs in again. `POST /auth/logout` ends one session; the frontend calls it before it clears its cookies and clears them even when the call fails.
 
 ### Subscription channels
 

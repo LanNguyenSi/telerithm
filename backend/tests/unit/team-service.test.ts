@@ -23,6 +23,8 @@ const {
   mockTeamCreate,
   mockTeamFindUniqueOrThrow,
   mockTransaction,
+  mockAlertSubscriptionDeleteMany,
+  mockSessionFindUnique,
   mockLogSourceFindMany,
   mockLogSourceFindUnique,
   mockLogSourceUpdate,
@@ -48,6 +50,8 @@ const {
   mockTeamCreate: vi.fn(),
   mockTeamFindUniqueOrThrow: vi.fn(),
   mockTransaction: vi.fn(),
+  mockAlertSubscriptionDeleteMany: vi.fn(),
+  mockSessionFindUnique: vi.fn(),
   mockLogSourceFindMany: vi.fn(),
   mockLogSourceFindUnique: vi.fn(),
   mockLogSourceUpdate: vi.fn(),
@@ -103,6 +107,12 @@ vi.mock("../../src/repositories/prisma.js", () => ({
       update: mockLogSourceUpdate,
       delete: mockLogSourceDelete,
       create: mockLogSourceCreate,
+    },
+    alertSubscription: {
+      deleteMany: mockAlertSubscriptionDeleteMany,
+    },
+    session: {
+      findUnique: mockSessionFindUnique,
     },
     $transaction: mockTransaction,
   },
@@ -403,6 +413,7 @@ describe("TeamService.removeUserFromTeam", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockTransaction.mockImplementation(async (ops: Array<Promise<unknown>>) => Promise.all(ops));
     service = new TeamService();
   });
 
@@ -416,12 +427,71 @@ describe("TeamService.removeUserFromTeam", () => {
     });
   });
 
+  it("deletes the user's subscriptions of that team only, in the same transaction as the membership", async () => {
+    const deleteSubs = Promise.resolve({ count: 2 });
+    const deleteMember = Promise.resolve({ id: "tm-1" });
+    mockAlertSubscriptionDeleteMany.mockReturnValue(deleteSubs);
+    mockTeamMemberDelete.mockReturnValue(deleteMember);
+
+    await service.removeUserFromTeam(USER_ID, TEAM_A);
+
+    expect(mockAlertSubscriptionDeleteMany).toHaveBeenCalledExactlyOnceWith({
+      where: { teamId: TEAM_A, userId: USER_ID },
+    });
+    expect(mockTransaction).toHaveBeenCalledExactlyOnceWith([deleteSubs, deleteMember]);
+  });
+
   it("fails safely (no silent cross-team fallback) when the user is not a member of the given team", async () => {
     mockTeamMemberDelete.mockRejectedValue(new Error("Record to delete does not exist (P2025)"));
 
     await expect(service.removeUserFromTeam(USER_ID, TEAM_B)).rejects.toThrow("P2025");
     expect(mockTeamMemberDelete).toHaveBeenCalledExactlyOnceWith({
       where: { teamId_userId: { teamId: TEAM_B, userId: USER_ID } },
+    });
+    expect(mockAlertSubscriptionDeleteMany).toHaveBeenCalledExactlyOnceWith({
+      where: { teamId: TEAM_B, userId: USER_ID },
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// createTeam: the token is resolved through the shared active-session check
+// ---------------------------------------------------------------------------
+
+describe("TeamService.createTeam session check", () => {
+  let service: TeamService;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    configMock.multiTenant = true;
+    service = new TeamService();
+  });
+
+  it("rejects a token whose user is DISABLED and creates nothing", async () => {
+    mockSessionFindUnique.mockResolvedValue({
+      userId: USER_ID,
+      token: "sess_x",
+      expiresAt: new Date(Date.now() + 60_000),
+      user: { status: "DISABLED" },
+    });
+
+    await expect(service.createTeam("sess_x", "T", "t")).rejects.toThrow("Unauthorized");
+    expect(mockTeamCreate).not.toHaveBeenCalled();
+  });
+
+  it("creates the team for a token whose user is ACTIVE, with that user as OWNER", async () => {
+    mockSessionFindUnique.mockResolvedValue({
+      userId: USER_ID,
+      token: "sess_x",
+      expiresAt: new Date(Date.now() + 60_000),
+      user: { status: "ACTIVE" },
+    });
+    mockTeamCreate.mockResolvedValue({ id: "team-new", name: "T", slug: "t", createdAt: new Date() });
+
+    await service.createTeam("sess_x", "T", "t");
+
+    expect(mockTeamCreate).toHaveBeenCalledWith({
+      data: { name: "T", slug: "t", members: { create: { userId: USER_ID, role: "OWNER" } } },
     });
   });
 });
