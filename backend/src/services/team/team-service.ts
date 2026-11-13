@@ -12,6 +12,7 @@ import { prisma } from "../../repositories/prisma.js";
 import { generateId } from "../../utils/id.js";
 import { hashPassword, verifyPassword } from "../../utils/password.js";
 import { createChildLogger } from "../../logger.js";
+import { findActiveSession } from "./active-session.js";
 
 const log = createChildLogger("team-service");
 
@@ -321,9 +322,15 @@ export class TeamService {
   }
 
   async removeUserFromTeam(userId: string, teamId: string): Promise<void> {
-    await prisma.teamMember.delete({
-      where: { teamId_userId: { teamId, userId } },
-    });
+    // One transaction: the subscriptions go with the membership, so a removed
+    // member's webhooks stop receiving the team's incidents. When the user is
+    // not a member the delete throws and the subscription delete rolls back.
+    await prisma.$transaction([
+      prisma.alertSubscription.deleteMany({ where: { teamId, userId } }),
+      prisma.teamMember.delete({
+        where: { teamId_userId: { teamId, userId } },
+      }),
+    ]);
   }
 
   // --- Invite System (Multi-Tenant) ---
@@ -432,8 +439,8 @@ export class TeamService {
   }
 
   private async validateToken(token: string) {
-    const session = await prisma.session.findUnique({ where: { token } });
-    if (!session || session.expiresAt < new Date()) {
+    const session = await findActiveSession(token);
+    if (!session) {
       throw new Error("Unauthorized");
     }
     return session;

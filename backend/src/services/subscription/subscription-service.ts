@@ -76,6 +76,9 @@ export class SubscriptionService {
       where: {
         teamId,
         enabled: true,
+        // Only active, current members: a row left behind by a removed member or
+        // kept by a disabled user is skipped.
+        user: { status: "ACTIVE", teams: { some: { teamId } } },
         OR: [{ ruleId }, { ruleId: null }],
         AND: [
           {

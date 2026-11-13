@@ -313,6 +313,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     userId: "admin-1",
     token: "sess_admin",
     expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+    user: { status: "ACTIVE" },
     ...overrides,
   };
 }
@@ -2855,6 +2856,7 @@ describe("API Routes", () => {
       expect(res.status).toBe(401);
       expect(mockedPrisma.session.findUnique).toHaveBeenCalledWith({
         where: { token: "bogus" },
+        include: { user: { select: { status: true } } },
       });
     });
 

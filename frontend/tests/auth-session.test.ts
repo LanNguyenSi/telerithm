@@ -11,7 +11,7 @@ vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => mockCookieStore),
 }));
 
-import { getSession, setSession, clearSession } from "@/lib/auth/session";
+import { getSession, getSessionToken, setSession, clearSession } from "@/lib/auth/session";
 
 const user: SessionUser = {
   id: "u1",
@@ -123,5 +123,25 @@ describe("session — clearSession", () => {
 
     expect(mockCookieStore.delete).toHaveBeenCalledWith("telerithm_token");
     expect(mockCookieStore.delete).toHaveBeenCalledWith("telerithm_user");
+  });
+});
+
+describe("session — getSessionToken", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns the token even when the user cookie is absent", async () => {
+    mockCookieStore.get.mockImplementation((name: string) =>
+      name === "telerithm_token" ? { value: "tok-123" } : undefined,
+    );
+
+    await expect(getSessionToken()).resolves.toBe("tok-123");
+  });
+
+  it("returns null when the token cookie is missing", async () => {
+    mockCookieStore.get.mockReturnValue(undefined);
+
+    await expect(getSessionToken()).resolves.toBeNull();
   });
 });
