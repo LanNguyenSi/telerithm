@@ -16,6 +16,13 @@ export async function getSession(): Promise<{ token: string; user: SessionUser }
   }
 }
 
+// The token alone, for calls that must not depend on the readable user cookie
+// (logout has to reach the backend even when only the httpOnly token is left).
+export async function getSessionToken(): Promise<string | null> {
+  const cookieStore = await cookies();
+  return cookieStore.get(TOKEN_COOKIE)?.value ?? null;
+}
+
 export async function setSession(token: string, user: SessionUser): Promise<void> {
   const cookieStore = await cookies();
   const opts = {

@@ -42,6 +42,13 @@ export const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
     reason: "Public login, no session and no team yet; abuse is bounded by authLimiter.",
     verify: { type: "identifier", name: "authLimiter" },
   },
+  "POST /auth/logout": {
+    kind: "allowlist",
+    reason:
+      "Ends the caller's own presented session; it is not scoped to a team, so there is no membership or " +
+      "role to check.",
+    verify: { type: "call", callee: "requireAuth" },
+  },
   "POST /teams": {
     kind: "allowlist",
     reason:

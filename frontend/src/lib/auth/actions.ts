@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { setSession, clearSession } from "./session";
+import { getSessionToken, setSession, clearSession } from "./session";
 import type { SessionUser } from "@/types";
 
 function getApiBaseUrl() {
@@ -71,6 +71,25 @@ export async function registerAction(_prev: unknown, formData: FormData) {
 }
 
 export async function logoutAction() {
+  // End the session on the backend first so the token stops working there, not
+  // only in this browser. A failed call must not block logout: the cookies are
+  // cleared either way.
+  try {
+    const token = await getSessionToken();
+    if (token) {
+      const res = await fetch(`${getApiBaseUrl()}/auth/logout`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) {
+        console.error(`Backend logout failed with status ${res.status}`);
+      }
+    }
+  } catch (error) {
+    console.error("Backend logout failed", error);
+  }
   await clearSession();
   redirect("/login");
 }

@@ -14,12 +14,13 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/lib/auth/session", () => ({
+  getSessionToken: vi.fn(),
   setSession: vi.fn(),
   clearSession: vi.fn(),
 }));
 
 import { redirect } from "next/navigation";
-import { setSession, clearSession } from "@/lib/auth/session";
+import { getSessionToken, setSession, clearSession } from "@/lib/auth/session";
 import { loginAction, registerAction, logoutAction } from "@/lib/auth/actions";
 
 const user: SessionUser = {
@@ -215,15 +216,86 @@ describe("actions — logoutAction", () => {
     vi.mocked(redirect).mockImplementation((url: string) => {
       throw new RedirectError(url);
     });
+    vi.stubGlobal("fetch", vi.fn());
+    vi.spyOn(console, "error").mockImplementation(() => {});
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
-  it("clears the session and redirects to /login", async () => {
+  it("ends the session on the backend with the session token, then clears the cookies and redirects to /login", async () => {
+    vi.stubEnv("INTERNAL_API_BASE_URL", "http://internal-api/api/v1");
+    vi.mocked(getSessionToken).mockResolvedValue("tok-123");
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: true, status: 204 } as Response);
+
     await expect(logoutAction()).rejects.toThrow("NEXT_REDIRECT:/login");
 
+    expect(fetch).toHaveBeenCalledWith(
+      "http://internal-api/api/v1/auth/logout",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer tok-123" },
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(clearSession).toHaveBeenCalled();
+    expect(redirect).toHaveBeenCalledWith("/login");
+  });
+
+  it("calls the backend before it clears the cookies", async () => {
+    const order: string[] = [];
+    vi.mocked(getSessionToken).mockResolvedValue("tok-123");
+    (fetch as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      order.push("fetch");
+      return { ok: true, status: 204 } as Response;
+    });
+    vi.mocked(clearSession).mockImplementation(async () => {
+      order.push("clear");
+    });
+
+    await expect(logoutAction()).rejects.toThrow("NEXT_REDIRECT:/login");
+
+    expect(order).toEqual(["fetch", "clear"]);
+  });
+
+  it("still clears the cookies and redirects when the backend call fails with a network error", async () => {
+    vi.mocked(getSessionToken).mockResolvedValue("tok-123");
+    (fetch as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("ECONNREFUSED"));
+
+    await expect(logoutAction()).rejects.toThrow("NEXT_REDIRECT:/login");
+
+    expect(clearSession).toHaveBeenCalled();
+    expect(redirect).toHaveBeenCalledWith("/login");
+  });
+
+  it("still clears the cookies and redirects when the backend answers with an error status", async () => {
+    vi.mocked(getSessionToken).mockResolvedValue("tok-123");
+    (fetch as ReturnType<typeof vi.fn>).mockResolvedValue({ ok: false, status: 401 } as Response);
+
+    await expect(logoutAction()).rejects.toThrow("NEXT_REDIRECT:/login");
+
+    expect(clearSession).toHaveBeenCalled();
+    expect(redirect).toHaveBeenCalledWith("/login");
+  });
+
+  it("still clears the cookies when reading the token throws", async () => {
+    vi.mocked(getSessionToken).mockRejectedValue(new Error("cookies unavailable"));
+
+    await expect(logoutAction()).rejects.toThrow("NEXT_REDIRECT:/login");
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(clearSession).toHaveBeenCalled();
+  });
+
+  it("clears the cookies without a backend call when there is no session", async () => {
+    vi.mocked(getSessionToken).mockResolvedValue(null);
+
+    await expect(logoutAction()).rejects.toThrow("NEXT_REDIRECT:/login");
+
+    expect(fetch).not.toHaveBeenCalled();
     expect(clearSession).toHaveBeenCalled();
     expect(redirect).toHaveBeenCalledWith("/login");
   });

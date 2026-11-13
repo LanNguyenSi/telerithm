@@ -13,6 +13,7 @@ import { SubscriptionService } from "../../services/subscription/subscription-se
 import { assertSafeUrl } from "../../services/notification/url-guard.js";
 import { ChannelConfigError, ChannelHttpError } from "../../services/notification/channels/errors.js";
 import { TeamService } from "../../services/team/team-service.js";
+import { findActiveSession, isSessionAuthorizedForTeam } from "../../services/team/active-session.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../errors.js";
 import { createWriteRoute, teamFromBody, teamFromResource, type TeamRoleName } from "./write-route.js";
 import {
@@ -320,6 +321,18 @@ apiRouter.post(
     } catch (error) {
       res.status(401).json({ error: error instanceof Error ? error.message : "Login failed" });
     }
+  }),
+);
+
+// Ends the presented session only: other sessions of the same user (another
+// device) stay valid. Without a live token it answers 401 like every
+// authenticated route.
+apiRouter.post(
+  "/auth/logout",
+  asyncHandler(async (req, res) => {
+    if ((await requireAuth(req, res)) === null) return;
+    await prisma.session.deleteMany({ where: { token: parseToken(req.header("authorization")) } });
+    res.status(204).end();
   }),
 );
 
@@ -1137,8 +1150,8 @@ apiRouter.get(
 async function resolveUserId(req: Request): Promise<string> {
   const header = req.header("authorization");
   const token = parseToken(header);
-  const session = await prisma.session.findUnique({ where: { token } });
-  if (!session || session.expiresAt < new Date()) {
+  const session = await findActiveSession(token);
+  if (!session) {
     throw new Error("Unauthorized");
   }
   return session.userId;
@@ -1149,16 +1162,20 @@ async function resolveUserId(req: Request): Promise<string> {
 // Only mounted on /stream/logs; every other route stays header-only via
 // resolveUserId. The token in URL leaks into the access log, so the http
 // logger in app.ts redacts `token=...` before writing.
-async function resolveStreamUserId(req: Request): Promise<string> {
+function streamToken(req: Request): string | undefined {
   const header = req.header("authorization");
   const headerToken = header ? header.replace(/^Bearer\s+/i, "") : undefined;
   const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
-  const token = headerToken || queryToken;
+  return headerToken || queryToken;
+}
+
+async function resolveStreamUserId(req: Request): Promise<string> {
+  const token = streamToken(req);
   if (!token) {
     throw new Error("Unauthorized");
   }
-  const session = await prisma.session.findUnique({ where: { token } });
-  if (!session || session.expiresAt < new Date()) {
+  const session = await findActiveSession(token);
+  if (!session) {
     throw new Error("Unauthorized");
   }
   return session.userId;
@@ -1881,6 +1898,13 @@ apiRouter.put(
         select: { id: true, email: true, name: true, role: true, status: true, createdAt: true },
         data,
       });
+      // A user who is not ACTIVE (disabled, or sent back to pending) loses every
+      // session at once. The token check already refuses such a user; deleting
+      // the rows keeps the table clean and means a later re-enable starts from a
+      // fresh login rather than reviving an old token.
+      if (user.status !== "ACTIVE") {
+        await prisma.session.deleteMany({ where: { userId: user.id } });
+      }
       res.json({
         user: {
           ...user,
@@ -1995,14 +2019,7 @@ apiRouter.delete(
   asyncHandler(async (req, res) => {
     if (!(await requireAdmin(req, res))) return;
     try {
-      await prisma.teamMember.delete({
-        where: {
-          teamId_userId: {
-            teamId: String(req.params.id),
-            userId: String(req.params.userId),
-          },
-        },
-      });
+      await teamService.removeUserFromTeam(String(req.params.userId), String(req.params.id));
       res.status(204).end();
     } catch (error) {
       if (handlePrismaError(error, res, { notFound: "Member not found" })) return;
@@ -2043,13 +2060,21 @@ apiRouter.get(
     const level = typeof req.query.level === "string" ? req.query.level : undefined;
     const query = typeof req.query.query === "string" ? req.query.query : undefined;
 
-    const unsubscribe = streamingService.subscribe(teamId, res, {
-      sourceId,
-      service,
-      host,
-      level,
-      query,
-    });
+    // The token was checked once above; the stream re-checks it and the team
+    // membership on every heartbeat and ends when either is gone.
+    const token = streamToken(req) ?? "";
+    const unsubscribe = streamingService.subscribe(
+      teamId,
+      res,
+      {
+        sourceId,
+        service,
+        host,
+        level,
+        query,
+      },
+      () => isSessionAuthorizedForTeam(token, userId, teamId),
+    );
     req.on("close", unsubscribe);
   }),
 );

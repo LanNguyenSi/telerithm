@@ -113,6 +113,7 @@ beforeEach(() => {
     userId: "user-1",
     token: "sess_member",
     expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+    user: { status: "ACTIVE" },
   });
   db.teamMember.findUnique.mockResolvedValue({
     id: "m1",
