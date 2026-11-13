@@ -102,6 +102,40 @@ describe("StreamingService heartbeat re-validation", () => {
     expect(dec).toHaveBeenCalledTimes(1);
   });
 
+  it("writes no ping and ends once when the stream is closed while the check is pending and then passes", async () => {
+    const res = fakeRes();
+    let resolveCheck!: (allowed: boolean) => void;
+    const revalidate = vi.fn(() => new Promise<boolean>((resolve) => (resolveCheck = resolve)));
+    const close = service.subscribe("t1", asRes(res), undefined, revalidate);
+
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(revalidate).toHaveBeenCalledTimes(1);
+    close();
+    resolveCheck(true);
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(pings(res)).toBe(0);
+    expect(res.end).toHaveBeenCalledTimes(1);
+    expect(dec).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes no ping and ends once when the stream is closed while the check is pending and then fails", async () => {
+    const res = fakeRes();
+    let rejectCheck!: (error: Error) => void;
+    const revalidate = vi.fn(() => new Promise<boolean>((_resolve, reject) => (rejectCheck = reject)));
+    const close = service.subscribe("t1", asRes(res), undefined, revalidate);
+
+    await vi.advanceTimersByTimeAsync(15000);
+    expect(revalidate).toHaveBeenCalledTimes(1);
+    close();
+    rejectCheck(new Error("db down"));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(pings(res)).toBe(0);
+    expect(res.end).toHaveBeenCalledTimes(1);
+    expect(dec).toHaveBeenCalledTimes(1);
+  });
+
   it("without a check it only pings", async () => {
     const res = fakeRes();
     service.subscribe("t1", asRes(res));
