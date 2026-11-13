@@ -12,7 +12,16 @@ import supertest from "supertest";
 
 const { mockIngest } = vi.hoisted(() => ({ mockIngest: vi.fn() }));
 
+// The router translates IngestBatchTooLargeError (imported from the mocked
+// module) into 413, so the mock must export the class too; the message
+// template mirrors ingestion-service.ts.
 vi.mock("../../src/ingestion/ingestion-service.js", () => ({
+  IngestBatchTooLargeError: class IngestBatchTooLargeError extends Error {
+    constructor(maxEntries: number) {
+      super(`Too many log entries: an ingest request is capped at ${maxEntries} parsed entries`);
+      this.name = "IngestBatchTooLargeError";
+    }
+  },
   IngestionService: class {
     events = { on: vi.fn(), off: vi.fn(), emit: vi.fn() };
     ingest = mockIngest;
@@ -75,6 +84,8 @@ vi.mock("../../src/repositories/redis.js", () => ({
 }));
 
 import { prisma } from "../../src/repositories/prisma.js";
+import { IngestBatchTooLargeError } from "../../src/ingestion/ingestion-service.js";
+import { MAX_INGEST_BATCH } from "../../src/validation/schemas.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const db = prisma as unknown as {
@@ -194,6 +205,36 @@ describe("POST /api/v1/ingest/:sourceId/raw", () => {
     expect(res.status).toBe(404);
     expect(res.body.error).toBe("Source not found");
   });
+
+  it("answers 413 with the limit and ingests nothing for one line more than the cap", async () => {
+    const body = Array.from({ length: MAX_INGEST_BATCH + 1 }, (_, i) => `line ${i}`).join("\n");
+
+    const res = await raw().set("Content-Type", "text/plain").send(body);
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toContain(String(MAX_INGEST_BATCH));
+    expect(mockIngest).not.toHaveBeenCalled();
+  });
+
+  it("ingests a body of exactly the cap's worth of lines", async () => {
+    const body = Array.from({ length: MAX_INGEST_BATCH }, (_, i) => `line ${i}`).join("\n");
+
+    const res = await raw().set("Content-Type", "text/plain").send(body);
+
+    expect(res.status).toBe(202);
+    expect(mockIngest).toHaveBeenCalledOnce();
+    const payload = mockIngest.mock.calls[0][1] as { logs: string[] };
+    expect(payload.logs).toHaveLength(MAX_INGEST_BATCH);
+    expect(payload.logs[0]).toBe("line 0");
+  });
+  it("answers 413 when a line expands past the cap in the service", async () => {
+    mockIngest.mockRejectedValueOnce(new IngestBatchTooLargeError(MAX_INGEST_BATCH));
+
+    const res = await raw().set("Content-Type", "text/plain").send("[{},{}]");
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toContain(String(MAX_INGEST_BATCH));
+  });
 });
 
 describe("POST /api/v1/ingest/:sourceId with a bare JSON array", () => {
@@ -219,6 +260,18 @@ describe("POST /api/v1/ingest/:sourceId with a bare JSON array", () => {
     expect((await ingest().send([])).status).toBe(400);
     expect((await ingest().send([{ level: "loud", message: "x" }])).status).toBe(400);
     expect(mockIngest).not.toHaveBeenCalled();
+  });
+
+  it("answers 413 with the limit when the service rejects an oversized parsed batch", async () => {
+    // The service-side check is what catches a single string element that
+    // parses into more than MAX_INGEST_BATCH entries; the route maps its
+    // error to 413 (the schema 400 for >1000 array elements is unchanged).
+    mockIngest.mockRejectedValue(new IngestBatchTooLargeError(MAX_INGEST_BATCH));
+
+    const res = await ingest().send({ logs: ["[...parsed into too many entries...]"] });
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toContain(String(MAX_INGEST_BATCH));
   });
 });
 

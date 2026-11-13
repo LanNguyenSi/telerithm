@@ -10,6 +10,7 @@ import supertest from "supertest";
 // clear of the shared app's rate-limit budget.
 
 vi.mock("../../src/ingestion/ingestion-service.js", () => ({
+  IngestBatchTooLargeError: class IngestBatchTooLargeError extends Error {},
   IngestionService: class {
     events = { on: vi.fn(), off: vi.fn(), emit: vi.fn() };
     ingest = vi.fn();

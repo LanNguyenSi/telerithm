@@ -12,6 +12,7 @@ import {
   createSubscriptionSchema,
   updateSubscriptionSchema,
   EMAIL_CHANNEL_UNSUPPORTED_MESSAGE,
+  MAX_INGEST_BATCH,
 } from "../../src/validation/schemas.js";
 
 describe("Validation Schemas", () => {
@@ -101,6 +102,20 @@ describe("Validation Schemas", () => {
     it("rejects empty logs array", () => {
       const result = ingestSchema.safeParse({ logs: [] });
       expect(result.success).toBe(false);
+    });
+
+    it("accepts exactly MAX_INGEST_BATCH entries", () => {
+      const logs = Array.from({ length: MAX_INGEST_BATCH }, (_, i) => ({
+        message: `line ${i}`,
+      }));
+      expect(ingestSchema.safeParse({ logs }).success).toBe(true);
+    });
+
+    it("rejects MAX_INGEST_BATCH plus one entries", () => {
+      const logs = Array.from({ length: MAX_INGEST_BATCH + 1 }, (_, i) => ({
+        message: `line ${i}`,
+      }));
+      expect(ingestSchema.safeParse({ logs }).success).toBe(false);
     });
   });
 

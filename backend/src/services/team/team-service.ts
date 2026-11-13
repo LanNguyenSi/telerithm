@@ -375,15 +375,24 @@ export class TeamService {
     });
     if (existing) throw new Error("Already a member of this team");
 
-    await prisma.$transaction([
-      prisma.teamMember.create({
+    // Consume the invite atomically: only the request whose updateMany flips
+    // usedAt from null to now (count 1) may create the membership, so two
+    // concurrent accepts of the same token cannot both join the team. The
+    // usedAt/expiresAt guards in the where clause make the second acceptor
+    // match zero rows.
+    const now = new Date();
+    await prisma.$transaction(async (tx) => {
+      const consumed = await tx.teamInvite.updateMany({
+        where: { id: invite.id, usedAt: null, expiresAt: { gt: now } },
+        data: { usedAt: now },
+      });
+      if (consumed.count !== 1) {
+        throw new Error(invite.expiresAt > now ? "Invite already used" : "Invite expired");
+      }
+      await tx.teamMember.create({
         data: { teamId: invite.teamId, userId, role: invite.role },
-      }),
-      prisma.teamInvite.update({
-        where: { id: invite.id },
-        data: { usedAt: new Date() },
-      }),
-    ]);
+      });
+    });
 
     const team = await prisma.team.findUniqueOrThrow({ where: { id: invite.teamId } });
     log.info({ teamId: invite.teamId, userId }, "Invite accepted");
