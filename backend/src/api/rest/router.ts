@@ -1796,6 +1796,23 @@ apiRouter.get(
   }),
 );
 
+// The deliberate rejections of TeamService.acceptInvite (invalid/expired/used
+// or wrong-email invite, already a member): their message is the client-facing
+// verdict, so the accept route answers 400 with it. Anything outside this list
+// is unexpected and its message may carry internals (a Prisma error quotes the
+// server's source path and a code excerpt), so it gets a generic 500 and the
+// raw error goes to the log only. The list lives in the route, not the
+// service: mapping failures onto HTTP is the router's job everywhere else
+// (handlePrismaError, handleServiceError), and this keeps all three answers in
+// one place.
+const ACCEPT_INVITE_EXPECTED_ERRORS = new Set([
+  "Invalid invite token",
+  "Invite already used",
+  "Invite expired",
+  "Invite is for a different email",
+  "Already a member of this team",
+]);
+
 apiRouter.post(
   "/invites/:token/accept",
   asyncHandler(async (req, res) => {
@@ -1805,7 +1822,31 @@ apiRouter.post(
       const team = await teamService.acceptInvite(String(req.params.token), userId);
       res.json({ team });
     } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : "Failed" });
+      // A membership create that loses the race to a concurrent accept hits
+      // the (teamId, userId) unique constraint: Prisma's P2002, whose
+      // multi-line message must never reach the client. Same answer as the
+      // service's already-a-member pre-check (400, like every expected invite
+      // failure here). The code check is structural the way handlePrismaError
+      // does it; 409 would split one outcome across two statuses, because the
+      // pre-check answers 400 today and every expected error on this route is
+      // a 400.
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error as { code?: unknown }).code === "P2002"
+      ) {
+        res.status(400).json({ error: "Already a member of this team" });
+        return;
+      }
+      if (error instanceof Error && ACCEPT_INVITE_EXPECTED_ERRORS.has(error.message)) {
+        res.status(400).json({ error: error.message });
+        return;
+      }
+      // Unexpected failure: details to the server log only (the invite token
+      // is deliberately not part of the context), one generic answer out.
+      log.error({ err: error }, "Invite accept failed");
+      res.status(500).json({ error: "Could not accept the invite" });
     }
   }),
 );
