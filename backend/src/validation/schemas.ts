@@ -290,9 +290,16 @@ export const addUserToTeamSchema = z.object({
   role: z.enum(["OWNER", "ADMIN", "MEMBER", "VIEWER"]).default("MEMBER"),
 });
 
-// One ingest request carries at most this many log entries. Far above the
-// JS SDK's default batchSize of 10 and the Vector reference config's batch
-// of 100, and it bounds the fire-and-forget issue-tracking fan-out per batch.
+// One ingest request carries at most this many log entries after parsing.
+// Three checks bound it: ingestSchema below caps the logs array elements
+// (more answers 400 like any other validation failure), IngestionService.ingest
+// re-checks the parsed entry count because a string element can expand into
+// many entries (more answers 413 with nothing inserted), and the
+// /ingest/:sourceId/raw route bounds its body lines the same way (413).
+// Far above the JS SDK's default batchSize of 10 and the shipped forwarder
+// configs' per-request sizes (Vector max_events 100, Fluentd
+// chunk_limit_records 500), and it bounds the fire-and-forget issue-tracking
+// fan-out per batch.
 export const MAX_INGEST_BATCH = 1000;
 
 export const ingestSchema = z.object({

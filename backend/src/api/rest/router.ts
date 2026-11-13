@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import express, { type Request, type Response, type NextFunction, Router } from "express";
 import rateLimit, { ipKeyGenerator, type RateLimitInfo } from "express-rate-limit";
-import { IngestionService } from "../../ingestion/ingestion-service.js";
+import { IngestionService, IngestBatchTooLargeError } from "../../ingestion/ingestion-service.js";
 import { LogRepository } from "../../repositories/log-repository.js";
 import { AlertService } from "../../services/alert/alert-service.js";
 import { DashboardService } from "../../services/dashboard/dashboard-service.js";
@@ -26,6 +26,7 @@ import {
   createTeamSchema,
   incidentActionSchema,
   ingestSchema,
+  MAX_INGEST_BATCH,
   issueQuerySchema,
   issueUpdateSchema,
   maintenanceWindowSchema,
@@ -522,6 +523,10 @@ apiRouter.post(
       const response = await ingestionService.ingest(String(req.params.sourceId), parsed.data);
       res.status(202).json(response);
     } catch (error) {
+      if (error instanceof IngestBatchTooLargeError) {
+        res.status(413).json({ error: error.message });
+        return;
+      }
       res.status(404).json({ error: error instanceof Error ? error.message : "Ingest failed" });
     }
   }),
@@ -553,6 +558,13 @@ apiRouter.post(
     const lines = req.body.split(/\r?\n/).filter((l: string) => l.trim().length > 0);
     if (lines.length === 0) {
       res.status(400).json({ error: "Empty body" });
+      return;
+    }
+    // The raw route skips ingestSchema, so bound the entry count (one line,
+    // one entry) against the same cap here; 413 with the same body the JSON
+    // route sends when the service rejects an oversized parsed batch.
+    if (lines.length > MAX_INGEST_BATCH) {
+      res.status(413).json({ error: new IngestBatchTooLargeError(MAX_INGEST_BATCH).message });
       return;
     }
     const payload = { logs: lines };

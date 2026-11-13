@@ -8,8 +8,19 @@ import { generateId, generateLogId } from "../utils/id.js";
 import { createChildLogger } from "../logger.js";
 import { cache } from "../cache/cache-service.js";
 import { ingestBatchTotal, ingestLogsTotal } from "../metrics/index.js";
+import { MAX_INGEST_BATCH } from "../validation/schemas.js";
 
 const log = createChildLogger("ingestion");
+
+// The schema cap on ingestSchema.logs bounds array elements; this error
+// reports a request whose parsed entry count exceeds MAX_INGEST_BATCH (a raw
+// string element can expand into many entries), so the router can answer 413.
+export class IngestBatchTooLargeError extends Error {
+  constructor(readonly maxEntries: number) {
+    super(`Too many log entries: an ingest request is capped at ${maxEntries} parsed entries`);
+    this.name = "IngestBatchTooLargeError";
+  }
+}
 
 export class IngestionService {
   readonly events = new EventEmitter();
@@ -54,6 +65,15 @@ export class IngestionService {
         });
       }
     });
+
+    // The schema bounds the array elements; bound the parsed entries here.
+    // A string element can expand into any number of entries (a leading "["
+    // is parsed as a JSON array), so a request inside the schema cap can
+    // still hold more than MAX_INGEST_BATCH entries. Reject the whole batch
+    // before anything is written or tracked.
+    if (accepted.length > MAX_INGEST_BATCH) {
+      throw new IngestBatchTooLargeError(MAX_INGEST_BATCH);
+    }
 
     if (accepted.length > 0) {
       await this.logRepo.insert(accepted);

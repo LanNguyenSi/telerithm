@@ -1,14 +1,17 @@
 /**
  * The reference log-shipper configs under deploy/ must not give a host root
  * lever or an open unauthenticated port to someone who copies them to a server:
- * the Fluentd forward input binds loopback, and any service that mounts the
- * Docker socket sits behind an opt-in compose profile.
+ * the Fluentd forward input binds loopback, any service that mounts the
+ * Docker socket sits behind an opt-in compose profile, and every buffered
+ * batch stays at or below the ingest API's per-request entry cap so a full
+ * chunk is never rejected (and dropped) by the endpoint.
  */
 
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { MAX_INGEST_BATCH } from "../../src/validation/schemas.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -65,6 +68,34 @@ describe("deploy/fluentd/fluent.conf", () => {
     expect(raw).toMatch(/^\s*#\s*<security>/m);
     expect(raw).toMatch(/^\s*#\s*shared_key\b.*ENV/m);
     expect(active.some((l) => /<security>|shared_key/.test(l))).toBe(false);
+  });
+
+  it("bounds every buffered chunk at or below the API's per-request entry cap", () => {
+    const caps = active
+      .map((l) => /^\s*chunk_limit_records\s+(\S+)\s*$/.exec(l))
+      .filter((m) => m !== null)
+      .map((m) => Number(m![1]));
+    expect(caps.length).toBeGreaterThan(0);
+    for (const cap of caps) {
+      expect(Number.isInteger(cap)).toBe(true);
+      expect(cap).toBeGreaterThan(0);
+      expect(cap).toBeLessThanOrEqual(MAX_INGEST_BATCH);
+    }
+  });
+});
+
+describe("deploy/vector/vector.toml", () => {
+  it("keeps the sink batch at or below the API's per-request entry cap", () => {
+    const caps = activeLines(read("deploy/vector/vector.toml"))
+      .map((l) => /^\s*max_events\s*=\s*(\S+)\s*$/.exec(l))
+      .filter((m) => m !== null)
+      .map((m) => Number(m![1]));
+    expect(caps.length).toBeGreaterThan(0);
+    for (const cap of caps) {
+      expect(Number.isInteger(cap)).toBe(true);
+      expect(cap).toBeGreaterThan(0);
+      expect(cap).toBeLessThanOrEqual(MAX_INGEST_BATCH);
+    }
   });
 });
 

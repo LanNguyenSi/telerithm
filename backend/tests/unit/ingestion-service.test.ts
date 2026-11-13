@@ -57,7 +57,8 @@ vi.mock("../../src/metrics/index.js", () => ({
   ingestLogsTotal: { inc: mockIngestLogsInc },
 }));
 
-import { IngestionService } from "../../src/ingestion/ingestion-service.js";
+import { IngestionService, IngestBatchTooLargeError } from "../../src/ingestion/ingestion-service.js";
+import { MAX_INGEST_BATCH } from "../../src/validation/schemas.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -302,5 +303,44 @@ describe("IngestionService.ingest", () => {
     expect(mockCacheInvalidate).not.toHaveBeenCalled();
     expect(mockIngestBatchInc).toHaveBeenCalledWith({ status: "partial" });
     expect(mockIngestLogsInc).toHaveBeenCalledWith(0);
+  });
+
+  it("rejects a request whose single string element parses into more than MAX_INGEST_BATCH entries, writing and tracking nothing", async () => {
+    mockFindSourceById.mockResolvedValue(makeSource());
+    mockLogRepoInsert.mockResolvedValue(undefined);
+    // level error on every entry: without the parsed-count check the
+    // request would also fan out MAX_INGEST_BATCH + 1 trackError calls.
+    const expanded = Array.from({ length: MAX_INGEST_BATCH + 1 }, (_, i) => ({
+      level: "error",
+      message: `boom ${i}`,
+    }));
+
+    await expect(service.ingest(SOURCE_ID, { logs: [JSON.stringify(expanded)] })).rejects.toThrow(
+      IngestBatchTooLargeError,
+    );
+    await expect(
+      service.ingest(SOURCE_ID, { logs: [JSON.stringify(expanded)] }),
+    ).rejects.toThrow(String(MAX_INGEST_BATCH));
+
+    await flushChain();
+    expect(mockLogRepoInsert).not.toHaveBeenCalled();
+    expect(mockCacheInvalidate).not.toHaveBeenCalled();
+    expect(mockTrackError).not.toHaveBeenCalled();
+    expect(mockIngestBatchInc).not.toHaveBeenCalled();
+    expect(mockIngestLogsInc).not.toHaveBeenCalled();
+  });
+
+  it("accepts a request that parses into exactly MAX_INGEST_BATCH entries", async () => {
+    mockFindSourceById.mockResolvedValue(makeSource());
+    mockLogRepoInsert.mockResolvedValue(undefined);
+    mockCacheInvalidate.mockResolvedValue(undefined);
+    const expanded = Array.from({ length: MAX_INGEST_BATCH }, (_, i) => ({ message: `line ${i}` }));
+
+    const result = await service.ingest(SOURCE_ID, { logs: [JSON.stringify(expanded)] });
+
+    expect(result.accepted).toBe(MAX_INGEST_BATCH);
+    expect(mockLogRepoInsert).toHaveBeenCalledOnce();
+    expect(mockLogRepoInsert.mock.calls[0][0]).toHaveLength(MAX_INGEST_BATCH);
+    expect(mockIngestLogsInc).toHaveBeenCalledWith(MAX_INGEST_BATCH);
   });
 });

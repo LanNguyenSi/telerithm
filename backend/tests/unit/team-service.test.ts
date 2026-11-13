@@ -356,7 +356,7 @@ describe("TeamService.acceptInvite", () => {
     expect(mockTeamMemberCreate).not.toHaveBeenCalled();
   });
 
-  it("rejects the second of two concurrent accepts of the same invite against a shared invite row, creating exactly one membership", async () => {
+  it("rejects the second of two accepts run one after the other against a shared invite row, creating exactly one membership", async () => {
     // The guarded updateMany is the arbiter: the mock evaluates the where
     // clause against one row the way the database would, so a consume where
     // clause without the usedAt guard would let both accepts match.
@@ -381,13 +381,66 @@ describe("TeamService.acceptInvite", () => {
       },
     );
 
-    // Both accepts read the invite before either consumes it, so both pass
-    // the pre-transaction checks; only the transaction may decide.
+    // These accepts run sequentially, not concurrently. The second still
+    // passes the pre-transaction checks because the mocked findUnique keeps
+    // handing out the pre-consume snapshot; only the guarded updateMany
+    // against the shared row decides.
     await service.acceptInvite(invite.token, USER_ID);
     await expect(service.acceptInvite(invite.token, "user-2")).rejects.toThrow(
       "Invite already used",
     );
     expect(mockTeamMemberCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the invite unused when the membership create fails inside the transaction, because the rollback discards the staged consume", async () => {
+    const invite = makeInvite({ teamId: TEAM_A });
+    mockTeamInviteFindUnique.mockResolvedValue(invite);
+    mockTeamMemberFindUnique.mockResolvedValue(null);
+    mockTeamFindUniqueOrThrow.mockResolvedValue({
+      id: TEAM_A,
+      name: "Team A",
+      slug: "team-a",
+      createdAt: new Date("2024-01-15T10:00:00.000Z"),
+    });
+
+    // A transaction mock with commit semantics: the consume is staged by
+    // updateMany and only written to the shared row when the callback
+    // returns, so a later failure discards the staged usedAt the way a
+    // database rollback discards the UPDATE.
+    const row = { usedAt: null as Date | null };
+    let stagedUsedAt: Date | null = null;
+    mockTransaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) => {
+      try {
+        await fn({
+          teamInvite: { updateMany: mockTeamInviteUpdateMany },
+          teamMember: { create: mockTeamMemberCreate },
+        });
+      } catch (error) {
+        stagedUsedAt = null;
+        throw error;
+      }
+      row.usedAt = stagedUsedAt;
+    });
+    mockTeamInviteUpdateMany.mockImplementation(
+      async (args: { where: { usedAt?: null }; data: { usedAt: Date } }) => {
+        if (row.usedAt !== null) return { count: 0 };
+        stagedUsedAt = args.data.usedAt;
+        return { count: 1 };
+      },
+    );
+    mockTeamMemberCreate.mockRejectedValueOnce(new Error("membership insert failed"));
+
+    await expect(service.acceptInvite(invite.token, USER_ID)).rejects.toThrow(
+      "membership insert failed",
+    );
+    expect(mockTeamInviteUpdateMany).toHaveBeenCalledOnce();
+    expect(row.usedAt).toBeNull();
+
+    // The invite stayed unused, so a later accept can still consume it.
+    mockTeamMemberCreate.mockResolvedValue({ id: "tm-1" });
+    await expect(service.acceptInvite(invite.token, "user-2")).resolves.toMatchObject({ id: TEAM_A });
+    expect(row.usedAt).not.toBeNull();
+    expect(mockTeamMemberCreate).toHaveBeenCalledTimes(2);
   });
 
   it("throws Invite expired when the invite expires between the pre-check and the consume", async () => {
