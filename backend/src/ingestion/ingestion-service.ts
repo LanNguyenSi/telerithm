@@ -60,12 +60,13 @@ export class IngestionService {
       await cache.invalidate(`dashboard:overview:${source.teamId}`);
       for (const entry of accepted) {
         this.events.emit("log:new", entry);
-        // Fire-and-forget: track errors/fatals as issues
-        if (entry.level === "error" || entry.level === "fatal") {
-          this.issueService
-            .trackError(entry.teamId, entry.level, entry.service, entry.message)
-            .catch(() => {});
-        }
+      }
+      // Fire-and-forget: track errors/fatals as issues in one detached
+      // sequential chain per batch, so a large batch can never hold more
+      // than one issue upsert open at a time.
+      const errorEntries = accepted.filter((entry) => entry.level === "error" || entry.level === "fatal");
+      if (errorEntries.length > 0) {
+        void this.trackErrorIssues(errorEntries);
       }
     }
 
@@ -80,5 +81,17 @@ export class IngestionService {
       errors,
       batchId,
     };
+  }
+
+  // Awaits each trackError in turn and swallows failures like the previous
+  // per-entry .catch(() => {}); one failure never stops the following calls.
+  private async trackErrorIssues(entries: LogEntry[]): Promise<void> {
+    for (const entry of entries) {
+      try {
+        await this.issueService.trackError(entry.teamId, entry.level, entry.service, entry.message);
+      } catch {
+        // issue tracking is best-effort; keep walking the chain
+      }
+    }
   }
 }

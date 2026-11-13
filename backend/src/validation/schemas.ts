@@ -290,6 +290,11 @@ export const addUserToTeamSchema = z.object({
   role: z.enum(["OWNER", "ADMIN", "MEMBER", "VIEWER"]).default("MEMBER"),
 });
 
+// One ingest request carries at most this many log entries. Far above the
+// JS SDK's default batchSize of 10 and the Vector reference config's batch
+// of 100, and it bounds the fire-and-forget issue-tracking fan-out per batch.
+export const MAX_INGEST_BATCH = 1000;
+
 export const ingestSchema = z.object({
   logs: z
     .array(
@@ -305,7 +310,8 @@ export const ingestSchema = z.object({
         }),
       ]),
     )
-    .min(1),
+    .min(1)
+    .max(MAX_INGEST_BATCH),
   format: z.enum(["json", "syslog_rfc3164", "syslog_rfc5424", "plain"]).optional(),
   batchId: z.string().optional(),
 });

@@ -8,6 +8,7 @@ const {
   mockTeamInviteCreate,
   mockTeamInviteFindUnique,
   mockTeamInviteUpdate,
+  mockTeamInviteUpdateMany,
   mockTeamInviteFindMany,
   mockTeamInviteDelete,
   mockTeamInviteDeleteMany,
@@ -33,6 +34,7 @@ const {
   mockTeamInviteCreate: vi.fn(),
   mockTeamInviteFindUnique: vi.fn(),
   mockTeamInviteUpdate: vi.fn(),
+  mockTeamInviteUpdateMany: vi.fn(),
   mockTeamInviteFindMany: vi.fn(),
   mockTeamInviteDelete: vi.fn(),
   mockTeamInviteDeleteMany: vi.fn(),
@@ -76,6 +78,7 @@ vi.mock("../../src/repositories/prisma.js", () => ({
       create: mockTeamInviteCreate,
       findUnique: mockTeamInviteFindUnique,
       update: mockTeamInviteUpdate,
+      updateMany: mockTeamInviteUpdateMany,
       findMany: mockTeamInviteFindMany,
       delete: mockTeamInviteDelete,
       deleteMany: mockTeamInviteDeleteMany,
@@ -211,7 +214,15 @@ describe("TeamService.acceptInvite", () => {
     vi.clearAllMocks();
     configMock.multiTenant = true;
     service = new TeamService();
-    mockTransaction.mockImplementation(async (ops: Array<Promise<unknown>>) => Promise.all(ops));
+    mockTransaction.mockImplementation(
+      async (arg: Array<Promise<unknown>> | ((tx: unknown) => Promise<unknown>)) =>
+        typeof arg === "function"
+          ? arg({
+              teamInvite: { updateMany: mockTeamInviteUpdateMany },
+              teamMember: { create: mockTeamMemberCreate },
+            })
+          : Promise.all(arg),
+    );
   });
 
   it("looks up the invite by token, checks membership scoped to the invite's team, and creates a membership with the invite's role", async () => {
@@ -219,7 +230,7 @@ describe("TeamService.acceptInvite", () => {
     mockTeamInviteFindUnique.mockResolvedValue(invite);
     mockTeamMemberFindUnique.mockResolvedValue(null);
     mockTeamMemberCreate.mockResolvedValue({ id: "tm-1" });
-    mockTeamInviteUpdate.mockResolvedValue({ ...invite, usedAt: new Date() });
+    mockTeamInviteUpdateMany.mockResolvedValue({ count: 1 });
     mockTeamFindUniqueOrThrow.mockResolvedValue({
       id: TEAM_A,
       name: "Team A",
@@ -234,12 +245,15 @@ describe("TeamService.acceptInvite", () => {
       where: { teamId_userId: { teamId: TEAM_A, userId: USER_ID } },
     });
     expect(mockTransaction).toHaveBeenCalledOnce();
+    // The invite is consumed inside the transaction with the usedAt and
+    // expiresAt guards in the where clause, so only one concurrent accept
+    // can match a row.
+    expect(mockTeamInviteUpdateMany).toHaveBeenCalledWith({
+      where: { id: invite.id, usedAt: null, expiresAt: { gt: expect.any(Date) } },
+      data: { usedAt: expect.any(Date) },
+    });
     expect(mockTeamMemberCreate).toHaveBeenCalledWith({
       data: { teamId: TEAM_A, userId: USER_ID, role: "VIEWER" },
-    });
-    expect(mockTeamInviteUpdate).toHaveBeenCalledWith({
-      where: { id: invite.id },
-      data: { usedAt: expect.any(Date) },
     });
     expect(mockTeamFindUniqueOrThrow).toHaveBeenCalledWith({ where: { id: TEAM_A } });
     expect(result).toEqual({
@@ -305,6 +319,112 @@ describe("TeamService.acceptInvite", () => {
       where: { teamId_userId: { teamId: TEAM_A, userId: USER_ID } },
     });
     expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("throws Invite already used and creates no membership when a concurrent accept won the consume (guarded updateMany matches 0 rows)", async () => {
+    // The pre-check passed for this caller, but another request flipped
+    // usedAt first, so the guarded updateMany inside the transaction
+    // matches nothing. Only the winner may create the membership.
+    const invite = makeInvite({ teamId: TEAM_A });
+    mockTeamInviteFindUnique.mockResolvedValue(invite);
+    mockTeamMemberFindUnique.mockResolvedValue(null);
+    mockTeamInviteUpdateMany.mockResolvedValue({ count: 0 });
+    mockTeamFindUniqueOrThrow.mockResolvedValue({
+      id: TEAM_A,
+      name: "Team A",
+      slug: "team-a",
+      createdAt: new Date("2024-01-15T10:00:00.000Z"),
+    });
+
+    await expect(service.acceptInvite(invite.token, USER_ID)).rejects.toThrow(
+      "Invite already used",
+    );
+    expect(mockTeamInviteUpdateMany).toHaveBeenCalledWith({
+      where: { id: invite.id, usedAt: null, expiresAt: { gt: expect.any(Date) } },
+      data: { usedAt: expect.any(Date) },
+    });
+    expect(mockTeamMemberCreate).not.toHaveBeenCalled();
+  });
+
+  it("rejects the second of two concurrent accepts of the same invite against a shared invite row, creating exactly one membership", async () => {
+    // The guarded updateMany is the arbiter: the mock evaluates the where
+    // clause against one row the way the database would, so a consume where
+    // clause without the usedAt guard would let both accepts match.
+    const invite = makeInvite({ teamId: TEAM_A });
+    mockTeamInviteFindUnique.mockResolvedValue(invite);
+    mockTeamMemberFindUnique.mockResolvedValue(null);
+    mockTeamMemberCreate.mockResolvedValue({ id: "tm-1" });
+    mockTeamFindUniqueOrThrow.mockResolvedValue({
+      id: TEAM_A,
+      name: "Team A",
+      slug: "team-a",
+      createdAt: new Date("2024-01-15T10:00:00.000Z"),
+    });
+    const row = { usedAt: null as Date | null };
+    mockTeamInviteUpdateMany.mockImplementation(
+      async (args: { where: { usedAt?: null; expiresAt?: { gt: Date } }; data: { usedAt: Date } }) => {
+        const usedMatches = args.where.usedAt === undefined || row.usedAt === args.where.usedAt;
+        const expiresMatches = !args.where.expiresAt || invite.expiresAt > args.where.expiresAt.gt;
+        if (!usedMatches || !expiresMatches) return { count: 0 };
+        row.usedAt = args.data.usedAt;
+        return { count: 1 };
+      },
+    );
+
+    // Both accepts read the invite before either consumes it, so both pass
+    // the pre-transaction checks; only the transaction may decide.
+    await service.acceptInvite(invite.token, USER_ID);
+    await expect(service.acceptInvite(invite.token, "user-2")).rejects.toThrow(
+      "Invite already used",
+    );
+    expect(mockTeamMemberCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws Invite expired when the invite expires between the pre-check and the consume", async () => {
+    vi.useFakeTimers();
+    try {
+      const base = new Date("2026-01-01T00:00:00.000Z").getTime();
+      vi.setSystemTime(base);
+      const invite = makeInvite({ teamId: TEAM_A, expiresAt: new Date(base + 50) });
+      mockTeamInviteFindUnique.mockResolvedValue(invite);
+      mockTeamMemberFindUnique.mockImplementation(async () => {
+        // The clock crosses expiresAt while the membership lookup is in flight.
+        vi.advanceTimersByTime(100);
+        return null;
+      });
+      mockTeamInviteUpdateMany.mockResolvedValue({ count: 0 });
+
+      await expect(service.acceptInvite(invite.token, USER_ID)).rejects.toThrow("Invite expired");
+      expect(mockTeamMemberCreate).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("consumes an email-bound invite through the same guarded updateMany when the emails match", async () => {
+    const invite = makeInvite({ teamId: TEAM_A, email: "u@example.com" });
+    mockTeamInviteFindUnique.mockResolvedValue(invite);
+    mockUserFindUnique.mockResolvedValue(makeUser({ id: USER_ID, email: "u@example.com" }));
+    mockTeamMemberFindUnique.mockResolvedValue(null);
+    mockTeamInviteUpdateMany.mockResolvedValue({ count: 1 });
+    mockTeamMemberCreate.mockResolvedValue({ id: "tm-1" });
+    mockTeamFindUniqueOrThrow.mockResolvedValue({
+      id: TEAM_A,
+      name: "Team A",
+      slug: "team-a",
+      createdAt: new Date("2024-01-15T10:00:00.000Z"),
+    });
+
+    await service.acceptInvite(invite.token, USER_ID);
+
+    expect(mockUserFindUnique).toHaveBeenCalledWith({ where: { id: USER_ID } });
+    expect(mockTeamInviteUpdateMany).toHaveBeenCalledWith({
+      where: { id: invite.id, usedAt: null, expiresAt: { gt: expect.any(Date) } },
+      data: { usedAt: expect.any(Date) },
+    });
+    expect(mockTeamMemberCreate).toHaveBeenCalledWith({
+      data: { teamId: TEAM_A, userId: USER_ID, role: "MEMBER" },
+    });
   });
 });
 

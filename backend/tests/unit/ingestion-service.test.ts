@@ -80,6 +80,11 @@ function makeSource(overrides: Record<string, unknown> = {}) {
   };
 }
 
+// Let the detached error-tracking chain run to completion (macrotask flush).
+function flushChain(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe("IngestionService.ingest", () => {
   let service: IngestionService;
 
@@ -137,10 +142,95 @@ describe("IngestionService.ingest", () => {
         { level: "fatal", message: "oom" },
       ],
     });
+    await flushChain();
 
     expect(mockTrackError).toHaveBeenCalledTimes(2);
     expect(mockTrackError).toHaveBeenCalledWith(TEAM_ID, "error", "web-app", "boom");
     expect(mockTrackError).toHaveBeenCalledWith(TEAM_ID, "fatal", "web-app", "oom");
+  });
+
+  it("runs at most one trackError at a time for a batch of several error entries", async () => {
+    mockFindSourceById.mockResolvedValue(makeSource());
+    mockLogRepoInsert.mockResolvedValue(undefined);
+    mockCacheInvalidate.mockResolvedValue(undefined);
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const order: string[] = [];
+    mockTrackError.mockImplementation(async (_teamId: string, _level: string, _svc: string, msg: string) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      order.push(msg);
+      // resolve on a later macrotask so parallel fan-out would overlap
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+    });
+
+    await service.ingest(SOURCE_ID, {
+      logs: [
+        { level: "error", message: "e1" },
+        { level: "error", message: "e2" },
+        { level: "fatal", message: "e3" },
+        { level: "warn", message: "ignored" },
+        { level: "error", message: "e4" },
+      ],
+    });
+
+    // ingest must not wait for the detached chain
+    expect(order.length).toBeLessThanOrEqual(1);
+
+    await vi.waitFor(() => expect(mockTrackError).toHaveBeenCalledTimes(4));
+    expect(maxInFlight).toBe(1);
+    expect(order).toEqual(["e1", "e2", "e3", "e4"]);
+  });
+
+  it("returns before the error-tracking chain finishes", async () => {
+    mockFindSourceById.mockResolvedValue(makeSource());
+    mockLogRepoInsert.mockResolvedValue(undefined);
+    mockCacheInvalidate.mockResolvedValue(undefined);
+
+    let releaseChain!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseChain = resolve;
+    });
+    mockTrackError.mockImplementation(async () => {
+      await gate;
+    });
+
+    const result = await service.ingest(SOURCE_ID, {
+      logs: [
+        { level: "error", message: "e1" },
+        { level: "error", message: "e2" },
+      ],
+    });
+
+    // The call resolved while the tracking chain is still blocked.
+    expect(result).toMatchObject({ accepted: 2 });
+    expect(mockTrackError).toHaveBeenCalledTimes(1);
+
+    releaseChain();
+    await vi.waitFor(() => expect(mockTrackError).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps calling trackError after one rejects", async () => {
+    mockFindSourceById.mockResolvedValue(makeSource());
+    mockLogRepoInsert.mockResolvedValue(undefined);
+    mockCacheInvalidate.mockResolvedValue(undefined);
+
+    mockTrackError.mockImplementation(async (_teamId: string, _level: string, _svc: string, msg: string) => {
+      if (msg === "bad") throw new Error("issue write failed");
+    });
+
+    await service.ingest(SOURCE_ID, {
+      logs: [
+        { level: "error", message: "ok1" },
+        { level: "error", message: "bad" },
+        { level: "error", message: "ok2" },
+      ],
+    });
+
+    await vi.waitFor(() => expect(mockTrackError).toHaveBeenCalledTimes(3));
+    expect(mockTrackError).toHaveBeenCalledWith(TEAM_ID, "error", "web-app", "ok2");
   });
 
   it("does not let a rejected trackError promise reject the ingest call", async () => {
