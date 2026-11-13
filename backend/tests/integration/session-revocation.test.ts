@@ -16,6 +16,22 @@ vi.mock("../../src/ingestion/ingestion-service.js", () => ({
   },
 }));
 
+const { subscribeCalls } = vi.hoisted(() => ({
+  subscribeCalls: [] as Array<{ teamId: string; revalidate?: () => Promise<boolean> }>,
+}));
+
+// Records what the route hands to the stream and ends the response, so the
+// heartbeat check can be driven directly (the timing is in streaming-service.test.ts).
+vi.mock("../../src/services/streaming/streaming-service.js", () => ({
+  StreamingService: class {
+    subscribe(teamId: string, res: { end: () => void }, _filters: unknown, revalidate?: () => Promise<boolean>) {
+      subscribeCalls.push({ teamId, revalidate });
+      res.end();
+      return () => {};
+    }
+  },
+}));
+
 vi.mock("../../src/utils/password.js", () => ({
   hashPassword: vi.fn(async () => "hash"),
   hashPasswordSync: vi.fn(() => "hash"),
@@ -217,6 +233,58 @@ describe("a session whose user is not ACTIVE", () => {
 
     expect(login.status).toBe(401);
     expect(db.session.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/v1/stream/logs re-validation", () => {
+  beforeEach(() => {
+    subscribeCalls.length = 0;
+    db.teamMember.findUnique.mockResolvedValue({ id: "tm", teamId: "t1", userId: "u1", role: "MEMBER" });
+  });
+
+  async function openStream(by: "header" | "query") {
+    mockSessions(sessionFor("sess_a", "u1", "ACTIVE"));
+    const req =
+      by === "header"
+        ? app.get("/api/v1/stream/logs?teamId=t1").set(bearer("sess_a"))
+        : app.get("/api/v1/stream/logs?teamId=t1&token=sess_a");
+    await req;
+    expect(subscribeCalls).toHaveLength(1);
+    expect(subscribeCalls[0].teamId).toBe("t1");
+    return subscribeCalls[0].revalidate!;
+  }
+
+  it("hands the stream a check that passes while session and membership hold", async () => {
+    const revalidate = await openStream("header");
+
+    await expect(revalidate()).resolves.toBe(true);
+  });
+
+  it("uses the ?token= token too", async () => {
+    const revalidate = await openStream("query");
+
+    await expect(revalidate()).resolves.toBe(true);
+  });
+
+  it("fails the check once the user is disabled after the stream opened", async () => {
+    const revalidate = await openStream("header");
+    mockSessions(sessionFor("sess_a", "u1", "DISABLED"));
+
+    await expect(revalidate()).resolves.toBe(false);
+  });
+
+  it("fails the check once the session is deleted after the stream opened", async () => {
+    const revalidate = await openStream("header");
+    mockSessions();
+
+    await expect(revalidate()).resolves.toBe(false);
+  });
+
+  it("fails the check once the user is removed from the team after the stream opened", async () => {
+    const revalidate = await openStream("header");
+    db.teamMember.findUnique.mockResolvedValue(null);
+
+    await expect(revalidate()).resolves.toBe(false);
   });
 });
 

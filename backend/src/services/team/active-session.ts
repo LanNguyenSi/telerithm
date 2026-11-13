@@ -18,3 +18,22 @@ export async function findActiveSession(token: string) {
   }
   return session;
 }
+
+// Re-check for a long-lived connection (the log stream): the token still
+// resolves to the same user and that user is still a member of the team. The
+// answer is false only for a definite "no"; a database error is thrown to the
+// caller, which must not treat it as a revocation.
+export async function isSessionAuthorizedForTeam(
+  token: string,
+  userId: string,
+  teamId: string,
+): Promise<boolean> {
+  const session = await findActiveSession(token);
+  if (!session || session.userId !== userId) {
+    return false;
+  }
+  const membership = await prisma.teamMember.findUnique({
+    where: { teamId_userId: { teamId, userId } },
+  });
+  return membership !== null;
+}

@@ -1,6 +1,6 @@
 # API
 
-The OpenAPI 3 spec (`backend/src/api/openapi.ts`, served at `GET /openapi.json` and rendered at `GET /docs`) covers the health, auth, team, source, ingest, log search, saved-view, NLQ, alert-rule and incident-list, dashboard and streaming routes. `POST /auth/logout`, subscriptions, issues, maintenance windows, incident actions and the incident timeline, rule mute and unmute, invites, admin routes, `GET /auth/settings`, `POST /ingest/:sourceId/raw` and `GET /logs/:id` are not in the spec yet; this page lists them. It also covers rate limiting.
+The OpenAPI 3 spec (`backend/src/api/openapi.ts`, served at `GET /openapi.json` and rendered at `GET /docs`) covers the health, auth, team, source, ingest, log search, saved-view, NLQ, alert-rule and incident-list, dashboard and streaming routes. subscriptions, issues, maintenance windows, incident actions and the incident timeline, rule mute and unmute, invites, admin routes, `GET /auth/settings`, `POST /ingest/:sourceId/raw` and `GET /logs/:id` are not in the spec yet; this page lists them. It also covers rate limiting.
 
 ## Endpoints
 
@@ -29,7 +29,7 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `GET`, `POST`, `PUT`, `DELETE` | `/logs/views`, `/logs/views/:id` | Saved views (list, create, update, delete); update and delete of a teammate's private view get the same 404 as an unknown id |
 | `POST` | `/logs/views/:id/duplicate`       | Duplicate a saved view; a teammate's private view gets the same 404 as an unknown id |
 | `POST` | `/query/natural`                  | Translate NL to query plan        |
-| `GET`  | `/stream/logs`                    | SSE live tail                     |
+| `GET`  | `/stream/logs`                    | SSE live tail; closed by the server within 15 seconds once the user is no longer `ACTIVE` or no longer a member of the team |
 | `GET`, `POST` | `/alerts/rules`            | Alert rules (list, create)        |
 | `PUT`, `DELETE` | `/alerts/rules/:id`      | Update (partial), delete an alert rule |
 | `POST` | `/alerts/rules/:id/mute`, `/alerts/rules/:id/unmute` | Mute and unmute a rule |
@@ -82,7 +82,7 @@ The by-id read routes follow the same rule: `GET /issues/:id`, `GET /alerts/inci
 
 ### Sessions
 
-`POST /auth/login` and `POST /auth/register` (when it signs the user in) return a `sess_` token that is valid for 7 days. Every authenticated request, `/stream/logs?token=` included, checks on each call that the token exists, has not expired and that its user is `ACTIVE`; otherwise the answer is `401`. So disabling a user locks out their tokens at once, and re-enabling the user does not revive them (the rows are deleted when the user is disabled): the user logs in again. `POST /auth/logout` ends one session; the frontend calls it before it clears its cookies and clears them even when the call fails.
+`POST /auth/login` and `POST /auth/register` (when it signs the user in) return a `sess_` token that is valid for 7 days. Every authenticated request, `/stream/logs?token=` included, checks on each call that the token exists, has not expired and that its user is `ACTIVE`; otherwise the answer is `401`. So disabling a user locks out their tokens on the next request. A `/stream/logs` connection that is already open is checked again on each 15-second heartbeat (token, user status and membership of the stream's team) and is closed by the server at the first heartbeat after the check fails, so it can keep delivering for up to 15 seconds after the user is disabled or removed from the team; a heartbeat check that fails because of a database error does not close it. Re-enabling the user does not revive them (the rows are deleted when the user is disabled): the user logs in again. `POST /auth/logout` ends one session; the frontend calls it before it clears its cookies and clears them even when the call fails.
 
 ### Subscription channels
 

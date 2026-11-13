@@ -16,6 +16,9 @@ export class StreamingService {
       level?: string;
       query?: string;
     },
+    // Called on every heartbeat. Resolving false ends the stream; a rejection is
+    // not a verdict and leaves it open until the next heartbeat.
+    revalidate?: () => Promise<boolean>,
   ): () => void {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -54,16 +57,46 @@ export class StreamingService {
 
     this.events.on("log:new", onLog);
 
-    const heartbeat = setInterval(() => {
-      res.write(`event: ping\n`);
-      res.write(`data: {}\n\n`);
-    }, 15000);
-
-    return () => {
+    let closed = false;
+    const close = () => {
+      if (closed) {
+        return;
+      }
+      closed = true;
       activeConnections.dec();
       clearInterval(heartbeat);
       this.events.off("log:new", onLog);
       res.end();
     };
+
+    const heartbeat = setInterval(() => {
+      if (!revalidate) {
+        res.write(`event: ping\n`);
+        res.write(`data: {}\n\n`);
+        return;
+      }
+      revalidate().then(
+        (stillAllowed) => {
+          if (closed) {
+            return;
+          }
+          if (!stillAllowed) {
+            close();
+            return;
+          }
+          res.write(`event: ping\n`);
+          res.write(`data: {}\n\n`);
+        },
+        () => {
+          // Lookup failed: not a verdict. Keep the stream, try again next beat.
+          if (!closed) {
+            res.write(`event: ping\n`);
+            res.write(`data: {}\n\n`);
+          }
+        },
+      );
+    }, 15000);
+
+    return close;
   }
 }

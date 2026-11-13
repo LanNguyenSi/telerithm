@@ -13,7 +13,7 @@ import { SubscriptionService } from "../../services/subscription/subscription-se
 import { assertSafeUrl } from "../../services/notification/url-guard.js";
 import { ChannelConfigError, ChannelHttpError } from "../../services/notification/channels/errors.js";
 import { TeamService } from "../../services/team/team-service.js";
-import { findActiveSession } from "../../services/team/active-session.js";
+import { findActiveSession, isSessionAuthorizedForTeam } from "../../services/team/active-session.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../errors.js";
 import { createWriteRoute, teamFromBody, teamFromResource, type TeamRoleName } from "./write-route.js";
 import {
@@ -1162,11 +1162,15 @@ async function resolveUserId(req: Request): Promise<string> {
 // Only mounted on /stream/logs; every other route stays header-only via
 // resolveUserId. The token in URL leaks into the access log, so the http
 // logger in app.ts redacts `token=...` before writing.
-async function resolveStreamUserId(req: Request): Promise<string> {
+function streamToken(req: Request): string | undefined {
   const header = req.header("authorization");
   const headerToken = header ? header.replace(/^Bearer\s+/i, "") : undefined;
   const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
-  const token = headerToken || queryToken;
+  return headerToken || queryToken;
+}
+
+async function resolveStreamUserId(req: Request): Promise<string> {
+  const token = streamToken(req);
   if (!token) {
     throw new Error("Unauthorized");
   }
@@ -2056,13 +2060,21 @@ apiRouter.get(
     const level = typeof req.query.level === "string" ? req.query.level : undefined;
     const query = typeof req.query.query === "string" ? req.query.query : undefined;
 
-    const unsubscribe = streamingService.subscribe(teamId, res, {
-      sourceId,
-      service,
-      host,
-      level,
-      query,
-    });
+    // The token was checked once above; the stream re-checks it and the team
+    // membership on every heartbeat and ends when either is gone.
+    const token = streamToken(req) ?? "";
+    const unsubscribe = streamingService.subscribe(
+      teamId,
+      res,
+      {
+        sourceId,
+        service,
+        host,
+        level,
+        query,
+      },
+      () => isSessionAuthorizedForTeam(token, userId, teamId),
+    );
     req.on("close", unsubscribe);
   }),
 );

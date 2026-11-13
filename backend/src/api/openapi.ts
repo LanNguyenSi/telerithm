@@ -54,6 +54,19 @@ export const openApiSpec = {
         },
       },
     },
+    "/auth/logout": {
+      post: {
+        summary: "End the session of the presented token",
+        description:
+          "Deletes only the session of the bearer token that is sent; other sessions of the same user stay valid.",
+        tags: ["Auth"],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          204: { description: "Session deleted" },
+          401: { description: "Missing, expired or unknown token, or the user is not ACTIVE" },
+        },
+      },
+    },
     "/teams": {
       get: {
         summary: "List teams for authenticated user",
@@ -453,7 +466,7 @@ export const openApiSpec = {
       get: {
         summary: "Server-Sent Events log stream",
         description:
-          "Accepts the bearer either via the Authorization header or via ?token= query parameter. The query fallback exists because EventSource cannot set headers; the backend HTTP access log redacts the token.",
+          "Accepts the bearer either via the Authorization header or via ?token= query parameter. The query fallback exists because EventSource cannot set headers; the backend HTTP access log redacts the token. The token and the membership of the caller in the team are re-checked on every 15-second heartbeat; the stream ends at the first heartbeat after the user stops being ACTIVE, is removed from the team or the session is gone.",
         tags: ["Streaming"],
         security: [{ bearerAuth: [] }],
         parameters: [

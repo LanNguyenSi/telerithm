@@ -172,4 +172,4 @@ Every limiter is an in-memory, per-process counter (`express-rate-limit`'s defau
 
 ## Streaming
 
-`/api/v1/stream/logs` is an SSE endpoint. The `IngestionService` emits events on accepted batches; `StreamingService` filters per subscriber by team, the `sourceId`, `service`, `host` and `level` query parameters (exact match), plus `query`, a case-insensitive substring match on message, service and host, then writes server-sent events to the connected client.
+`/api/v1/stream/logs` is an SSE endpoint. The `IngestionService` emits events on accepted batches; `StreamingService` filters per subscriber by team, the `sourceId`, `service`, `host` and `level` query parameters (exact match), plus `query`, a case-insensitive substring match on message, service and host, then writes server-sent events to the connected client. Every 15 seconds it sends a `ping` event, and before each one it re-checks the caller's token, user status and team membership; it closes the stream instead when the check fails (a database error during the check does not close it).

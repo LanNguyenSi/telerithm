@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { findUnique } = vi.hoisted(() => ({ findUnique: vi.fn() }));
+const { findUnique, memberFindUnique } = vi.hoisted(() => ({ findUnique: vi.fn(), memberFindUnique: vi.fn() }));
 
 vi.mock("../../src/repositories/prisma.js", () => ({
-  prisma: { session: { findUnique } },
+  prisma: { session: { findUnique }, teamMember: { findUnique: memberFindUnique } },
 }));
 
-import { findActiveSession } from "../../src/services/team/active-session.js";
+import { findActiveSession, isSessionAuthorizedForTeam } from "../../src/services/team/active-session.js";
 
 function row(overrides: Record<string, unknown> = {}) {
   return {
@@ -72,5 +72,57 @@ describe("findActiveSession", () => {
     );
 
     await expect(findActiveSession("sess_a")).resolves.toBeNull();
+  });
+});
+
+describe("isSessionAuthorizedForTeam", () => {
+  beforeEach(() => {
+    findUnique.mockReset();
+    memberFindUnique.mockReset();
+  });
+
+  it("is true for a live session of the same user who is still a member of the team", async () => {
+    findUnique.mockResolvedValue(row());
+    memberFindUnique.mockResolvedValue({ id: "tm" });
+
+    await expect(isSessionAuthorizedForTeam("sess_a", "u1", "t1")).resolves.toBe(true);
+    expect(memberFindUnique).toHaveBeenCalledExactlyOnceWith({
+      where: { teamId_userId: { teamId: "t1", userId: "u1" } },
+    });
+  });
+
+  it("is false once the user is DISABLED, without a membership lookup", async () => {
+    findUnique.mockResolvedValue(row({ user: { status: "DISABLED" } }));
+    memberFindUnique.mockResolvedValue({ id: "tm" });
+
+    await expect(isSessionAuthorizedForTeam("sess_a", "u1", "t1")).resolves.toBe(false);
+    expect(memberFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("is false once the session is gone", async () => {
+    findUnique.mockResolvedValue(null);
+
+    await expect(isSessionAuthorizedForTeam("sess_a", "u1", "t1")).resolves.toBe(false);
+  });
+
+  it("is false when the token now belongs to another user", async () => {
+    findUnique.mockResolvedValue(row({ userId: "u2" }));
+    memberFindUnique.mockResolvedValue({ id: "tm" });
+
+    await expect(isSessionAuthorizedForTeam("sess_a", "u1", "t1")).resolves.toBe(false);
+  });
+
+  it("is false once the user is no longer a member of the team", async () => {
+    findUnique.mockResolvedValue(row());
+    memberFindUnique.mockResolvedValue(null);
+
+    await expect(isSessionAuthorizedForTeam("sess_a", "u1", "t1")).resolves.toBe(false);
+  });
+
+  it("rejects, rather than answering false, when the lookup fails", async () => {
+    findUnique.mockResolvedValue(row());
+    memberFindUnique.mockRejectedValue(new Error("db down"));
+
+    await expect(isSessionAuthorizedForTeam("sess_a", "u1", "t1")).rejects.toThrow("db down");
   });
 });

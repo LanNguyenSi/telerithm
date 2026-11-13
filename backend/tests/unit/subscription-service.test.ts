@@ -73,7 +73,7 @@ type Row = {
 type Where = {
   teamId: string;
   enabled: boolean;
-  user?: { teams?: { some?: { teamId?: string } } };
+  user?: { status?: string; teams?: { some?: { teamId?: string } } };
   OR: Array<{ ruleId: string | null }>;
   AND: Array<{ OR: Array<{ severities: { isEmpty: true } | { has: string } }> }>;
 };
@@ -82,7 +82,9 @@ describe("SubscriptionService.findForIncident", () => {
   const memberships = [
     { userId: "member", teamId: "t1" },
     { userId: "other-team-only", teamId: "t2" },
+    { userId: "disabled-member", teamId: "t1" },
   ];
+  const userStatus: Record<string, string> = { "disabled-member": "DISABLED" };
   const rows: Row[] = [
     { id: "from-member", teamId: "t1", userId: "member", ruleId: null, enabled: true, severities: [] },
     { id: "from-removed", teamId: "t1", userId: "removed", ruleId: null, enabled: true, severities: [] },
@@ -90,6 +92,14 @@ describe("SubscriptionService.findForIncident", () => {
       id: "member-other-team",
       teamId: "t1",
       userId: "other-team-only",
+      ruleId: null,
+      enabled: true,
+      severities: [],
+    },
+    {
+      id: "from-disabled-user",
+      teamId: "t1",
+      userId: "disabled-member",
       ruleId: null,
       enabled: true,
       severities: [],
@@ -124,6 +134,7 @@ describe("SubscriptionService.findForIncident", () => {
           "isEmpty" in c.severities ? row.severities.length === 0 : row.severities.includes(c.severities.has),
         );
         if (!sev) return false;
+        if (where.user?.status && (userStatus[row.userId] ?? "ACTIVE") !== where.user.status) return false;
         const member = where.user?.teams?.some;
         if (member) {
           return memberships.some((m) => m.userId === row.userId && m.teamId === member.teamId);
@@ -145,6 +156,12 @@ describe("SubscriptionService.findForIncident", () => {
     expect(ids).not.toContain("from-removed");
   });
 
+  it("does not return a row of a DISABLED user who is still a member of the team", async () => {
+    const ids = (await new SubscriptionService().findForIncident("r1", "t1", "HIGH")).map((r) => r.id);
+
+    expect(ids).not.toContain("from-disabled-user");
+  });
+
   it("does not return a row of a user who is a member of another team only", async () => {
     const ids = (await new SubscriptionService().findForIncident("r1", "t1", "HIGH")).map((r) => r.id);
 
@@ -162,6 +179,9 @@ describe("SubscriptionService.findForIncident", () => {
   it("asks for the membership of the incident's own team", async () => {
     await new SubscriptionService().findForIncident("r1", "t1", "HIGH");
 
-    expect(findMany.mock.calls[0][0].where.user).toEqual({ teams: { some: { teamId: "t1" } } });
+    expect(findMany.mock.calls[0][0].where.user).toEqual({
+      status: "ACTIVE",
+      teams: { some: { teamId: "t1" } },
+    });
   });
 });
