@@ -572,6 +572,11 @@ apiRouter.post(
       const response = await ingestionService.ingest(String(req.params.sourceId), payload);
       res.status(202).json(response);
     } catch (error) {
+      // A line that holds a JSON array expands past the cap in the service.
+      if (error instanceof IngestBatchTooLargeError) {
+        res.status(413).json({ error: error.message });
+        return;
+      }
       res.status(404).json({ error: error instanceof Error ? error.message : "Ingest failed" });
     }
   }),

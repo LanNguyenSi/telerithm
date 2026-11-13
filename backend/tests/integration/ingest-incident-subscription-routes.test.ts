@@ -227,6 +227,14 @@ describe("POST /api/v1/ingest/:sourceId/raw", () => {
     expect(payload.logs).toHaveLength(MAX_INGEST_BATCH);
     expect(payload.logs[0]).toBe("line 0");
   });
+  it("answers 413 when a line expands past the cap in the service", async () => {
+    mockIngest.mockRejectedValueOnce(new IngestBatchTooLargeError(MAX_INGEST_BATCH));
+
+    const res = await raw().set("Content-Type", "text/plain").send("[{},{}]");
+
+    expect(res.status).toBe(413);
+    expect(res.body.error).toContain(String(MAX_INGEST_BATCH));
+  });
 });
 
 describe("POST /api/v1/ingest/:sourceId with a bare JSON array", () => {
