@@ -110,6 +110,14 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Unprivileged: the runtime stage of the image ends with USER node, so the
+    # process is already uid 1000; these two keys keep it there (no capability
+    # is left, and nothing it execs can gain one back). This is the service that
+    # Traefik exposes to the internet. Ports 4000 and 3000 are above 1024, so
+    # binding needs no capability.
+    # scripts/app-containers-non-root.test.sh (a CI step) requires both keys.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
     logging: *default-logging
     environment:
       HOST: 0.0.0.0
@@ -174,6 +182,9 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: https://demo.telerithm.cloud/api/v1
     restart: unless-stopped
+    # Same two keys as the backend service above (see the comment there).
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
     logging: *default-logging
     environment:
       INTERNAL_API_BASE_URL: http://backend:4000/api/v1
