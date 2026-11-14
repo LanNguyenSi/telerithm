@@ -19,11 +19,12 @@ ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --legacy-peer-deps
-COPY --from=build /app/.next ./.next
+COPY --from=build --chown=node:node /app/.next ./.next
 COPY --from=build /app/public ./public
 COPY --from=build /app/src ./src
 COPY --from=build /app/next.config.mjs ./next.config.mjs
 COPY --from=build /app/next-env.d.ts ./next-env.d.ts
+USER node
 EXPOSE 3000
 CMD ["npm", "start", "--", "-H", "0.0.0.0", "-p", "3000"]
 

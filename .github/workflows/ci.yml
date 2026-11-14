@@ -326,6 +326,17 @@ jobs:
       - name: Compose requires POSTGRES_PASSWORD
         run: bash scripts/compose-required-password.test.sh
 
+      # The stage each app image runs (the build.target, else the last stage)
+      # ends with a non-root USER (numeric root and a root group rejected), the
+      # frontend hands .next to that account, and the backend and frontend
+      # services of all three compose files carry security_opt
+      # no-new-privileges:true and cap_drop ALL with no user: root, privileged
+      # or cap_add (both Dockerfiles had no USER, so both Node processes ran as
+      # root with every capability), plus controls on mutated copies.
+      # Needs bash and python3 with PyYAML; no Docker, it checks the files.
+      - name: App containers run non-root
+        run: bash scripts/app-containers-non-root.test.sh
+
       # Every scripts/*.test.sh started with a TMPDIR that does not exist, from
       # a directory holding one canary file: it must stop without deleting or
       # writing anything there (an unchecked mktemp let a cleanup trap delete

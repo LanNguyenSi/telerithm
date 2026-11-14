@@ -46,6 +46,14 @@ services:
   backend:
     build:
       context: ./backend
+    # Same hardening as the two prod composes, and nothing in the dev workflow
+    # needs root here: this service mounts nothing from the host (the image
+    # builds from ./backend), so there is no host-owned file it must be able to
+    # write; it runs as the image's USER node.
+    # scripts/app-containers-non-root.test.sh (a CI step) requires both keys on
+    # the app services of all three compose files.
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
     environment:
       HOST: 0.0.0.0
       PORT: 4000
@@ -85,6 +93,9 @@ services:
       context: ./frontend
       args:
         NEXT_PUBLIC_API_BASE_URL: http://localhost:4000/api/v1
+    # Same two keys as the backend service above (see the comment there).
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
     environment:
       INTERNAL_API_BASE_URL: http://backend:4000/api/v1
       NEXT_PUBLIC_API_BASE_URL: http://localhost:4000/api/v1
