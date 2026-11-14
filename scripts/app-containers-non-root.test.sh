@@ -615,13 +615,21 @@ mutate docker-compose.yml '    build:
 expect_fail "a build.target naming no stage is rejected" \
   "backend/Dockerfile: service backend of docker-compose.yml builds it with target nonexistent, but the file has no stage named nonexistent"
 
-# v. a control whose anchor is gone must stop the run, not pass: mutate with an
-#    anchor no shipped file contains and require the script to exit loudly
-if bash -euo pipefail -c 'source /dev/stdin <<<"$(sed -n "/^mutate()/,/^}/p" "$0")"; SCRATCH=/nonexistent-dir-for-anchor-test mutate x/Dockerfile "this anchor exists nowhere" "y"' "${BASH_SOURCE[0]}" >/dev/null 2>&1; then
-  bad "a control whose anchor does not match must abort the run"
-else
-  ok "a control whose anchor does not match aborts the run"
-fi
+# v. a control whose anchor does not match exactly once must stop the run, not
+#    pass: on a real scratch copy, run mutate in a subshell with an anchor no
+#    file contains, then with one that occurs several times, and require exit 2
+#    plus the FATAL message both times
+fresh_copy
+for anchor in 'this anchor exists nowhere' 'FROM node:22-alpine'; do
+  vrc=0
+  vout="$( ( mutate backend/Dockerfile "${anchor}" 'y' ) 2>&1 )" || vrc=$?
+  if [ "${vrc}" -eq 2 ] && printf '%s' "${vout}" | grep -q 'FATAL: control anchor did not match exactly once'; then
+    ok "a control whose anchor matches $( [ "${anchor}" = 'FROM node:22-alpine' ] && echo 'several times' || echo 'nowhere' ) aborts the run"
+  else
+    bad "a control whose anchor does not match exactly once must abort with exit 2 (got ${vrc}): ${anchor}"
+  fi
+done
+fresh_copy
 
 # w. the checker fails closed when python3 cannot import yaml: run the same
 #    check() in a subshell with a PYTHONPATH that shadows yaml by a module that
