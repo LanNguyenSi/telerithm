@@ -76,13 +76,20 @@ if [ -z "$API_KEY" ]; then
   exit 1
 fi
 
-# The key reaches curl through a config on a file descriptor (see send_logs),
-# and curl's config syntax quotes strings with " and escapes with \. A key
-# containing either character cannot go through that channel without risking
-# a broken config or an injected extra curl option, and this script does not
-# escape it, so such a key is refused with a clear error instead.
-if [[ "$API_KEY" == *'"'* || "$API_KEY" == *'\'* ]]; then
-  log_error "TELERITHM_API_KEY must not contain a double quote or a backslash."
+# The key reaches curl through a config on a file descriptor (see send_logs).
+# curl's config syntax is line based and quotes strings with " and escapes with
+# \, so a key holding a newline, a quote, a backslash or any other character
+# outside a plain token alphabet could end the quoted value and make curl
+# parse what follows as further options (a second url, a write-out, a file://
+# read). The key is therefore checked against an allow-list, not a deny-list:
+# only A-Z a-z 0-9 and . _ ~ + / = - pass (ingest keys are lf_ plus hex, and
+# those characters cover base64 too), anything else, an empty key included, is
+# refused with an error that does not print the key. The check counts the
+# allowed bytes (a command substitution would strip a trailing newline from
+# the remainder and let it through) and runs in the C locale.
+if [ "$(printf '%s' "$API_KEY" | LC_ALL=C tr -cd 'A-Za-z0-9._~+/=-' | wc -c | tr -d ' ')" \
+  -ne "$(printf '%s' "$API_KEY" | wc -c | tr -d ' ')" ]; then
+  log_error "TELERITHM_API_KEY may only contain letters, digits and . _ ~ + / = - (refused, value not shown)."
   exit 1
 fi
 
@@ -123,8 +130,9 @@ parse_level() {
 # to curl through --config on a file descriptor instead: bash's process
 # substitution hands curl a /dev/fd/N pipe, no file is written to disk, and
 # the printf that builds the config line is a bash builtin, so the key never
-# enters any process's argv. Keys holding " or \ are refused up front (see
-# the validation above), so the config line needs no escaping.
+# enters any process's argv. Only keys made of the allow-listed
+# characters get here (see the validation above), so the config line needs no
+# escaping.
 send_logs() {
   local logs_json="$1"
   

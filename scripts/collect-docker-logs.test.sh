@@ -594,16 +594,24 @@ else bad "key not in argv: argv=$(cat "${STUB_CURL_ARGV}" 2>/dev/null) config=$(
 if grep -qxF -- 'Content-Type: application/json' "${STUB_CURL_ARGV}"; then
   ok "key not in argv: the Content-Type header is still passed to curl in argv"
 else bad "key not in argv: Content-Type header missing from argv"; fi
-# A key containing " or \ cannot go through curl's config syntax (quotes and
-# backslashes are structural there) and is refused before anything runs; the
-# other characters that need no escaping still pass.
-for hostile in 'has"quote' 'has\backslash' 'has"and\both'; do
+# curl's config syntax is line based and quotes are structural, so only an
+# allow-list of plain token characters goes through; anything else (a newline
+# that would start an injected option line included) is refused before curl
+# starts, and the refusal does not print the key.
+NL=$'\n'
+HOSTILE_KEYS=('has"quote' 'has\backslash' 'has"and\both' 'lf_ok'"${NL}"'url = http://127.0.0.1:1/exfil'
+  'lf_ok'"${NL}" "${NL}"'lf_ok' 'lf_ok'$'\r'' ' 'lf_ok'$'\r''x' 'lf_a'$'\t''b' 'lf a b' 'lf_ok url = http://127.0.0.1:1/x'
+  'lf_ok;x' 'lf_\xc3\xa9')
+for hostile in "${HOSTILE_KEYS[@]}"; do
   : > "${STUB_CURL_ARGV}"
+  : > "${STUB_CURL_CONFIG}"
   run_collector TELERITHM_STATE_DIR="${STATE17}" TELERITHM_API_KEY="${hostile}"
-  if [ "${RC}" -ne 0 ] && [ ! -s "${STUB_CURL_ARGV}" ] \
-    && grep -q "must not contain a double quote or a backslash" <<< "${OUT}"; then
-    ok "hostile key ${hostile}: refused with a clear error, curl never started"
-  else bad "hostile key ${hostile}: rc=${RC} argv_bytes=$(wc -c < "${STUB_CURL_ARGV}" | tr -d ' ') out=${OUT}"; fi
+  shown="$(printf '%q' "${hostile}")"
+  if [ "${RC}" -ne 0 ] && [ ! -s "${STUB_CURL_ARGV}" ] && [ ! -s "${STUB_CURL_CONFIG}" ] \
+    && grep -q "may only contain letters, digits" <<< "${OUT}" \
+    && ! grep -qF -- "exfil" <<< "${OUT}" && [[ "${OUT}" != *"${hostile}"* ]]; then
+    ok "hostile key ${shown}: refused with a clear error, curl never started, key not printed"
+  else bad "hostile key ${shown}: rc=${RC} argv_bytes=$(wc -c < "${STUB_CURL_ARGV}" | tr -d ' ') out=${OUT}"; fi
 done
 : > "${STUB_CURL_ARGV}"
 run_collector TELERITHM_STATE_DIR="${SCRATCH}/state17b" TELERITHM_API_KEY='lf_pl-a1n._9key'

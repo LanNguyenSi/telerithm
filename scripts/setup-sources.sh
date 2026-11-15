@@ -49,12 +49,19 @@ if [ -z "$TEAM_ID" ]; then
 fi
 
 # The token reaches curl through a config on a file descriptor (see
-# create_source), and curl's config syntax quotes strings with " and escapes
-# with \. A token containing either character cannot go through that channel
-# without risking a broken config or an injected extra curl option, and this
-# script does not escape it, so such a token is refused with a clear error.
-if [[ "$AUTH_TOKEN" == *'"'* || "$AUTH_TOKEN" == *'\'* ]]; then
-  log_error "TELERITHM_AUTH_TOKEN must not contain a double quote or a backslash."
+# create_source). curl's config syntax is line based and quotes strings with "
+# and escapes with \, so a token holding a newline, a quote, a backslash or any
+# other character outside a plain token alphabet could end the quoted value and
+# make curl parse what follows as further options (a second url, a write-out,
+# a file:// read). The token is therefore checked against an allow-list, not a
+# deny-list: only A-Z a-z 0-9 and . _ ~ + / = - pass (a JWT is base64url
+# segments joined by dots), anything else, an empty token included, is refused
+# with an error that does not print the token. The check counts the allowed
+# bytes (a command substitution would strip a trailing newline from the
+# remainder and let it through) and runs in the C locale.
+if [ "$(printf '%s' "$AUTH_TOKEN" | LC_ALL=C tr -cd 'A-Za-z0-9._~+/=-' | wc -c | tr -d ' ')" \
+  -ne "$(printf '%s' "$AUTH_TOKEN" | wc -c | tr -d ' ')" ]; then
+  log_error "TELERITHM_AUTH_TOKEN may only contain letters, digits and . _ ~ + / = - (refused, value not shown)."
   exit 1
 fi
 
@@ -81,9 +88,9 @@ EOF
   # It goes to curl through --config on a file descriptor instead: bash's
   # process substitution hands curl a /dev/fd/N pipe, no file is written to
   # disk, and the printf that builds the config line is a bash builtin, so
-  # the token never enters any process's argv. Tokens holding " or \ are
-  # refused up front (see the validation above), so the config line needs no
-  # escaping.
+  # the token never enters any process's argv. Only tokens made of the
+  # allow-listed characters get here (see the validation above), so the
+  # config line needs no escaping.
   response=$(curl -s -w "\n%{http_code}" -X POST "${TELERITHM_API}/sources" \
     --config <(printf 'header = "Authorization: Bearer %s"\n' "$AUTH_TOKEN") \
     -H "Content-Type: application/json" \

@@ -133,12 +133,18 @@ if [ "$(grep -cF -- '"teamId": "team_test"' "${STUB_CURL_LOG}" || true)" = "${PO
 else bad "payload unchanged: payloads=$(cat "${STUB_CURL_LOG}" 2>/dev/null)"; fi
 
 # --- 2. refused token characters: a clear error, curl never starts -------------
-for hostile in 'has"quote' 'has\backslash' 'has"and\both'; do
+NL=$'\n'
+HOSTILE_TOKENS=('has"quote' 'has\backslash' 'has"and\both' 'eyJ.ok'"${NL}"'url = http://127.0.0.1:1/exfil'
+  'eyJ.ok'"${NL}" "${NL}"'eyJ.ok' 'eyJ.ok'$'\r'' ' 'eyJ.ok'$'\r''x' 'eyJ'$'\t''x' 'eyJ x' 'eyJ.ok url = http://127.0.0.1:1/x'
+  'eyJ.ok;x' 'eyJ_\xc3\xa9')
+for hostile in "${HOSTILE_TOKENS[@]}"; do
   run_setup TELERITHM_AUTH_TOKEN="${hostile}"
-  if [ "${RC}" -ne 0 ] && [ "${POSTS}" -eq 0 ] \
-    && grep -q "must not contain a double quote or a backslash" <<< "${OUT}"; then
-    ok "hostile token ${hostile}: refused with a clear error, curl never started"
-  else bad "hostile token ${hostile}: rc=${RC} posts=${POSTS} out=${OUT}"; fi
+  shown="$(printf '%q' "${hostile}")"
+  if [ "${RC}" -ne 0 ] && [ "${POSTS}" -eq 0 ] && [ ! -s "${STUB_CURL_CONFIG}" ] \
+    && grep -q "may only contain letters, digits" <<< "${OUT}" \
+    && ! grep -qF -- "exfil" <<< "${OUT}" && [[ "${OUT}" != *"${hostile}"* ]]; then
+    ok "hostile token ${shown}: refused with a clear error, curl never started, token not printed"
+  else bad "hostile token ${shown}: rc=${RC} posts=${POSTS} out=${OUT}"; fi
 done
 run_setup TELERITHM_AUTH_TOKEN='eyJ-alg.9f3c-_payload'
 if [ "${POSTS}" -ge 1 ] && ! grep -qF -- 'eyJ-alg.9f3c-_payload' "${STUB_CURL_ARGV}" \
