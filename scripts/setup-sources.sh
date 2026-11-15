@@ -49,7 +49,8 @@ if [ -z "$TEAM_ID" ]; then
 fi
 
 # True only for a non-empty string made of A-Z a-z 0-9 . _ ~ + / = -
-# (bash's =~ anchors to the whole string, so a trailing newline fails). A
+# (the ^ and $ in the pattern anchor it to the whole string; bash does not
+# use REG_NEWLINE, so $ does not match before a trailing newline). A
 # pure bash test in the C locale with no external helper: if the test itself
 # errors, the caller refuses, so the check cannot fail open.
 is_plain_secret() {
