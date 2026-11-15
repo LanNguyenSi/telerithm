@@ -11,9 +11,9 @@ CI (`.github/workflows/ci.yml`) runs one job per package plus five cross-cutting
 - **packages/sdk-js**: type check and vitest with coverage thresholds.
 - **CLI**: `bats packages/cli/logforge-pipe.bats`.
 - **Sender configs**: validates the sender configs shipped in `deploy/` (`vector validate`, `fluentd --dry-run` in the pinned images) with negative and positive controls, and shellchecks the repo's shell scripts.
-- **Shell script tests**: runs the tests of the operational shell scripts (backup, the `make deploy` targets, the Docker log collector, dev compose loopback ports, compose base image pins, test scratch directory safety).
-- **ClickHouse config**: checks the files under `backend/clickhouse`, the bind mounts of the two prod compose files and the entrypoint variables.
-- **Backend entrypoint**: tests every branch of the start-time migration decision in `backend/scripts/migrate.sh` and `backend/entrypoint.sh` against a stub Prisma CLI.
+- **Shell script tests**: runs the tests of the operational shell scripts (backup, the `make deploy` targets, the Docker log collector, dev compose loopback ports, compose base image pins, the required `POSTGRES_PASSWORD` interpolation in `docker-compose.prod.yml`, the non-root user and hardening keys of the app containers and their services, the `scripts/README.md` inventory of the test scripts, test scratch directory safety).
+- **ClickHouse config**: checks the files under `backend/clickhouse`, the bind mounts of the two prod compose files and the entrypoint variables, and renders `docker-compose.prod.yml` to check that `POSTGRES_PASSWORD` is required.
+- **Backend entrypoint**: tests every branch of the start-time migration decision in `backend/scripts/migrate.sh` and `backend/entrypoint.sh` against a stub Prisma CLI, and fails when `prisma` is not a runtime dependency of `backend/package.json` or a production install leaves the Prisma CLI out.
 - **Relay config**: parses `.relay.yml` the way the agent-relay loader reads it.
 
 The coverage thresholds are set per job in `.github/workflows/ci.yml`. A pull request is ready when all CI jobs pass and the separate Audit workflow (`.github/workflows/audit.yml`, an `npm audit` gate over the lockfiles) passes.
