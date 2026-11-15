@@ -246,11 +246,6 @@ $err"; then
     printf 'FAIL: docker compose config failed on %s without naming POSTGRES_PASSWORD: %s\n' "$FILE" "$err"
     return 1
   fi
-  if ! grep -qF -- "$MSG" <<<"$out
-$err"; then
-    printf 'FAIL: docker compose config refusal on %s lacks the message (%s): %s\n' "$FILE" "$MSG" "$err"
-    return 1
-  fi
 
   if ! out="$(render "$dir" "POSTGRES_PASSWORD=$SENTINEL")"; then
     printf 'FAIL: docker compose config failed on %s with POSTGRES_PASSWORD set: %s\n' "$FILE" "$(cat "$work/render.stderr")"
@@ -299,6 +294,24 @@ if occurrences != 2:
     fails += 1
 sys.exit(1 if fails else 0)
 PY
+}
+
+# check_docker_message <dir>: on the shipped copy only, the refusal of an unset
+# POSTGRES_PASSWORD must carry this file's own message for every use. Not part
+# of check_docker: the mutated copies of the controls deliberately keep a
+# different message (`m`) in one use, and which use compose reports first is
+# not defined.
+check_docker_message() {
+  local dir="$1" err
+  render "$dir" -u POSTGRES_PASSWORD >/dev/null && { printf 'FAIL: compose accepted %s with POSTGRES_PASSWORD unset\n' "$FILE"; return 1; }
+  err="$(cat "$work/render.stderr" 2>/dev/null || true)"
+  local n_all n_msg
+  n_all="$(grep -F -- "POSTGRES_PASSWORD" <<<"$err" | grep -cF -- "interpolating")"
+  n_msg="$(grep -F -- "POSTGRES_PASSWORD" <<<"$err" | grep -F -- "interpolating" | grep -cF -- "$MSG")"
+  if [ "$n_all" -lt 1 ] || [ "$n_all" -ne "$n_msg" ]; then
+    printf 'FAIL: the refusal on %s does not carry the message (%s) in every reported use: %s\n' "$FILE" "$MSG" "$err"
+    return 1
+  fi
 }
 
 expect_docker_fail() {
@@ -482,6 +495,11 @@ if docker compose version >/dev/null 2>&1; then
     ok "$FILE: docker compose refuses an unset POSTGRES_PASSWORD and renders the sentinel in both uses"
   else
     bad "$FILE: docker compose behaviour on the shipped file: $out"
+  fi
+  if out="$(check_docker_message "$repo" 2>&1)"; then
+    ok "$FILE: the real refusal carries the file's own message in every reported use"
+  else
+    bad "$FILE: $out"
   fi
 
   # The :? dropped: compose must refuse, so this copy must be caught.
