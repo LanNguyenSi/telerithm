@@ -337,6 +337,14 @@ jobs:
       - name: App containers run non-root
         run: bash scripts/app-containers-non-root.test.sh
 
+      # The Tests section of scripts/README.md lists exactly the
+      # scripts/*.test.sh files: a check without a README entry is a check no
+      # contributor will find, and an entry without a file is a dead command.
+      # Controls on a copied README in a scratch directory. Needs only bash
+      # and python3.
+      - name: Scripts README inventory
+        run: bash scripts/scripts-readme-inventory.test.sh
+
       # Every scripts/*.test.sh started with a TMPDIR that does not exist, from
       # a directory holding one canary file: it must stop without deleting or
       # writing anything there (an unchecked mktemp let a cleanup trap delete
