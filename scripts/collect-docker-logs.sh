@@ -76,6 +76,30 @@ if [ -z "$API_KEY" ]; then
   exit 1
 fi
 
+# True only for a non-empty string made of A-Z a-z 0-9 . _ ~ + / = -
+# (the ^ and $ in the pattern anchor it to the whole string; bash does not
+# use REG_NEWLINE, so $ does not match before a trailing newline). A
+# pure bash test in the C locale with no external helper: if the test itself
+# errors, the caller refuses, so the check cannot fail open.
+is_plain_secret() {
+  local LC_ALL=C re='^[A-Za-z0-9._~+/=-]+$'
+  [[ $1 =~ $re ]]
+}
+
+# The key reaches curl through a config on a file descriptor (see send_logs).
+# curl's config syntax is line based and quotes strings with " and escapes with
+# \, so a key holding a newline, a quote, a backslash or any other character
+# outside a plain token alphabet could end the quoted value and make curl
+# parse what follows as further options (a second url, a write-out, a file://
+# read). The key is therefore checked against an allow-list, not a deny-list:
+# only A-Z a-z 0-9 and . _ ~ + / = - pass (ingest keys are lf_ plus 24 hex
+# characters; the rest is headroom for base64), anything else, an empty key
+# included, is refused with an error that does not print the key.
+if ! is_plain_secret "$API_KEY"; then
+  log_error "TELERITHM_API_KEY may only contain letters, digits and . _ ~ + / = - (refused, value not shown)."
+  exit 1
+fi
+
 if [ -z "$CONTAINERS" ]; then
   log_error "TELERITHM_CONTAINERS not set. Please specify containers to monitor."
   log_info "Example: export TELERITHM_CONTAINERS='triologue-api triologue-frontend traefik'"
@@ -107,11 +131,20 @@ parse_level() {
 # (--data-binary @-), not as an argument: a large batch can exceed the argv
 # size limit (ARG_MAX), which would fail the POST at exec time. --data-binary
 # sends the bytes exactly as given (plain -d would also strip newlines).
+# The ingest key is likewise kept out of curl's argv: a local process reads
+# any command line through ps or /proc/<pid>/cmdline, so a key passed as a
+# -H argument is world-readable on the machine for the whole request. It goes
+# to curl through --config on a file descriptor instead: bash's process
+# substitution hands curl a /dev/fd/N pipe, no file is written to disk, and
+# the printf that builds the config line is a bash builtin, so the key never
+# enters any process's argv. Only keys made of the allow-listed
+# characters get here (see the validation above), so the config line needs no
+# escaping.
 send_logs() {
   local logs_json="$1"
   
   response=$(printf '%s' "$logs_json" | curl -s -w "\n%{http_code}" -X POST "$INGEST_URL" \
-    -H "X-API-Key: $API_KEY" \
+    --config <(printf 'header = "X-API-Key: %s"\n' "$API_KEY") \
     -H "Content-Type: application/json" \
     --data-binary @-)
   

@@ -48,6 +48,30 @@ if [ -z "$TEAM_ID" ]; then
   exit 1
 fi
 
+# True only for a non-empty string made of A-Z a-z 0-9 . _ ~ + / = -
+# (the ^ and $ in the pattern anchor it to the whole string; bash does not
+# use REG_NEWLINE, so $ does not match before a trailing newline). A
+# pure bash test in the C locale with no external helper: if the test itself
+# errors, the caller refuses, so the check cannot fail open.
+is_plain_secret() {
+  local LC_ALL=C re='^[A-Za-z0-9._~+/=-]+$'
+  [[ $1 =~ $re ]]
+}
+
+# The token reaches curl through a config on a file descriptor (see
+# create_source). curl's config syntax is line based and quotes strings with "
+# and escapes with \, so a token holding a newline, a quote, a backslash or any
+# other character outside a plain token alphabet could end the quoted value and
+# make curl parse what follows as further options (a second url, a write-out,
+# a file:// read). The token is therefore checked against an allow-list, not a
+# deny-list: only A-Z a-z 0-9 and . _ ~ + / = - pass (session tokens are sess_
+# plus 24 hex characters; the rest is headroom for base64), anything else, an
+# empty token included, is refused with an error that does not print the token.
+if ! is_plain_secret "$AUTH_TOKEN"; then
+  log_error "TELERITHM_AUTH_TOKEN may only contain letters, digits and . _ ~ + / = - (refused, value not shown)."
+  exit 1
+fi
+
 # Create a log source
 create_source() {
   local name="$1"
@@ -65,8 +89,17 @@ create_source() {
 EOF
 )
   
+  # The session token is kept out of curl's argv: a local process reads any
+  # command line through ps or /proc/<pid>/cmdline, so a Bearer token passed
+  # as a -H argument is world-readable on the machine for the whole request.
+  # It goes to curl through --config on a file descriptor instead: bash's
+  # process substitution hands curl a /dev/fd/N pipe, no file is written to
+  # disk, and the printf that builds the config line is a bash builtin, so
+  # the token never enters any process's argv. Only tokens made of the
+  # allow-listed characters get here (see the validation above), so the
+  # config line needs no escaping.
   response=$(curl -s -w "\n%{http_code}" -X POST "${TELERITHM_API}/sources" \
-    -H "Authorization: Bearer $AUTH_TOKEN" \
+    --config <(printf 'header = "Authorization: Bearer %s"\n' "$AUTH_TOKEN") \
     -H "Content-Type: application/json" \
     -d "$payload")
   
