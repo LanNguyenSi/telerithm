@@ -76,6 +76,16 @@ if [ -z "$API_KEY" ]; then
   exit 1
 fi
 
+# The key reaches curl through a config on a file descriptor (see send_logs),
+# and curl's config syntax quotes strings with " and escapes with \. A key
+# containing either character cannot go through that channel without risking
+# a broken config or an injected extra curl option, and this script does not
+# escape it, so such a key is refused with a clear error instead.
+if [[ "$API_KEY" == *'"'* || "$API_KEY" == *'\'* ]]; then
+  log_error "TELERITHM_API_KEY must not contain a double quote or a backslash."
+  exit 1
+fi
+
 if [ -z "$CONTAINERS" ]; then
   log_error "TELERITHM_CONTAINERS not set. Please specify containers to monitor."
   log_info "Example: export TELERITHM_CONTAINERS='triologue-api triologue-frontend traefik'"
@@ -107,11 +117,19 @@ parse_level() {
 # (--data-binary @-), not as an argument: a large batch can exceed the argv
 # size limit (ARG_MAX), which would fail the POST at exec time. --data-binary
 # sends the bytes exactly as given (plain -d would also strip newlines).
+# The ingest key is likewise kept out of curl's argv: a local process reads
+# any command line through ps or /proc/<pid>/cmdline, so a key passed as a
+# -H argument is world-readable on the machine for the whole request. It goes
+# to curl through --config on a file descriptor instead: bash's process
+# substitution hands curl a /dev/fd/N pipe, no file is written to disk, and
+# the printf that builds the config line is a bash builtin, so the key never
+# enters any process's argv. Keys holding " or \ are refused up front (see
+# the validation above), so the config line needs no escaping.
 send_logs() {
   local logs_json="$1"
   
   response=$(printf '%s' "$logs_json" | curl -s -w "\n%{http_code}" -X POST "$INGEST_URL" \
-    -H "X-API-Key: $API_KEY" \
+    --config <(printf 'header = "X-API-Key: %s"\n' "$API_KEY") \
     -H "Content-Type: application/json" \
     --data-binary @-)
   

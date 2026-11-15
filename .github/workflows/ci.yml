@@ -304,6 +304,14 @@ jobs:
       - name: Docker log collector tests
         run: bash scripts/collect-docker-logs.test.sh
 
+      # setup-sources.sh against a stub curl: the session token reaches curl
+      # through --config on a file descriptor and never appears in its argv,
+      # the payload and the status handling are unchanged, a token holding a
+      # quote or a backslash is refused before curl starts. Needs only bash
+      # and jq.
+      - name: Setup sources tests
+        run: bash scripts/setup-sources.test.sh
+
       # Every published port of the dev compose bound to the loopback
       # interface, plus controls on mutated copies. Parses the compose file
       # with python3, no Docker needed.

@@ -67,14 +67,27 @@ STUB
 # (reset per run_collector). A POST whose arguments carry `--data-binary @-`
 # reads its payload from stdin instead (one line appended to $STUB_CURL_STDIN
 # per such POST, so a scenario can prove the payload came through stdin).
+# Every call also appends its whole argv to $STUB_CURL_ARGV (one line per
+# argument, one `--curl-argv--` marker line per call, so a scenario can
+# search argv per call or as a whole) and the content of every --config/-K
+# file it is given to $STUB_CURL_CONFIG (the collector passes the API key
+# header through such a config on a file descriptor, never through argv).
 cat > "${STUB_DIR}/curl" <<'STUB'
 #!/bin/bash
+printf '%s\n' --curl-argv-- >> "${STUB_CURL_ARGV}"
+for arg in "$@"; do printf '%s\n' "$arg" >> "${STUB_CURL_ARGV}"; done
 payload=""
 prev=""
 stdin_payload=0
 for a in "$@"; do
   if [ "${prev}" = "-d" ]; then payload="$a"; fi
   if [ "${prev}" = "--data-binary" ] && [ "$a" = "@-" ]; then stdin_payload=1; fi
+  if [ "${prev}" = "--config" ] || [ "${prev}" = "-K" ]; then
+    cat -- "$a" >> "${STUB_CURL_CONFIG}"
+  fi
+  case "$a" in
+    --config=*) cat -- "${a#--config=}" >> "${STUB_CURL_CONFIG}" ;;
+  esac
   prev="$a"
 done
 if [ "${stdin_payload}" -eq 1 ]; then
@@ -99,11 +112,15 @@ export STUB_CURL_LOG="${SCRATCH}/curl.log"
 export STUB_CURL_N="${SCRATCH}/curl.n"
 export STUB_CURL_OK="${SCRATCH}/curl-accepted.log"
 export STUB_CURL_STDIN="${SCRATCH}/curl.stdin"
+export STUB_CURL_ARGV="${SCRATCH}/curl.argv"
+export STUB_CURL_CONFIG="${SCRATCH}/curl.config"
 : > "${STUB_DOCKER_LOG}"
 : > "${STUB_CURL_LOG}"
 : > "${STUB_CURL_N}"
 : > "${STUB_CURL_OK}"
 : > "${STUB_CURL_STDIN}"
+: > "${STUB_CURL_ARGV}"
+: > "${STUB_CURL_CONFIG}"
 export STUB_LOG_FILE="${SCRATCH}/logs.txt"
 export STUB_RUNNING="c1"
 
@@ -552,6 +569,48 @@ else bad "state write midway: rc=${RC} state=$(cat "${STATE16}/src_test__c1" 2>/
 if [ "$(find "${STATE16}" -name 'src_test__c1.*' | wc -l | tr -d ' ')" = "0" ]; then
   ok "state write fails midway: no temp file left in the state directory"
 else bad "state write midway: temp file left: $(find "${STATE16}")"; fi
+
+# --- 17. the API key reaches curl through --config on a fd, not argv ----------
+# A local process reads another process's command line through ps or
+# /proc/<pid>/cmdline, so the X-API-Key header must never be an argument of
+# curl. The stub records the full argv of every call ($STUB_CURL_ARGV) and
+# the content of every --config/-K file it was given ($STUB_CURL_CONFIG).
+STATE17="${SCRATCH}/state17"
+logs_lines "${STUB_LOG_FILE}" "${TS1}" "argvsafe"
+: > "${STUB_CURL_ARGV}"
+: > "${STUB_CURL_CONFIG}"
+run_collector TELERITHM_STATE_DIR="${STATE17}"
+if [ "$(batches)" = "1" ]; then
+  ok "key not in argv: the scenario POSTed one batch"
+else bad "key not in argv: batches=$(batches) out=${OUT}"; fi
+if ! grep -qF -- "${API_KEY_USED}" "${STUB_CURL_ARGV}"; then
+  ok "key not in argv: the API key value appears in no recorded curl argument"
+else bad "key not in argv: the API key appeared in curl argv"; fi
+if grep -qF -- '--config' "${STUB_CURL_ARGV}" \
+  && grep -qF -- "X-API-Key: ${API_KEY_USED}" "${STUB_CURL_CONFIG}"; then
+  ok "key not in argv: curl was given a --config file whose content carries the X-API-Key header"
+else bad "key not in argv: argv=$(cat "${STUB_CURL_ARGV}" 2>/dev/null) config=$(cat "${STUB_CURL_CONFIG}" 2>/dev/null)"; fi
+# the header the key left behind is unchanged: Content-Type is still a plain -H
+if grep -qxF -- 'Content-Type: application/json' "${STUB_CURL_ARGV}"; then
+  ok "key not in argv: the Content-Type header is still passed to curl in argv"
+else bad "key not in argv: Content-Type header missing from argv"; fi
+# A key containing " or \ cannot go through curl's config syntax (quotes and
+# backslashes are structural there) and is refused before anything runs; the
+# other characters that need no escaping still pass.
+for hostile in 'has"quote' 'has\backslash' 'has"and\both'; do
+  : > "${STUB_CURL_ARGV}"
+  run_collector TELERITHM_STATE_DIR="${STATE17}" TELERITHM_API_KEY="${hostile}"
+  if [ "${RC}" -ne 0 ] && [ ! -s "${STUB_CURL_ARGV}" ] \
+    && grep -q "must not contain a double quote or a backslash" <<< "${OUT}"; then
+    ok "hostile key ${hostile}: refused with a clear error, curl never started"
+  else bad "hostile key ${hostile}: rc=${RC} argv_bytes=$(wc -c < "${STUB_CURL_ARGV}" | tr -d ' ') out=${OUT}"; fi
+done
+: > "${STUB_CURL_ARGV}"
+run_collector TELERITHM_STATE_DIR="${SCRATCH}/state17b" TELERITHM_API_KEY='lf_pl-a1n._9key'
+if [ "${RC}" -eq 0 ] && grep -qF -- '--curl-argv--' "${STUB_CURL_ARGV}" \
+  && ! grep -qF -- 'lf_pl-a1n._9key' "${STUB_CURL_ARGV}"; then
+  ok "ordinary key with . - _ characters: accepted and still kept out of argv"
+else bad "ordinary key: rc=${RC} out=${OUT}"; fi
 
 echo
 echo "passed: ${PASS}, failed: ${FAIL}"

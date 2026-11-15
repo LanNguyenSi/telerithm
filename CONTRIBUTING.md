@@ -53,7 +53,7 @@ CI also runs five cross-cutting jobs (Sender configs, Shell script tests, ClickH
 - `docker-compose.prod.yml`: `bash scripts/compose-required-password.test.sh`
 - `backend/Dockerfile` and `frontend/Dockerfile` (and the app services of the three compose files): `bash scripts/app-containers-non-root.test.sh`
 - `deploy/` sender configs (needs Docker): `bash scripts/validate-sender-configs.sh`
-- `scripts/` shell scripts: `shellcheck --severity=warning scripts/*.sh backend/entrypoint.sh backend/scripts/*.sh`, `bash scripts/backup.test.sh`, `bash scripts/make-deploy.test.sh`, `bash scripts/collect-docker-logs.test.sh`, `bash scripts/scripts-readme-inventory.test.sh`, `bash scripts/test-scratch-safety.test.sh`
+- `scripts/` shell scripts: `shellcheck --severity=warning scripts/*.sh backend/entrypoint.sh backend/scripts/*.sh`, `bash scripts/backup.test.sh`, `bash scripts/make-deploy.test.sh`, `bash scripts/collect-docker-logs.test.sh`, `bash scripts/setup-sources.test.sh`, `bash scripts/scripts-readme-inventory.test.sh`, `bash scripts/test-scratch-safety.test.sh`
 - `backend/entrypoint.sh`, `backend/scripts/migrate.sh` and `backend/package.json`: `bash scripts/backend-migrate.test.sh`, `bash scripts/backend-prisma-cli.test.sh`
 - `.relay.yml`: `npm ci` at the repository root, then `bash scripts/relay-config.test.sh`
 

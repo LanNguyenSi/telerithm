@@ -48,6 +48,16 @@ if [ -z "$TEAM_ID" ]; then
   exit 1
 fi
 
+# The token reaches curl through a config on a file descriptor (see
+# create_source), and curl's config syntax quotes strings with " and escapes
+# with \. A token containing either character cannot go through that channel
+# without risking a broken config or an injected extra curl option, and this
+# script does not escape it, so such a token is refused with a clear error.
+if [[ "$AUTH_TOKEN" == *'"'* || "$AUTH_TOKEN" == *'\'* ]]; then
+  log_error "TELERITHM_AUTH_TOKEN must not contain a double quote or a backslash."
+  exit 1
+fi
+
 # Create a log source
 create_source() {
   local name="$1"
@@ -65,8 +75,17 @@ create_source() {
 EOF
 )
   
+  # The session token is kept out of curl's argv: a local process reads any
+  # command line through ps or /proc/<pid>/cmdline, so a Bearer token passed
+  # as a -H argument is world-readable on the machine for the whole request.
+  # It goes to curl through --config on a file descriptor instead: bash's
+  # process substitution hands curl a /dev/fd/N pipe, no file is written to
+  # disk, and the printf that builds the config line is a bash builtin, so
+  # the token never enters any process's argv. Tokens holding " or \ are
+  # refused up front (see the validation above), so the config line needs no
+  # escaping.
   response=$(curl -s -w "\n%{http_code}" -X POST "${TELERITHM_API}/sources" \
-    -H "Authorization: Bearer $AUTH_TOKEN" \
+    --config <(printf 'header = "Authorization: Bearer %s"\n' "$AUTH_TOKEN") \
     -H "Content-Type: application/json" \
     -d "$payload")
   
