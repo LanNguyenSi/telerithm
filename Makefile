@@ -1,6 +1,6 @@
 COMPOSE=docker compose
 
-.PHONY: setup backend frontend build up down logs init dev deploy deploy-backend deploy-frontend prod-logs require-clean-tree
+.PHONY: setup backend frontend build up down logs init dev deploy deploy-backend deploy-frontend deploy-preflight prod-logs require-clean-tree
 
 # One-time setup for running backend and frontend outside Docker: starts the
 # datastores (this also creates the ClickHouse tables from
@@ -75,19 +75,43 @@ require-clean-tree:
 		exit 1; \
 	fi
 
-deploy: require-clean-tree
+# Before any deploy pulls, builds or recreates anything, render the production
+# compose file exactly as the deploy targets use it and refuse when a variable
+# it references is not set. Compose only warns for such a variable ("The ...
+# variable is not set. Defaulting to a blank string.") and would go on to
+# recreate Postgres and the backend on a blank password. `config --quiet`
+# validates and interpolates without printing the rendered config, so secrets
+# stay out of the terminal: on failure it prints only its error, on a warning
+# only the warning, and neither carries a value. POSTGRES_PASSWORD is required
+# inside $(PROD_COMPOSE) (the `:?` form, so compose exits non-zero here), but
+# every other referenced variable would only warn, and some compose versions
+# warn and still exit 0, so the captured output is checked for the warning
+# text too.
+deploy-preflight:
+	@test -f $(PROD_ENV) || { echo "make: refusing to deploy, $(PROD_ENV) does not exist. Create it (cp .env.production.example $(PROD_ENV), then fill it in), then run make again." >&2; exit 1; }; \
+	out=$$(docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) config --quiet 2>&1) || { \
+		echo "make: refusing to deploy: docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) config --quiet failed, so $(PROD_COMPOSE) does not render with the variables in $(PROD_ENV). Nothing was pulled, built or recreated. Its message:" >&2; \
+		printf '%s\n' "$$out" >&2; \
+		exit 1; \
+	}; \
+	if printf '%s\n' "$$out" | grep "variable is not set" >&2; then \
+		echo "make: refusing to deploy: a variable referenced by $(PROD_COMPOSE) is not set in $(PROD_ENV) (the lines above). Nothing was pulled, built or recreated." >&2; \
+		exit 1; \
+	fi
+
+deploy: require-clean-tree deploy-preflight
 	git pull --rebase origin master
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --pull --no-cache
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) up -d --force-recreate
 	@echo "✅ Deployed. Check https://demo.telerithm.cloud"
 
-deploy-backend: require-clean-tree
+deploy-backend: require-clean-tree deploy-preflight
 	git pull --rebase origin master
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --pull --no-cache backend
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) up -d --no-deps --force-recreate backend
 	@echo "✅ Backend deployed"
 
-deploy-frontend: require-clean-tree
+deploy-frontend: require-clean-tree deploy-preflight
 	git pull --rebase origin master
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) build --pull --no-cache frontend
 	docker compose -f $(PROD_COMPOSE) --env-file $(PROD_ENV) up -d --no-deps --force-recreate frontend

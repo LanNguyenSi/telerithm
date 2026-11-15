@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Tests for the deploy targets in the Makefile: they must refuse to run when a
 # tracked file has local changes and must never stash or discard anything.
+# They also cover deploy-preflight, the prerequisite they all run before any
+# build: it refuses when .env.production is missing, when
+# `docker compose ... config --quiet` exits non-zero, and when that command
+# exits 0 while its output holds a `variable is not set` warning.
 # Runs in a scratch git repository with a stub `docker` and a `git` wrapper that
 # forwards everything to the real git except `pull`, which it only records, so
 # no network, Docker daemon or real checkout is touched.
@@ -51,9 +55,22 @@ export GIT_CONFIG_NOSYSTEM=1
 STUB_DIR="${SCRATCH}/stubbin"
 mkdir -p "${STUB_DIR}"
 export CALL_LOG="${SCRATCH}/calls.log"
+# The docker stub records every call. For the `config --quiet` call the
+# deploy-preflight target makes, STUB_DOCKER_CONFIG_OUT is what it prints
+# (a compose version that only warns about an unset variable) and
+# STUB_DOCKER_CONFIG_FAIL makes it exit non-zero (the `:?` refusal); with
+# neither set it passes silently, like a clean render.
 cat > "${STUB_DIR}/docker" <<'STUB'
 #!/usr/bin/env bash
 echo "docker $*" >> "${CALL_LOG}"
+case "$*" in
+  *config\ --quiet*)
+    [ -z "${STUB_DOCKER_CONFIG_FAIL:-}" ] || exit 1
+    if [ -n "${STUB_DOCKER_CONFIG_OUT:-}" ]; then
+      printf '%s\n' "${STUB_DOCKER_CONFIG_OUT}"
+    fi
+    ;;
+esac
 STUB
 cat > "${STUB_DIR}/git" <<STUB
 #!/usr/bin/env bash
@@ -196,6 +213,65 @@ for target in deploy deploy-backend deploy-frontend; do
   if [ "${RC}" -ne 0 ] && grep -q "HEAD is detached" <<< "${OUT}" && [ ! -s "${CALL_LOG}" ]; then
     ok "${target}: detached HEAD refused, nothing pulled"
   else bad "${target}: detached HEAD rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+done
+
+# --- deploy-preflight: every deploy target renders the compose file first ---
+# The deploy targets depend on deploy-preflight (after require-clean-tree): it
+# refuses when .env.production is missing, when
+# `docker compose ... config --quiet` exits non-zero, or when it exits 0 but
+# its output holds a `variable is not set` warning (a compose version that
+# only warns would otherwise go on to recreate the stack on a blank
+# password). Nothing may be built or recreated then; the stub docker in
+# scripts/make-deploy.test.sh's header comment says how the config call is
+# steered.
+for target in deploy deploy-backend deploy-frontend; do
+  # clean config (the stub passes silently): the deploy goes ahead, and the
+  # config check ran after the tree checks and before the build.
+  reset_repo
+  run_make "${target}"
+  cfg="$(grep -n "config --quiet" "${CALL_LOG}" | head -1 | cut -d: -f1)"
+  bld="$(grep -n " build " "${CALL_LOG}" | head -1 | cut -d: -f1)"
+  if [ "${RC}" -eq 0 ] && [ -n "${cfg}" ] && [ -n "${bld}" ] && [ "${cfg}" -lt "${bld}" ] \
+    && grep -q "^docker compose .* up -d" "${CALL_LOG}"; then
+    ok "${target}: clean config passes preflight, then build and up run"
+  else bad "${target}: clean config rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+
+  # compose exits 0 but warns that a variable is not set: refused, the
+  # warning line is shown, and no build or up call was made.
+  reset_repo
+  STUB_DOCKER_CONFIG_OUT='WARN[0000] The OPENAI_API_KEY variable is not set. Defaulting to a blank string.'
+  export STUB_DOCKER_CONFIG_OUT
+  run_make "${target}"
+  unset STUB_DOCKER_CONFIG_OUT
+  if [ "${RC}" -ne 0 ] \
+    && grep -q "refusing to deploy" <<< "${OUT}" \
+    && grep -q "variable is not set" <<< "${OUT}" \
+    && grep -q "OPENAI_API_KEY" <<< "${OUT}" \
+    && ! grep -q " build " "${CALL_LOG}" && ! grep -q " up -d" "${CALL_LOG}"; then
+    ok "${target}: 'variable is not set' warning refused, the line is named, no build/up"
+  else bad "${target}: unset warning rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+
+  # config exits non-zero (the `:?` refusal on an unset POSTGRES_PASSWORD):
+  # refused, nothing built.
+  reset_repo
+  STUB_DOCKER_CONFIG_FAIL=1
+  export STUB_DOCKER_CONFIG_FAIL
+  run_make "${target}"
+  unset STUB_DOCKER_CONFIG_FAIL
+  if [ "${RC}" -ne 0 ] && grep -q "refusing to deploy" <<< "${OUT}" \
+    && ! grep -q " build " "${CALL_LOG}" && ! grep -q " up -d" "${CALL_LOG}"; then
+    ok "${target}: failing config refused, no build/up"
+  else bad "${target}: failing config rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+
+  # .env.production does not exist: refused before docker is called at all.
+  reset_repo
+  rm "${REPO}/.env.production"
+  run_make "${target}"
+  echo "POSTGRES_PASSWORD=dummy" > "${REPO}/.env.production"
+  if [ "${RC}" -ne 0 ] && grep -q "refusing to deploy" <<< "${OUT}" \
+    && grep -q "\.env\.production" <<< "${OUT}" && [ ! -s "${CALL_LOG}" ]; then
+    ok "${target}: missing env file refused, docker not called"
+  else bad "${target}: missing env file rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
 done
 
 # outside a git work tree the status is unreadable: refused, not waved through
