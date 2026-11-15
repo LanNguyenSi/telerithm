@@ -601,7 +601,7 @@ else bad "key not in argv: Content-Type header missing from argv"; fi
 NL=$'\n'
 HOSTILE_KEYS=('has"quote' 'has\backslash' 'has"and\both' 'lf_ok'"${NL}"'url = http://127.0.0.1:1/exfil'
   'lf_ok'"${NL}" "${NL}"'lf_ok' 'lf_ok'$'\r'' ' 'lf_ok'$'\r''x' 'lf_a'$'\t''b' 'lf a b' 'lf_ok url = http://127.0.0.1:1/x'
-  'lf_ok;x' 'lf_\xc3\xa9')
+  'lf_ok;x' $'lf_\xc3\xa9' $'lf_\xa9')
 for hostile in "${HOSTILE_KEYS[@]}"; do
   : > "${STUB_CURL_ARGV}"
   : > "${STUB_CURL_CONFIG}"

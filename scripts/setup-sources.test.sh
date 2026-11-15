@@ -136,7 +136,7 @@ else bad "payload unchanged: payloads=$(cat "${STUB_CURL_LOG}" 2>/dev/null)"; fi
 NL=$'\n'
 HOSTILE_TOKENS=('has"quote' 'has\backslash' 'has"and\both' 'eyJ.ok'"${NL}"'url = http://127.0.0.1:1/exfil'
   'eyJ.ok'"${NL}" "${NL}"'eyJ.ok' 'eyJ.ok'$'\r'' ' 'eyJ.ok'$'\r''x' 'eyJ'$'\t''x' 'eyJ x' 'eyJ.ok url = http://127.0.0.1:1/x'
-  'eyJ.ok;x' 'eyJ_\xc3\xa9')
+  'eyJ.ok;x' $'eyJ_\xc3\xa9' $'eyJ_\xa9')
 for hostile in "${HOSTILE_TOKENS[@]}"; do
   run_setup TELERITHM_AUTH_TOKEN="${hostile}"
   shown="$(printf '%q' "${hostile}")"

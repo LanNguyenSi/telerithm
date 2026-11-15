@@ -48,19 +48,25 @@ if [ -z "$TEAM_ID" ]; then
   exit 1
 fi
 
+# True only for a non-empty string made of A-Z a-z 0-9 . _ ~ + / = -
+# (bash's =~ anchors to the whole string, so a trailing newline fails). A
+# pure bash test in the C locale with no external helper: if the test itself
+# errors, the caller refuses, so the check cannot fail open.
+is_plain_secret() {
+  local LC_ALL=C re='^[A-Za-z0-9._~+/=-]+$'
+  [[ $1 =~ $re ]]
+}
+
 # The token reaches curl through a config on a file descriptor (see
 # create_source). curl's config syntax is line based and quotes strings with "
 # and escapes with \, so a token holding a newline, a quote, a backslash or any
 # other character outside a plain token alphabet could end the quoted value and
 # make curl parse what follows as further options (a second url, a write-out,
 # a file:// read). The token is therefore checked against an allow-list, not a
-# deny-list: only A-Z a-z 0-9 and . _ ~ + / = - pass (a JWT is base64url
-# segments joined by dots), anything else, an empty token included, is refused
-# with an error that does not print the token. The check counts the allowed
-# bytes (a command substitution would strip a trailing newline from the
-# remainder and let it through) and runs in the C locale.
-if [ "$(printf '%s' "$AUTH_TOKEN" | LC_ALL=C tr -cd 'A-Za-z0-9._~+/=-' | wc -c | tr -d ' ')" \
-  -ne "$(printf '%s' "$AUTH_TOKEN" | wc -c | tr -d ' ')" ]; then
+# deny-list: only A-Z a-z 0-9 and . _ ~ + / = - pass (session tokens are sess_
+# plus 24 hex characters; the rest is headroom for base64), anything else, an
+# empty token included, is refused with an error that does not print the token.
+if ! is_plain_secret "$AUTH_TOKEN"; then
   log_error "TELERITHM_AUTH_TOKEN may only contain letters, digits and . _ ~ + / = - (refused, value not shown)."
   exit 1
 fi

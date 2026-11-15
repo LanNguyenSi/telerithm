@@ -76,19 +76,25 @@ if [ -z "$API_KEY" ]; then
   exit 1
 fi
 
+# True only for a non-empty string made of A-Z a-z 0-9 . _ ~ + / = -
+# (bash's =~ anchors to the whole string, so a trailing newline fails). A
+# pure bash test in the C locale with no external helper: if the test itself
+# errors, the caller refuses, so the check cannot fail open.
+is_plain_secret() {
+  local LC_ALL=C re='^[A-Za-z0-9._~+/=-]+$'
+  [[ $1 =~ $re ]]
+}
+
 # The key reaches curl through a config on a file descriptor (see send_logs).
 # curl's config syntax is line based and quotes strings with " and escapes with
 # \, so a key holding a newline, a quote, a backslash or any other character
 # outside a plain token alphabet could end the quoted value and make curl
 # parse what follows as further options (a second url, a write-out, a file://
 # read). The key is therefore checked against an allow-list, not a deny-list:
-# only A-Z a-z 0-9 and . _ ~ + / = - pass (ingest keys are lf_ plus hex, and
-# those characters cover base64 too), anything else, an empty key included, is
-# refused with an error that does not print the key. The check counts the
-# allowed bytes (a command substitution would strip a trailing newline from
-# the remainder and let it through) and runs in the C locale.
-if [ "$(printf '%s' "$API_KEY" | LC_ALL=C tr -cd 'A-Za-z0-9._~+/=-' | wc -c | tr -d ' ')" \
-  -ne "$(printf '%s' "$API_KEY" | wc -c | tr -d ' ')" ]; then
+# only A-Z a-z 0-9 and . _ ~ + / = - pass (ingest keys are lf_ plus 24 hex
+# characters; the rest is headroom for base64), anything else, an empty key
+# included, is refused with an error that does not print the key.
+if ! is_plain_secret "$API_KEY"; then
   log_error "TELERITHM_API_KEY may only contain letters, digits and . _ ~ + / = - (refused, value not shown)."
   exit 1
 fi
