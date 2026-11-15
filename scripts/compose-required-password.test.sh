@@ -73,8 +73,20 @@ DOTENV_VALUE="ci-value-from-a-dotenv-that-must-not-appear"
 REQUIRE_DOCKER="${COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER:-0}"
 
 # The shipped line of each use, as the mutation target of the controls.
-ENV_USE='POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}'
-URL_USE='postgresql://telerithm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@postgres'
+# The message differs per file (set in the loop below): prod.yml names only
+# .env.production, traefik.yml names both files because agent-relay deploys it
+# with .env.
+ENV_USE=''
+URL_USE=''
+MSG=''
+set_uses() {
+  case "$1" in
+    docker-compose.traefik.yml) MSG='POSTGRES_PASSWORD must be set (.env.production for make deploy, .env for relay deploys)' ;;
+    *) MSG='POSTGRES_PASSWORD must be set in .env.production' ;;
+  esac
+  ENV_USE='POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?'"${MSG}"'}'
+  URL_USE='postgresql://telerithm:${POSTGRES_PASSWORD:?'"${MSG}"'}@postgres'
+}
 
 # check <path>: reads the two uses out of the parsed document and prints one
 # FAIL line per problem, returns 1 when any.
@@ -234,6 +246,11 @@ $err"; then
     printf 'FAIL: docker compose config failed on %s without naming POSTGRES_PASSWORD: %s\n' "$FILE" "$err"
     return 1
   fi
+  if ! grep -qF -- "$MSG" <<<"$out
+$err"; then
+    printf 'FAIL: docker compose config refusal on %s lacks the message (%s): %s\n' "$FILE" "$MSG" "$err"
+    return 1
+  fi
 
   if ! out="$(render "$dir" "POSTGRES_PASSWORD=$SENTINEL")"; then
     printf 'FAIL: docker compose config failed on %s with POSTGRES_PASSWORD set: %s\n' "$FILE" "$(cat "$work/render.stderr")"
@@ -300,6 +317,7 @@ expect_docker_fail() {
 # reviewable.
 for FILE in $FILES; do
   echo "--- $FILE"
+  set_uses "$FILE"
   # A whole-line string unique to each file, used by the two controls that
   # must break the YAML: the parse failure must be reported, not skipped.
   case "$FILE" in
@@ -309,6 +327,11 @@ for FILE in $FILES; do
 
 if out="$(check "$repo/$FILE" 2>&1)"; then
   ok "$FILE: the shipped compose file requires POSTGRES_PASSWORD with :? in both uses"
+  # the shipped lines carry exactly the message of this file (the controls
+  # below mutate these strings)
+  if grep -qF -- "$ENV_USE" "$repo/$FILE" && grep -qF -- "$URL_USE" "$repo/$FILE"; then
+    ok "$FILE: both uses carry the expected refusal message"
+  else bad "$FILE: a use does not carry the expected refusal message ($MSG)"; fi
 else
   bad "$FILE: the shipped compose file: $out"
 fi

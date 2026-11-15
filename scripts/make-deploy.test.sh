@@ -56,10 +56,14 @@ STUB_DIR="${SCRATCH}/stubbin"
 mkdir -p "${STUB_DIR}"
 export CALL_LOG="${SCRATCH}/calls.log"
 # The docker stub records every call. For the `config --quiet` call the
-# deploy-preflight target makes, STUB_DOCKER_CONFIG_OUT is what it prints
-# (a compose version that only warns about an unset variable) and
-# STUB_DOCKER_CONFIG_FAIL makes it exit non-zero (the `:?` refusal); with
-# neither set it passes silently, like a clean render.
+# deploy-preflight target makes, STUB_DOCKER_CONFIG_ERR is what it prints on
+# stderr, where real Compose prints its "variable is not set" warning while
+# exiting 0, and STUB_DOCKER_CONFIG_OUT is what it prints on stdout (a compose
+# version that warns there); STUB_DOCKER_CONFIG_FAIL makes it exit non-zero
+# (the `:?` refusal). Once the git stub has seen a `pull` with
+# STUB_PULL_ADDS_VARIABLE set, every later config call warns on stderr, as if
+# the pulled compose file referenced a new unset variable. With none of these
+# set it passes silently, like a clean render.
 cat > "${STUB_DIR}/docker" <<'STUB'
 #!/usr/bin/env bash
 echo "docker $*" >> "${CALL_LOG}"
@@ -69,13 +73,20 @@ case "$*" in
     if [ -n "${STUB_DOCKER_CONFIG_OUT:-}" ]; then
       printf '%s\n' "${STUB_DOCKER_CONFIG_OUT}"
     fi
+    if [ -n "${STUB_DOCKER_CONFIG_ERR:-}" ]; then
+      printf '%s\n' "${STUB_DOCKER_CONFIG_ERR}" >&2
+    fi
+    if [ -e "${CALL_LOG}.pulled" ]; then
+      echo "WARN[0000] The NEW_VARIABLE variable is not set. Defaulting to a blank string." >&2
+    fi
     ;;
 esac
 STUB
 cat > "${STUB_DIR}/git" <<STUB
 #!/usr/bin/env bash
 case "\${1:-}" in
-  pull|stash) echo "git \$*" >> "\${CALL_LOG}"; exit 0 ;;
+  pull) echo "git \$*" >> "\${CALL_LOG}"; [ -z "\${STUB_PULL_ADDS_VARIABLE:-}" ] || : > "\${CALL_LOG}.pulled"; exit 0 ;;
+  stash) echo "git \$*" >> "\${CALL_LOG}"; exit 0 ;;
   status) [ -z "\${STUB_GIT_STATUS_FAIL:-}" ] || exit 1 ;;
 esac
 exec "${REAL_GIT}" "\$@"
@@ -112,6 +123,7 @@ bad() { FAIL=$((FAIL + 1)); echo "FAIL - $1"; }
 
 run_make() {
   : > "${CALL_LOG}"
+  rm -f "${CALL_LOG}.pulled"
   OUT="$(cd "${REPO}" && make "$@" 2>&1)"
   RC=$?
 }
@@ -216,12 +228,13 @@ for target in deploy deploy-backend deploy-frontend; do
 done
 
 # --- deploy-preflight: every deploy target renders the compose file first ---
-# The deploy targets depend on deploy-preflight (after require-clean-tree): it
+# The deploy targets depend on deploy-preflight (after require-clean-tree) and run it again after the pull: it
 # refuses when .env.production is missing, when
 # `docker compose ... config --quiet` exits non-zero, or when it exits 0 but
-# its output holds a `variable is not set` warning (a compose version that
-# only warns would otherwise go on to recreate the stack on a blank
-# password). Nothing may be built or recreated then; the stub docker in
+# its output (stderr, as real Compose prints it, or stdout) holds a `variable
+# is not set` warning (a compose version that only warns would otherwise go on
+# to recreate the stack on a blank password). It runs again right after the
+# pull, since the pull can bring in a compose file with a new variable. Nothing may be built or recreated then; the stub docker in
 # scripts/make-deploy.test.sh's header comment says how the config call is
 # steered.
 for target in deploy deploy-backend deploy-frontend; do
@@ -236,20 +249,53 @@ for target in deploy deploy-backend deploy-frontend; do
     ok "${target}: clean config passes preflight, then build and up run"
   else bad "${target}: clean config rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
 
-  # compose exits 0 but warns that a variable is not set: refused, the
-  # warning line is shown, and no build or up call was made.
+  # compose exits 0 but warns that a variable is not set, on stderr as real
+  # Compose does, or on stdout: refused either way, the warning line is shown,
+  # and no build or up call was made.
+  for stream in ERR OUT; do
+    reset_repo
+    export "STUB_DOCKER_CONFIG_${stream}=WARN[0000] The OPENAI_API_KEY variable is not set. Defaulting to a blank string."
+    run_make "${target}"
+    unset "STUB_DOCKER_CONFIG_${stream}"
+    if [ "${RC}" -ne 0 ] \
+      && grep -q "refusing to deploy" <<< "${OUT}" \
+      && grep -q "variable is not set" <<< "${OUT}" \
+      && grep -q "OPENAI_API_KEY" <<< "${OUT}" \
+      && ! grep -q " build " "${CALL_LOG}" && ! grep -q " up -d" "${CALL_LOG}" \
+      && ! grep -q "^git pull" "${CALL_LOG}"; then
+      ok "${target}: 'variable is not set' warning on std${stream} refused before the pull, the line is named, no build/up"
+    else bad "${target}: unset warning on std${stream} rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+  done
+
+  # the pull brings in a compose file with a new unset variable: the first
+  # config call (before the pull) is clean, the second (after it) warns, so
+  # the deploy stops after the pull and before any build or up.
   reset_repo
-  STUB_DOCKER_CONFIG_OUT='WARN[0000] The OPENAI_API_KEY variable is not set. Defaulting to a blank string.'
-  export STUB_DOCKER_CONFIG_OUT
+  STUB_PULL_ADDS_VARIABLE=1
+  export STUB_PULL_ADDS_VARIABLE
   run_make "${target}"
-  unset STUB_DOCKER_CONFIG_OUT
+  unset STUB_PULL_ADDS_VARIABLE
+  nconf="$(grep -c "config --quiet" "${CALL_LOG}")"
   if [ "${RC}" -ne 0 ] \
     && grep -q "refusing to deploy" <<< "${OUT}" \
-    && grep -q "variable is not set" <<< "${OUT}" \
-    && grep -q "OPENAI_API_KEY" <<< "${OUT}" \
+    && grep -q "NEW_VARIABLE" <<< "${OUT}" \
+    && [ "${nconf}" -eq 2 ] \
+    && grep -q "^git pull" "${CALL_LOG}" \
     && ! grep -q " build " "${CALL_LOG}" && ! grep -q " up -d" "${CALL_LOG}"; then
-    ok "${target}: 'variable is not set' warning refused, the line is named, no build/up"
-  else bad "${target}: unset warning rc=${RC} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+    ok "${target}: a variable added by the pull is refused after the pull, no build/up"
+  else bad "${target}: post-pull warning rc=${RC} configs=${nconf} calls=$(cat "${CALL_LOG}") out=${OUT}"; fi
+
+  # a clean deploy runs the config check twice, before and after the pull
+  reset_repo
+  run_make "${target}"
+  pl="$(grep -n "^git pull" "${CALL_LOG}" | head -1 | cut -d: -f1)"
+  c1="$(grep -n "config --quiet" "${CALL_LOG}" | sed -n 1p | cut -d: -f1)"
+  c2="$(grep -n "config --quiet" "${CALL_LOG}" | sed -n 2p | cut -d: -f1)"
+  bld="$(grep -n " build " "${CALL_LOG}" | head -1 | cut -d: -f1)"
+  if [ "${RC}" -eq 0 ] && [ -n "${pl}" ] && [ -n "${c1}" ] && [ -n "${c2}" ] && [ -n "${bld}" ] \
+    && [ "${c1}" -lt "${pl}" ] && [ "${pl}" -lt "${c2}" ] && [ "${c2}" -lt "${bld}" ]; then
+    ok "${target}: config check runs before the pull and again after it, before the build"
+  else bad "${target}: check order rc=${RC} calls=$(cat "${CALL_LOG}")"; fi
 
   # config exits non-zero (the `:?` refusal on an unset POSTGRES_PASSWORD):
   # refused, nothing built.
