@@ -1,19 +1,23 @@
 #!/usr/bin/env bash
-# Guard for the POSTGRES_PASSWORD interpolation in docker-compose.prod.yml.
-# The file used to interpolate it as ${POSTGRES_PASSWORD:-telerithm}, so a host
-# that forgot the variable in .env.production started Postgres with a password
-# that is public with the repository, and the backend connected with it
-# silently. Both places that use it (the postgres service environment and the
-# backend DATABASE_URL) now interpolate it with the :? form, so compose refuses
-# to start instead of substituting anything. Keep it that way.
-#
-# docker-compose.traefik.yml (the deployed variant) has no default either, but
-# it interpolates the bare ${POSTGRES_PASSWORD} and so does NOT refuse: measured
-# with `docker compose -f docker-compose.traefik.yml config` and the variable
+# Guard for the POSTGRES_PASSWORD interpolation in docker-compose.prod.yml and
+# docker-compose.traefik.yml. The prod file used to interpolate it as
+# ${POSTGRES_PASSWORD:-telerithm}, so a host that forgot the variable in
+# .env.production started Postgres with a password that is public with the
+# repository, and the backend connected with it silently. The deployed
+# variant, docker-compose.traefik.yml, interpolated the bare
+# ${POSTGRES_PASSWORD} instead: measured with
+# `docker compose -f docker-compose.traefik.yml config` and the variable
 # unset, compose exits 0, warns once per use that the variable is not set and
-# defaults to a blank string, and renders POSTGRES_PASSWORD: "" and
-# DATABASE_URL: postgresql://telerithm:@postgres... That is what
-# .env.production.example says about it too. This check is about this file only.
+# defaults to a blank string, rendering POSTGRES_PASSWORD: "" and
+# DATABASE_URL: postgresql://telerithm:@postgres..., which is how a missing
+# line in .env.production reached a deploy as a blank password. Both places
+# that use it in both files (the postgres service environment and the backend
+# DATABASE_URL) now interpolate it with the :? form, so compose refuses to
+# start instead of substituting anything. Keep it that way. The Makefile's
+# deploy-preflight target additionally runs
+# `docker compose -f docker-compose.traefik.yml --env-file .env.production
+# config --quiet` before any deploy pulls, builds or recreates, and refuses
+# when that fails or warns; scripts/make-deploy.test.sh covers that refusal.
 #
 # The two uses are read as YAML values at their place in the document
 # (services.postgres.environment.POSTGRES_PASSWORD and
@@ -49,13 +53,16 @@
 # failure, so the behaviour assertion always runs somewhere in CI.
 #
 # The controls run the same check on mutated copies and must fail with the
-# message of their own branch.
+# message of their own branch. Every check, control and docker assertion below
+# runs once per compose file.
 #
 # Usage: bash scripts/compose-required-password.test.sh
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FILE="docker-compose.prod.yml"
+# The compose files guarded here; every check below runs once per file (the
+# FILE loop is set at the head of the per-file section).
+FILES="docker-compose.prod.yml docker-compose.traefik.yml"
 # A password that is not the old fallback, so a rendered use that still says
 # telerithm cannot pass for a substituted one.
 SENTINEL="ci-sentinel-not-the-fallback"
@@ -66,8 +73,20 @@ DOTENV_VALUE="ci-value-from-a-dotenv-that-must-not-appear"
 REQUIRE_DOCKER="${COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER:-0}"
 
 # The shipped line of each use, as the mutation target of the controls.
-ENV_USE='POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}'
-URL_USE='postgresql://telerithm:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}@postgres'
+# The message differs per file (set in the loop below): prod.yml names only
+# .env.production, traefik.yml names both files because agent-relay deploys it
+# with .env.
+ENV_USE=''
+URL_USE=''
+MSG=''
+set_uses() {
+  case "$1" in
+    docker-compose.traefik.yml) MSG='POSTGRES_PASSWORD must be set (.env.production for make deploy, .env for relay deploys)' ;;
+    *) MSG='POSTGRES_PASSWORD must be set in .env.production' ;;
+  esac
+  ENV_USE='POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?'"${MSG}"'}'
+  URL_USE='postgresql://telerithm:${POSTGRES_PASSWORD:?'"${MSG}"'}@postgres'
+}
 
 # check <path>: reads the two uses out of the parsed document and prints one
 # FAIL line per problem, returns 1 when any.
@@ -189,10 +208,10 @@ PY
 expect_fail() {
   local name="$1" fragment="$2" out
   if out="$(check "$work/tree/$FILE" 2>&1)"; then
-    bad "$name: check passed but must fail"
+    bad "$FILE: $name: check passed but must fail"
     return
   fi
-  if grep -qF -- "$fragment" <<<"$out"; then ok "$name"; else bad "$name: failed for another reason (wanted: $fragment): $out"; fi
+  if grep -qF -- "$fragment" <<<"$out"; then ok "$FILE: $name"; else bad "$FILE: $name: failed for another reason (wanted: $fragment): $out"; fi
 }
 
 # render <dir> <env-args...>: the rendered compose config of that directory, so
@@ -225,6 +244,11 @@ check_docker() {
   if ! grep -qF -- "POSTGRES_PASSWORD" <<<"$out
 $err"; then
     printf 'FAIL: docker compose config failed on %s without naming POSTGRES_PASSWORD: %s\n' "$FILE" "$err"
+    return 1
+  fi
+  if ! grep -qF -- "$MSG" <<<"$out
+$err"; then
+    printf 'FAIL: docker compose config refusal on %s lacks the message (%s): %s\n' "$FILE" "$MSG" "$err"
     return 1
   fi
 
@@ -280,16 +304,36 @@ PY
 expect_docker_fail() {
   local name="$1" dir="$2" fragment="$3" out
   if out="$(check_docker "$dir" 2>&1)"; then
-    bad "$name: docker check passed but must fail"
+    bad "$FILE: $name: docker check passed but must fail"
     return
   fi
-  if grep -qF -- "$fragment" <<<"$out"; then ok "$name"; else bad "$name: failed for another reason (wanted: $fragment): $out"; fi
+  if grep -qF -- "$fragment" <<<"$out"; then ok "$FILE: $name"; else bad "$FILE: $name: failed for another reason (wanted: $fragment): $out"; fi
 }
 
+# Every check below runs once per compose file: the per-use rules, the same
+# controls on mutated copies and, where docker is available, the same
+# behaviour assertions against real compose. The loop body is deliberately
+# kept at its original indentation (no re-indent) so the diff stays
+# reviewable.
+for FILE in $FILES; do
+  echo "--- $FILE"
+  set_uses "$FILE"
+  # A whole-line string unique to each file, used by the two controls that
+  # must break the YAML: the parse failure must be reported, not skipped.
+  case "$FILE" in
+    docker-compose.prod.yml) YAML_ANCHOR='name: telerithm-standalone' ;;
+    *) YAML_ANCHOR='name: telerithm' ;;
+  esac
+
 if out="$(check "$repo/$FILE" 2>&1)"; then
-  ok "the shipped compose file requires POSTGRES_PASSWORD with :? in both uses"
+  ok "$FILE: the shipped compose file requires POSTGRES_PASSWORD with :? in both uses"
+  # the shipped lines carry exactly the message of this file (the controls
+  # below mutate these strings)
+  if grep -qF -- "$ENV_USE" "$repo/$FILE" && grep -qF -- "$URL_USE" "$repo/$FILE"; then
+    ok "$FILE: both uses carry the expected refusal message"
+  else bad "$FILE: a use does not carry the expected refusal message ($MSG)"; fi
 else
-  bad "the shipped compose file: $out"
+  bad "$FILE: the shipped compose file: $out"
 fi
 
 # --- the file must not fall back, and must not substitute anything else ------
@@ -404,7 +448,7 @@ expect_fail "variable absent from the file" "has no interpolation of POSTGRES_PA
 
 # A file that is not YAML at all is reported, not skipped.
 fresh_copy
-mutate "$work/tree/$FILE" 'name: telerithm-standalone' 'name: [unclosed'
+mutate "$work/tree/$FILE" "$YAML_ANCHOR" 'name: [unclosed'
 expect_fail "file that does not parse as YAML" "does not parse as YAML"
 
 # A missing file is reported, not skipped.
@@ -419,11 +463,11 @@ fakelib="$work/fakelib"
 mkdir -p "$fakelib"
 printf 'raise ImportError("no yaml here")\n' > "$fakelib/yaml.py"
 if out="$(PYTHONPATH="$fakelib" check "$repo/$FILE" 2>&1)"; then
-  bad "missing PyYAML: check passed but must fail"
+  bad "$FILE: missing PyYAML: check passed but must fail"
 elif grep -qF -- "PyYAML (python3 -c 'import yaml') is required" <<<"$out"; then
-  ok "missing PyYAML fails the checker with the required message"
+  ok "$FILE: missing PyYAML fails the checker with the required message"
 else
-  bad "missing PyYAML fails the checker for another reason: $out"
+  bad "$FILE: missing PyYAML fails the checker for another reason: $out"
 fi
 
 # --- behaviour against real compose -----------------------------------------
@@ -435,9 +479,9 @@ if docker compose version >/dev/null 2>&1; then
   # happens not to have the variable.
   export POSTGRES_PASSWORD="$SENTINEL"
   if out="$(check_docker "$repo" 2>&1)"; then
-    ok "docker compose refuses an unset POSTGRES_PASSWORD and renders the sentinel in both uses"
+    ok "$FILE: docker compose refuses an unset POSTGRES_PASSWORD and renders the sentinel in both uses"
   else
-    bad "docker compose behaviour on the shipped file: $out"
+    bad "$FILE: docker compose behaviour on the shipped file: $out"
   fi
 
   # The :? dropped: compose must refuse, so this copy must be caught.
@@ -456,11 +500,11 @@ if docker compose version >/dev/null 2>&1; then
   dir="$(compose_dir dotenv)"
   printf 'POSTGRES_PASSWORD=%s\n' "$DOTENV_VALUE" > "$dir/.env"
   if out="$(check_docker "$dir" 2>&1)" && ! grep -qF -- "$DOTENV_VALUE" <<<"$out"; then
-    ok ".env in the compose directory is not read: the unset refusal stands and the output holds no value from that file"
+    ok "$FILE: .env in the compose directory is not read: the unset refusal stands and the output holds no value from that file"
   elif grep -qF -- "$DOTENV_VALUE" <<<"$out"; then
-    bad ".env in the compose directory: the docker check output holds the value from that file (it is not quoted here for that reason)"
+    bad "$FILE: .env in the compose directory: the docker check output holds the value from that file (it is not quoted here for that reason)"
   else
-    bad ".env in the compose directory: docker check failed on that copy: $out"
+    bad "$FILE: .env in the compose directory: docker check failed on that copy: $out"
   fi
 
   # A compose run that fails for another reason must not be mistaken for the
@@ -468,7 +512,7 @@ if docker compose version >/dev/null 2>&1; then
   dir="$(compose_dir broken-schema)"
   mutate "$dir/$FILE" "$ENV_USE" 'POSTGRES_PASSWORD: ci-dummy'
   mutate "$dir/$FILE" "$URL_USE" 'postgresql://telerithm:ci-dummy@postgres'
-  mutate "$dir/$FILE" 'name: telerithm-standalone' 'name: [unclosed'
+  mutate "$dir/$FILE" "$YAML_ANCHOR" 'name: [unclosed'
   expect_docker_fail "docker check requires the refusal to name the variable" "$dir" "without naming POSTGRES_PASSWORD"
 
   # Each rendered use must carry the sentinel on its own: one of them written
@@ -518,17 +562,18 @@ if docker compose version >/dev/null 2>&1; then
   # The rendered comparison fails closed without PyYAML too, so it cannot pass
   # by not looking at the document at all.
   if out="$(PYTHONPATH="$fakelib" check_docker "$repo" 2>&1)"; then
-    bad "missing PyYAML in the rendered comparison: check passed but must fail"
+    bad "$FILE: missing PyYAML in the rendered comparison: check passed but must fail"
   elif grep -qF -- "PyYAML (python3 -c 'import yaml') is required" <<<"$out"; then
-    ok "missing PyYAML fails the rendered comparison with the required message"
+    ok "$FILE: missing PyYAML fails the rendered comparison with the required message"
   else
-    bad "missing PyYAML in the rendered comparison for another reason: $out"
+    bad "$FILE: missing PyYAML in the rendered comparison for another reason: $out"
   fi
 elif [ "$REQUIRE_DOCKER" = "1" ]; then
-  bad "COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER=1 but docker compose is not available"
+  bad "$FILE: COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER=1 but docker compose is not available"
 else
-  echo "SKIP - docker compose not available: no behaviour assertion against real compose (the ClickHouse config CI job runs this file with COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER=1)"
+  echo "SKIP - docker compose not available: no behaviour assertion against real compose for $FILE (the ClickHouse config CI job runs this file with COMPOSE_REQUIRED_PASSWORD_REQUIRE_DOCKER=1)"
 fi
+done
 
 echo "passed: $PASS, failed: $FAIL"
 [ "$FAIL" -eq 0 ]
