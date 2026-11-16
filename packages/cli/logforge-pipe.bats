@@ -6,11 +6,16 @@ SCRIPT="$BATS_TEST_DIRNAME/logforge-pipe.sh"
 setup() {
   FAKE_BIN_DIR="$(mktemp -d)"
   CAPTURE_FILE="$(mktemp)"
+  CONFIG_FILE="$(mktemp)"
   export FAKE_CURL_CAPTURE="$CAPTURE_FILE"
+  export FAKE_CURL_CONFIG="$CONFIG_FILE"
 
   # Fake `curl` that records every invocation (args, one per line) instead of
   # making a real network call. The real script redirects curl's own stdout
-  # to /dev/null, so we record to a separate capture file instead.
+  # to /dev/null, so we record to a separate capture file instead. It also
+  # copies the content of every --config/-K file it is given: the script
+  # passes the API key header through such a config on a file descriptor,
+  # never through argv.
   cat > "$FAKE_BIN_DIR/curl" <<'EOF'
 #!/usr/bin/env bash
 {
@@ -20,6 +25,16 @@ setup() {
   done
   printf 'END\n'
 } >> "$FAKE_CURL_CAPTURE"
+prev=""
+for arg in "$@"; do
+  if [ "$prev" = "--config" ] || [ "$prev" = "-K" ]; then
+    cat -- "$arg" >> "$FAKE_CURL_CONFIG"
+  fi
+  case "$arg" in
+    --config=*) cat -- "${arg#--config=}" >> "$FAKE_CURL_CONFIG" ;;
+  esac
+  prev="$arg"
+done
 exit 0
 EOF
   chmod +x "$FAKE_BIN_DIR/curl"
@@ -27,7 +42,7 @@ EOF
 
 teardown() {
   rm -rf "$FAKE_BIN_DIR"
-  rm -f "$CAPTURE_FILE"
+  rm -f "$CAPTURE_FILE" "$CONFIG_FILE"
 }
 
 @test "exits non-zero when TELERITHM_SOURCE_ID is missing" {
@@ -64,7 +79,101 @@ teardown() {
   [ -s "$CAPTURE_FILE" ]
 
   grep -qF "http://fake-host:4000/api/v1/ingest/src123" "$CAPTURE_FILE"
-  grep -qF "X-API-Key: key123" "$CAPTURE_FILE"
+  grep -qF '{"logs":["hello world"]}' "$CAPTURE_FILE"
+}
+
+@test "passes the API key through a curl config, never through curl argv" {
+  export TELERITHM_SOURCE_ID="src123"
+  export TELERITHM_API_KEY="key123"
+  export TELERITHM_URL="http://fake-host:4000"
+  export BATCH_SIZE=1
+  export FLUSH_INTERVAL=1
+  export PATH="$FAKE_BIN_DIR:$PATH"
+
+  run bash -c "printf 'hello world\n' | \"$SCRIPT\""
+
+  [ "$status" -eq 0 ]
+  [ -s "$CAPTURE_FILE" ]
+
+  # The key value appears in no recorded curl argument.
+  ! grep -qF -- "key123" "$CAPTURE_FILE"
+  # curl was given a --config file whose content carries the X-API-Key
+  # header (the stub copied every config it was given to $FAKE_CURL_CONFIG).
+  grep -qF -- "--config" "$CAPTURE_FILE"
+  grep -qF -- "X-API-Key: key123" "$CONFIG_FILE"
+  # The other header is unchanged and still a plain -H argument.
+  grep -qxF -- "Content-Type: application/json" "$CAPTURE_FILE"
+}
+
+@test "refuses a key containing a newline without printing the value" {
+  export TELERITHM_SOURCE_ID="src123"
+  export TELERITHM_API_KEY=$'lf_ok\nurl = http://127.0.0.1:9/x'
+  export TELERITHM_URL="http://fake-host:4000"
+  export BATCH_SIZE=1
+  export FLUSH_INTERVAL=1
+  export PATH="$FAKE_BIN_DIR:$PATH"
+
+  run bash -c "printf 'hello world\n' | \"$SCRIPT\""
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"may only contain letters, digits"* ]]
+  # The key (and the injected line of it) is never printed, and curl never
+  # starts: an allow-listed failure must not reach the POST at all.
+  [[ "$output" != *"lf_ok"* ]]
+  [ ! -s "$CAPTURE_FILE" ]
+  [ ! -s "$CONFIG_FILE" ]
+}
+
+@test "refuses a key containing a double quote without printing the value" {
+  export TELERITHM_SOURCE_ID="src123"
+  export TELERITHM_API_KEY='lf_"inject"'
+  export TELERITHM_URL="http://fake-host:4000"
+  export BATCH_SIZE=1
+  export FLUSH_INTERVAL=1
+  export PATH="$FAKE_BIN_DIR:$PATH"
+
+  run bash -c "printf 'hello world\n' | \"$SCRIPT\""
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"may only contain letters, digits"* ]]
+  [[ "$output" != *'lf_"inject"'* ]]
+  [ ! -s "$CAPTURE_FILE" ]
+  [ ! -s "$CONFIG_FILE" ]
+}
+
+@test "refuses a key containing a high byte without printing the value" {
+  export TELERITHM_SOURCE_ID="src123"
+  # A non-ASCII byte (é as UTF-8, plus a bare high byte) is outside the
+  # plain-token allow-list and must be refused before curl starts.
+  export TELERITHM_API_KEY=$'lf_\xc3\xa9key'
+  export TELERITHM_URL="http://fake-host:4000"
+  export BATCH_SIZE=1
+  export FLUSH_INTERVAL=1
+  export PATH="$FAKE_BIN_DIR:$PATH"
+
+  run bash -c "printf 'hello world\n' | \"$SCRIPT\""
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"may only contain letters, digits"* ]]
+  [[ "$output" != *$'lf_\xc3\xa9'* ]]
+  [ ! -s "$CAPTURE_FILE" ]
+  [ ! -s "$CONFIG_FILE" ]
+}
+
+@test "a key made of ordinary plain-token characters still posts" {
+  export TELERITHM_SOURCE_ID="src123"
+  export TELERITHM_API_KEY='lf_pl-a1n._9key'
+  export TELERITHM_URL="http://fake-host:4000"
+  export BATCH_SIZE=1
+  export FLUSH_INTERVAL=1
+  export PATH="$FAKE_BIN_DIR:$PATH"
+
+  run bash -c "printf 'hello world\n' | \"$SCRIPT\""
+
+  [ "$status" -eq 0 ]
+  [ -s "$CAPTURE_FILE" ]
+  ! grep -qF -- "lf_pl-a1n._9key" "$CAPTURE_FILE"
+  grep -qF -- "X-API-Key: lf_pl-a1n._9key" "$CONFIG_FILE"
   grep -qF '{"logs":["hello world"]}' "$CAPTURE_FILE"
 }
 

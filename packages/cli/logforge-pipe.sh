@@ -20,6 +20,27 @@ set -euo pipefail
 : "${BATCH_SIZE:=50}"
 : "${FLUSH_INTERVAL:=5}"
 
+# True only for a non-empty string made of A-Z a-z 0-9 . _ ~ + / = -
+# (the ^ and $ in the pattern anchor it to the whole string; bash does not
+# use REG_NEWLINE, so $ does not match before a trailing newline). The same
+# allow-list as scripts/collect-docker-logs.sh: the key reaches curl through
+# a config on a file descriptor (see flush), curl's config syntax is line
+# based and quotes strings with " and escapes with \, so a key holding a
+# newline, a quote, a backslash or any other character outside a plain
+# token alphabet could end the quoted value and make curl parse what
+# follows as further options (a second url, a write-out, a file:// read).
+# A key that fails this check is refused before curl ever starts, with an
+# error that does not print the key.
+is_plain_secret() {
+  local LC_ALL=C re='^[A-Za-z0-9._~+/=-]+$'
+  [[ $1 =~ $re ]]
+}
+
+if ! is_plain_secret "$TELERITHM_API_KEY"; then
+  echo "TELERITHM_API_KEY may only contain letters, digits and . _ ~ + / = - (refused, value not shown)." >&2
+  exit 1
+fi
+
 ENDPOINT="${TELERITHM_URL}/api/v1/ingest/${TELERITHM_SOURCE_ID}"
 BUFFER=()
 
@@ -77,9 +98,19 @@ flush() {
 
     local payload="{\"logs\":${json}}"
 
+    # The ingest key is kept out of curl's argv: a local process reads any
+    # command line through ps or /proc/<pid>/cmdline, so a key passed as a
+    # -H argument would be world-readable on the machine for the whole
+    # (long-running) life of this pipe. It goes to curl through --config on
+    # a file descriptor instead, as in scripts/collect-docker-logs.sh:
+    # bash's process substitution hands curl a /dev/fd/N pipe, no file is
+    # written to disk, and the printf that builds the config line is a bash
+    # builtin, so the key never enters any process's argv. Only keys made
+    # of the allow-listed characters get here (see the validation above),
+    # so the config line needs no escaping.
     curl -s -X POST "$ENDPOINT" \
+      --config <(printf 'header = "X-API-Key: %s"\n' "$TELERITHM_API_KEY") \
       -H "Content-Type: application/json" \
-      -H "X-API-Key: ${TELERITHM_API_KEY}" \
       -d "$payload" > /dev/null 2>&1 || true
 
     BUFFER=()
