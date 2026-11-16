@@ -195,9 +195,10 @@ jobs:
 
       # Starts the build above against a stub backend and loads every
       # authenticated page with a known session cookie: the token must not
-      # appear in the HTML or the RSC payload (the logs page with its live tail
-      # is the one listed exception), and the API proxy must attach it as the
-      # Authorization header and refuse requests without cookie or header.
+      # appear in the HTML or the RSC payload of any page, /logs included; the
+      # API proxy must attach it as the Authorization header and refuse
+      # requests without cookie or header, the stream-ticket call must go
+      # through the proxy, and a forged role cookie must not open /admin.
       - name: Session token absent from rendered pages
         working-directory: frontend
         run: node scripts/check-token-absent.mjs

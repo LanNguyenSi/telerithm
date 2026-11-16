@@ -68,6 +68,13 @@ export const ROUTE_WRITE_GUARDS: Record<string, Guard> = {
     reason: "Same API-key boundary as POST /ingest/:sourceId.",
     verify: { type: "identifier", name: "authenticateApiKey" },
   },
+  "POST /stream/ticket": {
+    kind: "allowlist",
+    reason:
+      "Issues a one-time stream ticket; it mutates no team data, so a VIEWER may use it. Team membership is " +
+      "still required via requireTeamRole.",
+    verify: { type: "call", callee: "requireTeamRole" },
+  },
   "POST /logs/search": {
     kind: "allowlist",
     reason:

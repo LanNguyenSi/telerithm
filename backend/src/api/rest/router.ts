@@ -13,7 +13,13 @@ import { SubscriptionService } from "../../services/subscription/subscription-se
 import { assertSafeUrl } from "../../services/notification/url-guard.js";
 import { ChannelConfigError, ChannelHttpError } from "../../services/notification/channels/errors.js";
 import { TeamService } from "../../services/team/team-service.js";
-import { findActiveSession, isSessionAuthorizedForTeam } from "../../services/team/active-session.js";
+import {
+  findActiveSession,
+  findActiveSessionById,
+  isSessionAuthorizedForTeam,
+  isSessionIdAuthorizedForTeam,
+} from "../../services/team/active-session.js";
+import { consumeStreamTicket, issueStreamTicket } from "../../services/streaming/stream-ticket.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../errors.js";
 import { createWriteRoute, teamFromBody, teamFromResource, type TeamRoleName } from "./write-route.js";
 import {
@@ -36,6 +42,7 @@ import {
   registerSchema,
   renameSourceSchema,
   searchSchema,
+  streamTicketSchema,
   contextSchema,
   facetsSchema,
   histogramSchema,
@@ -322,6 +329,27 @@ apiRouter.post(
     } catch (error) {
       res.status(401).json({ error: error instanceof Error ? error.message : "Login failed" });
     }
+  }),
+);
+
+// The caller as the server knows them. The frontend reads its authorization
+// decisions (the admin pages) from here; the `telerithm_user` cookie it keeps
+// for display is client-writable and never trusted.
+apiRouter.get(
+  "/auth/me",
+  asyncHandler(async (req, res) => {
+    const userId = await requireAuth(req, res);
+    if (userId === null) return;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, name: true, role: true, status: true },
+    });
+    if (!user) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    res.set("Cache-Control", "no-store");
+    res.json({ user });
   }),
 );
 
@@ -1164,47 +1192,76 @@ apiRouter.get(
 
 // --- Incident Actions ---
 
-async function resolveUserId(req: Request): Promise<string> {
+async function resolveSession(req: Request) {
   const header = req.header("authorization");
   const token = parseToken(header);
   const session = await findActiveSession(token);
   if (!session) {
     throw new Error("Unauthorized");
   }
-  return session.userId;
+  return session;
 }
 
-// SSE-only variant: accepts the bearer token via `?token=` in addition to
-// the Authorization header, because `EventSource` cannot set headers.
-// Only mounted on /stream/logs; every other route stays header-only via
-// resolveUserId. The token in URL leaks into the access log, so the http
-// logger in app.ts redacts `token=...` before writing.
-function streamToken(req: Request): string | undefined {
+async function resolveUserId(req: Request): Promise<string> {
+  return (await resolveSession(req)).userId;
+}
+
+// Who opened a log stream and how the open stream keeps being checked.
+interface StreamAuth {
+  userId: string;
+  // Set when the stream was opened with a ticket: the one team it was issued for.
+  ticketTeamId?: string;
+  // The heartbeat re-check (session, user status, team membership).
+  recheck: (teamId: string) => Promise<boolean>;
+}
+
+// SSE-only auth: the Authorization header, or a one-time `?ticket=` from
+// POST /stream/ticket, because `EventSource` cannot set headers. The session
+// token is never accepted in the URL (it would reach proxy and access logs and
+// the browser history); a ticket is single-use and lives 60 seconds. Only
+// mounted on /stream/logs; every other route stays header-only via
+// resolveUserId. When both are sent the header wins and the ticket is not
+// consumed. Resolves null for a definite "no" (unknown, expired or used
+// ticket, ticket of another session, dead session); the answer is the same
+// for all of them.
+async function resolveStreamAuth(req: Request): Promise<StreamAuth | null> {
   const header = req.header("authorization");
-  const headerToken = header ? header.replace(/^Bearer\s+/i, "") : undefined;
-  const queryToken = typeof req.query.token === "string" ? req.query.token : undefined;
-  return headerToken || queryToken;
-}
-
-async function resolveStreamUserId(req: Request): Promise<string> {
-  const token = streamToken(req);
-  if (!token) {
-    throw new Error("Unauthorized");
+  if (header) {
+    const token = header.replace(/^Bearer\s+/i, "");
+    const session = await findActiveSession(token);
+    if (!session) {
+      return null;
+    }
+    const userId = session.userId;
+    return { userId, recheck: (teamId) => isSessionAuthorizedForTeam(token, userId, teamId) };
   }
-  const session = await findActiveSession(token);
-  if (!session) {
-    throw new Error("Unauthorized");
-  }
-  return session.userId;
-}
-
-async function requireStreamAuth(req: Request, res: Response): Promise<string | null> {
-  try {
-    return await resolveStreamUserId(req);
-  } catch {
-    res.status(401).json({ error: "Unauthorized" });
+  const ticket = typeof req.query.ticket === "string" ? req.query.ticket : "";
+  const grant = await consumeStreamTicket(redis, ticket);
+  if (!grant) {
     return null;
   }
+  const session = await findActiveSessionById(grant.sessionId);
+  if (!session || session.userId !== grant.userId) {
+    return null;
+  }
+  return {
+    userId: grant.userId,
+    ticketTeamId: grant.teamId,
+    recheck: (teamId) => isSessionIdAuthorizedForTeam(grant.sessionId, grant.userId, teamId),
+  };
+}
+
+async function requireStreamAuth(req: Request, res: Response): Promise<StreamAuth | null> {
+  try {
+    const auth = await resolveStreamAuth(req);
+    if (auth) {
+      return auth;
+    }
+  } catch (error) {
+    log.warn({ err: error instanceof Error ? error.message : String(error) }, "Stream auth lookup failed");
+  }
+  res.status(401).json({ error: "Unauthorized" });
+  return null;
 }
 
 // Bearer-token auth gate. Returns the userId on success, or sends a 401
@@ -1215,6 +1272,17 @@ async function requireStreamAuth(req: Request, res: Response): Promise<string | 
 async function requireAuth(req: Request, res: Response): Promise<string | null> {
   try {
     return await resolveUserId(req);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+}
+
+// requireAuth for a route that needs the session itself (its id), not just the
+// user: same 401 contract.
+async function requireAuthSession(req: Request, res: Response) {
+  try {
+    return await resolveSession(req);
   } catch {
     res.status(401).json({ error: "Unauthorized" });
     return null;
@@ -2101,14 +2169,43 @@ apiRouter.get(
 
 // --- Streaming ---
 
+// A stream ticket: one-time, 60 seconds, bound to the caller's session and one
+// team (see services/streaming/stream-ticket.ts). The caller authenticates with
+// the Authorization header like on every other route; the ticket then opens
+// GET /stream/logs?ticket=... without a header.
+apiRouter.post(
+  "/stream/ticket",
+  asyncHandler(async (req, res) => {
+    const session = await requireAuthSession(req, res);
+    if (session === null) return;
+    const parsed = streamTicketSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const { teamId } = parsed.data;
+    if ((await requireTeamRole(session.userId, teamId, res)) === null) return;
+    const issued = await issueStreamTicket(redis, { sessionId: session.id, userId: session.userId, teamId });
+    res.set("Cache-Control", "no-store");
+    res.status(201).json(issued);
+  }),
+);
+
 apiRouter.get(
   "/stream/logs",
   asyncHandler(async (req, res) => {
-    const userId = await requireStreamAuth(req, res);
-    if (userId === null) return;
+    const auth = await requireStreamAuth(req, res);
+    if (auth === null) return;
+    const { userId } = auth;
     const teamId = String(req.query.teamId ?? "");
     if (!teamId) {
       res.status(400).json({ error: "teamId is required" });
+      return;
+    }
+    // A ticket opens the stream of the team it was issued for and no other; the
+    // answer is the same 401 as for an unknown ticket (the ticket is spent).
+    if (auth.ticketTeamId !== undefined && auth.ticketTeamId !== teamId) {
+      res.status(401).json({ error: "Unauthorized" });
       return;
     }
     if ((await requireTeamRole(userId, teamId, res)) === null) return;
@@ -2118,9 +2215,8 @@ apiRouter.get(
     const level = typeof req.query.level === "string" ? req.query.level : undefined;
     const query = typeof req.query.query === "string" ? req.query.query : undefined;
 
-    // The token was checked once above; the stream re-checks it and the team
-    // membership on every heartbeat and ends when either is gone.
-    const token = streamToken(req) ?? "";
+    // The credentials were checked once above; the stream re-checks the session
+    // and the team membership on every heartbeat and ends when either is gone.
     const unsubscribe = streamingService.subscribe(
       teamId,
       res,
@@ -2131,7 +2227,7 @@ apiRouter.get(
         level,
         query,
       },
-      () => isSessionAuthorizedForTeam(token, userId, teamId),
+      () => auth.recheck(teamId),
     );
     req.on("close", unsubscribe);
   }),

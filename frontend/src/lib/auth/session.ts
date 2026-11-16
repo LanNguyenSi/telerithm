@@ -4,6 +4,10 @@ import type { SessionUser } from "@/types";
 const TOKEN_COOKIE = "telerithm_token";
 const USER_COOKIE = "telerithm_user";
 
+// The token cookie is httpOnly and is the only credential. The user cookie is
+// readable and writable by the browser (the UI reads it for the name and email
+// it shows), so nothing may be authorized from it: roles come from the backend
+// (getVerifiedUser in guard.ts).
 export async function getSession(): Promise<{ token: string; user: SessionUser } | null> {
   const cookieStore = await cookies();
   const token = cookieStore.get(TOKEN_COOKIE)?.value;

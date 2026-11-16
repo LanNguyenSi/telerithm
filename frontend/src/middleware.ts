@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/register"];
-const USER_COOKIE = "telerithm_user";
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -17,19 +16,10 @@ export function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (pathname.startsWith("/admin")) {
-    const userRaw = request.cookies.get(USER_COOKIE)?.value;
-
-    try {
-      const user = userRaw ? (JSON.parse(userRaw) as { role?: string }) : null;
-      if (user?.role !== "ADMIN") {
-        return NextResponse.redirect(new URL("/", request.url));
-      }
-    } catch {
-      return NextResponse.redirect(new URL("/login", request.url));
-    }
-  }
-
+  // Only the presence of a session is checked here. Which role the session has
+  // is not decided from a cookie: the admin pages ask the backend (requireAdmin
+  // in lib/auth/guard.ts), because the readable telerithm_user cookie can be
+  // forged.
   return NextResponse.next();
 }
 

@@ -47,6 +47,10 @@ export const loginSchema = z.object({
   password: z.string().min(6),
 });
 
+export const streamTicketSchema = z.object({
+  teamId: z.string().min(1),
+});
+
 export const createTeamSchema = z.object({
   name: z.string().min(2),
   slug: z

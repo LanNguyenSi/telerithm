@@ -20,12 +20,7 @@ const LEVEL_OPTIONS = [
   { value: "debug", label: "debug" },
 ] as const;
 
-/**
- * `liveTailToken` feeds the live tail only: EventSource cannot send the
- * proxy's header, so the stream still authenticates with the token in its URL.
- * Every other call on this screen goes through the proxy.
- */
-export function TodayScreen({ liveTailToken }: { liveTailToken: string }) {
+export function TodayScreen() {
   const { team } = useLogAuth();
   const router = useRouter();
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -78,7 +73,7 @@ export function TodayScreen({ liveTailToken }: { liveTailToken: string }) {
     <div className="space-y-4">
       <h1 className="text-lg font-semibold text-ink sm:text-xl">Logs</h1>
 
-      <LiveTail teamId={team.id} token={liveTailToken} />
+      <LiveTail teamId={team.id} />
 
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">

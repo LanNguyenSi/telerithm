@@ -174,6 +174,7 @@ vi.mock("../../src/repositories/redis.js", () => ({
   redis: {
     get: vi.fn().mockResolvedValue(null),
     set: vi.fn(),
+    getdel: vi.fn().mockResolvedValue(null),
     keys: vi.fn().mockResolvedValue([]),
     del: vi.fn(),
     ping: vi.fn().mockResolvedValue("PONG"),
@@ -294,6 +295,7 @@ const mockedClickhouse = clickhouse as typeof clickhouse & {
 };
 const mockedRedis = redis as typeof redis & {
   get: ReturnType<typeof vi.fn>;
+  getdel: ReturnType<typeof vi.fn>;
   keys: ReturnType<typeof vi.fn>;
   ping: ReturnType<typeof vi.fn>;
 };
@@ -2854,13 +2856,32 @@ describe("API Routes", () => {
       expect(res.status).toBe(401);
     });
 
-    it("rejects GET /api/v1/stream/logs with an invalid ?token= query", async () => {
-      mockedPrisma.session.findUnique.mockResolvedValue(null);
-      const res = await app.get("/api/v1/stream/logs?teamId=t1&token=bogus");
+    it("does not accept the session token as a ?token= query on GET /api/v1/stream/logs", async () => {
+      mockedPrisma.session.findUnique.mockResolvedValue(makeSession({ userId: "user-1" }));
+      const res = await app.get("/api/v1/stream/logs?teamId=t1&token=sess_admin");
       expect(res.status).toBe(401);
-      expect(mockedPrisma.session.findUnique).toHaveBeenCalledWith({
-        where: { token: "bogus" },
-        include: { user: { select: { status: true } } },
+      expect(mockedPrisma.session.findUnique).not.toHaveBeenCalled();
+    });
+
+    it("rejects GET /api/v1/stream/logs with an unknown ?ticket=", async () => {
+      mockedRedis.getdel.mockResolvedValue(null);
+      const res = await app.get("/api/v1/stream/logs?teamId=t1&ticket=bogus");
+      expect(res.status).toBe(401);
+      expect(res.body).toEqual({ error: "Unauthorized" });
+    });
+
+    it("redacts ticket= and token= from the access log line of GET /api/v1/stream/logs", async () => {
+      childLog.info.mockClear();
+      await app.get("/api/v1/stream/logs?teamId=t1&ticket=ticket-secret-1&token=token-secret-1");
+
+      await vi.waitFor(() => {
+        const lines = childLog.info.mock.calls
+          .map((call) => call[1] as string)
+          .filter((line) => typeof line === "string" && line.includes("/stream/logs"));
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toContain("ticket=REDACTED");
+        expect(lines[0]).toContain("token=REDACTED");
+        expect(lines[0]).not.toContain("secret");
       });
     });
 

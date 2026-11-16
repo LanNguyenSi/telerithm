@@ -10,6 +10,23 @@ export async function findActiveSession(token: string) {
     where: { token },
     include: { user: { select: { status: true } } },
   });
+  return liveSessionOrNull(session);
+}
+
+// The same check for a caller that holds the session id instead of the token:
+// a stream opened with a one-time ticket never sees the token again, but it
+// stays bound to the session row it was issued for.
+export async function findActiveSessionById(sessionId: string) {
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    include: { user: { select: { status: true } } },
+  });
+  return liveSessionOrNull(session);
+}
+
+function liveSessionOrNull<T extends { expiresAt: Date; user: { status: string } }>(
+  session: T | null,
+): T | null {
   if (!session || session.expiresAt < new Date()) {
     return null;
   }
@@ -28,7 +45,24 @@ export async function isSessionAuthorizedForTeam(
   userId: string,
   teamId: string,
 ): Promise<boolean> {
-  const session = await findActiveSession(token);
+  return isLiveSessionMemberOfTeam(await findActiveSession(token), userId, teamId);
+}
+
+// The same re-check for a stream that was opened with a ticket: the session it
+// was issued for (by id) must still be live and belong to the same user.
+export async function isSessionIdAuthorizedForTeam(
+  sessionId: string,
+  userId: string,
+  teamId: string,
+): Promise<boolean> {
+  return isLiveSessionMemberOfTeam(await findActiveSessionById(sessionId), userId, teamId);
+}
+
+async function isLiveSessionMemberOfTeam(
+  session: { userId: string } | null,
+  userId: string,
+  teamId: string,
+): Promise<boolean> {
   if (!session || session.userId !== userId) {
     return false;
   }

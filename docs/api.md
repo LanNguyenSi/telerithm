@@ -4,13 +4,14 @@ The OpenAPI 3 spec (`backend/src/api/openapi.ts`, served at `GET /openapi.json` 
 
 ## Endpoints
 
-All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `/auth/register`, `/auth/login`, `/auth/settings` (no auth) and `/ingest/*` (API key); `/stream/logs` also accepts the token as `?token=`.
+All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `/auth/register`, `/auth/login`, `/auth/settings` (no auth) and `/ingest/*` (API key); `/stream/logs` also accepts a one-time `?ticket=` from `POST /stream/ticket` in place of the header (see Live tail below); the session token itself is not accepted in the URL.
 
 | Method | Path                              | Description                       |
 | ------ | --------------------------------- | --------------------------------- |
 | `POST` | `/auth/register`, `/auth/login`   | Account creation, sign in         |
 | `POST` | `/auth/logout`                    | Sign out: deletes the session of the presented token and answers `204`, other sessions of the user stay. Bearer auth; a missing, expired or unknown token gets `401` |
 | `GET`  | `/auth/settings`                  | Registration mode (no auth)       |
+| `GET`  | `/auth/me`                        | The caller as the database has them: `{ "user": { id, email, name, role, status } }` with `Cache-Control: no-store`. The frontend reads the instance role from here for its admin pages; a missing, expired or unknown token, or a user who is not `ACTIVE`, gets `401` |
 | `GET`, `POST` | `/teams`                   | Teams (list, create)              |
 | `POST`, `GET` | `/teams/:id/invites`       | Create and list team invites      |
 | `POST` | `/invites/:token/accept`          | Accept an invite (logged-in user) |
@@ -29,7 +30,8 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `GET`, `POST`, `PUT`, `DELETE` | `/logs/views`, `/logs/views/:id` | Saved views (list, create, update, delete); update and delete of a teammate's private view get the same 404 as an unknown id |
 | `POST` | `/logs/views/:id/duplicate`       | Duplicate a saved view; a teammate's private view gets the same 404 as an unknown id |
 | `POST` | `/query/natural`                  | Translate NL to query plan        |
-| `GET`  | `/stream/logs`                    | SSE live tail; closed by the server within 15 seconds once the user is no longer `ACTIVE` or no longer a member of the team |
+| `POST` | `/stream/ticket`                  | One-time ticket for `/stream/logs`; body `{ "teamId" }`, any team role may ask, answer `201` `{ "ticket", "expiresInSeconds": 60 }` with `Cache-Control: no-store` (see Live tail below) |
+| `GET`  | `/stream/logs`                    | SSE live tail; authenticated by the `Authorization` header or a one-time `?ticket=`; closed by the server within 15 seconds once the user is no longer `ACTIVE` or no longer a member of the team |
 | `GET`, `POST` | `/alerts/rules`            | Alert rules (list, create)        |
 | `PUT`, `DELETE` | `/alerts/rules/:id`      | Update (partial), delete an alert rule |
 | `POST` | `/alerts/rules/:id/mute`, `/alerts/rules/:id/unmute` | Mute and unmute a rule |
@@ -82,7 +84,18 @@ The by-id read routes follow the same rule: `GET /issues/:id`, `GET /alerts/inci
 
 ### Sessions
 
-`POST /auth/login` and `POST /auth/register` (when it signs the user in) return a `sess_` token that is valid for 7 days. Every authenticated request, `/stream/logs?token=` included, checks on each call that the token exists, has not expired and that its user is `ACTIVE`; otherwise the answer is `401`. So disabling a user locks out their tokens on the next request. A `/stream/logs` connection that is already open is checked again on each 15-second heartbeat (token, user status and membership of the stream's team) and is closed by the server at the first heartbeat after the check fails, so it can keep delivering for up to 15 seconds after the user is disabled or removed from the team; a heartbeat check that fails because of a database error does not close it. Re-enabling the user does not revive them (the rows are deleted when the user is disabled): the user logs in again. `POST /auth/logout` ends one session; the frontend calls it before it clears its cookies and clears them even when the call fails.
+`POST /auth/login` and `POST /auth/register` (when it signs the user in) return a `sess_` token that is valid for 7 days. Every authenticated request checks on each call that the token exists, has not expired and that its user is `ACTIVE`; otherwise the answer is `401`. So disabling a user locks out their tokens on the next request. A `/stream/logs` connection that is already open is checked again on each 15-second heartbeat (the session, which a ticket-opened stream keeps by its id, the user status and membership of the stream's team) and is closed by the server at the first heartbeat after the check fails, so it can keep delivering for up to 15 seconds after the user is disabled or removed from the team; a heartbeat check that fails because of a database error does not close it. Re-enabling the user does not revive them (the rows are deleted when the user is disabled): the user logs in again. `POST /auth/logout` ends one session; the frontend calls it before it clears its cookies and clears them even when the call fails.
+
+### Live tail
+
+`EventSource`, which a browser uses for server-sent events, cannot send an `Authorization` header, and the session token must not travel in a URL (proxy and access logs, browser history). So a browser asks for a ticket first and opens the stream with it:
+
+1. `POST /stream/ticket` with the bearer header and `{ "teamId": "..." }` (a member of any role; a non-member gets `403`) answers `201` `{ "ticket": "...", "expiresInSeconds": 60 }`.
+2. `GET /stream/logs?teamId=...&ticket=...` opens the stream. The ticket is 32 random bytes, valid for 60 seconds and consumed by its first use, whether or not the stream opens, so the second use (or a use after 60 seconds, a ticket for another team than `teamId`, or an unknown ticket) answers `401 {"error":"Unauthorized"}` with the same body for all of them. Ask for a new ticket before every connection, reconnects included: an `EventSource` reconnects on its own with the old URL, which the server then refuses, so the frontend closes the source on an error and fetches a new ticket.
+
+A ticket is bound to the session it was issued for, that session's user and one team; it opens that team's stream and no other. The server stores only the SHA-256 hash of the ticket, in Redis with a 60-second expiry (so every backend instance accepts a ticket another one issued; if Redis evicts or loses the entry, the stream answers `401` and the client asks again). The heartbeat re-check applies to a ticket-opened stream as well: it ends at the first heartbeat after the session is deleted, the user stops being `ACTIVE` or the user leaves the team.
+
+Clients that can set headers (curl, a server-side consumer) keep sending `Authorization: Bearer <token>` to `/stream/logs`; when both a header and a ticket are present, the header decides and the ticket is not consumed. The earlier `?token=<session token>` query parameter is no longer accepted: no client in this repository used it (the frontend was the only one), and keeping it would keep the token in URLs. Both `ticket` and `token` query values are replaced by `REDACTED` in the backend access log.
 
 ### Subscription channels
 

@@ -12,11 +12,12 @@ import { openApiSpec } from "./api/openapi.js";
 
 const log = createChildLogger("http");
 
-// /stream/logs accepts the bearer token via `?token=` because EventSource
-// can't set Authorization headers. Strip it before logging so tokens never
-// land in the http access log.
+// /stream/logs takes a one-time `?ticket=` because EventSource can't set
+// Authorization headers. A ticket is spent on first use, but strip it (and a
+// `token=` some older client may still send, which the stream no longer
+// accepts) before logging so neither lands in the http access log.
 function redactTokenQuery(url: string): string {
-  return url.replace(/([?&])token=[^&#]*/gi, "$1token=REDACTED");
+  return url.replace(/([?&])(token|ticket)=[^&#]*/gi, "$1$2=REDACTED");
 }
 
 export function createApp() {
