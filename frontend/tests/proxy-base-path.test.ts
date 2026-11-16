@@ -37,6 +37,17 @@ describe("proxy base path", () => {
     expect(matcher.test("/settings")).toBe(true);
   });
 
+  it.each([["/bff"], ["/bff/x"], ["/api"], ["/api/x"]])("the matcher skips %s", (pathname) => {
+    expect(new RegExp(`^${config.matcher[0]}$`).test(pathname)).toBe(false);
+  });
+
+  it.each([["/bffx"], ["/bff-settings"], ["/apix"], ["/api-docs"]])(
+    "the matcher still runs the middleware for %s (the exclusion stops at a segment boundary)",
+    (pathname) => {
+      expect(new RegExp(`^${config.matcher[0]}$`).test(pathname)).toBe(true);
+    },
+  );
+
   it("the middleware itself would redirect a cookieless request, which is why the matcher must skip the proxy", () => {
     const response = middleware(new NextRequest(`http://localhost${PROXY_BASE_PATH}/teams`));
     expect(response.status).toBe(307);

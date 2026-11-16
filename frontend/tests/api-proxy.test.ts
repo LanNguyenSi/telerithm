@@ -462,6 +462,17 @@ describe("proxyRequest: errors, aborts, bounds", () => {
     },
   );
 
+  it.each([
+    ["an https base", "https://backend.internal/api/v1", "https://backend.internal/api/v1/teams"],
+    ["an upper-case https scheme", "HTTPS://Backend.Internal/api/v1", "https://backend.internal/api/v1/teams"],
+    ["an upper-case http scheme", "HTTP://backend.internal:4000/api/v1", "http://backend.internal:4000/api/v1/teams"],
+  ])("forwards to %s", async (_name, backendBaseUrl, expected) => {
+    const fetchImpl = upstream("{}", { status: 200 });
+    const response = await proxyRequest(proxied("teams"), ["teams"], { token: TOKEN, backendBaseUrl, fetchImpl });
+    expect(response.status).toBe(200);
+    expect(calledUrl(fetchImpl).toString()).toBe(expected);
+  });
+
   it("answers 400 for a segment encodeURIComponent cannot encode (a lone surrogate)", async () => {
     const fetchImpl = upstream("{}");
     const response = await proxyRequest(proxied("x"), ["logs", "\uD800"], { token: TOKEN, backendBaseUrl: BACKEND, fetchImpl });

@@ -37,5 +37,5 @@ export function middleware(request: NextRequest) {
 // its own 401, which a fetch from a client component can read; a redirect to
 // /login would hand that fetch an HTML page instead.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api|bff).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api(?:/|$)|bff(?:/|$)).*)"],
 };
