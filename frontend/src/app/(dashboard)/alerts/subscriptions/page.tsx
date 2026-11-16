@@ -12,5 +12,5 @@ export default async function SubscriptionsPage() {
     getAlertRules(team.id, token),
   ]);
 
-  return <SubscriptionsView subscriptions={subscriptions.map(toSubscriptionRow)} rules={rules} teamId={team.id} token={token} />;
+  return <SubscriptionsView subscriptions={subscriptions.map(toSubscriptionRow)} rules={rules} teamId={team.id} />;
 }

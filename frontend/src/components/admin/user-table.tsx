@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { addAdminUserToTeam, approveAdminUser, removeAdminUserFromTeam } from "@/lib/api/client";
+import { BROWSER_SESSION, addAdminUserToTeam, approveAdminUser, removeAdminUserFromTeam } from "@/lib/api/client";
 import { formatDate } from "@/lib/utils/format";
 import type { AdminUser, Team } from "@/types";
 import { AddToTeamModal } from "./add-to-team-modal";
@@ -18,11 +18,9 @@ function statusTone(status: AdminUser["status"]) {
 export function UserTable({
   initialUsers,
   teams,
-  token,
 }: {
   initialUsers: AdminUser[];
   teams: Array<Team & { memberCount: number }>;
-  token: string;
 }) {
   const [users, setUsers] = useState(initialUsers);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -34,7 +32,7 @@ export function UserTable({
     setPendingId(userId);
     setError(null);
     try {
-      const { user } = await approveAdminUser(userId, token);
+      const { user } = await approveAdminUser(userId, BROWSER_SESSION);
       setUsers((current) =>
         current.map((entry) => (entry.id === userId ? { ...entry, status: user.status } : entry)),
       );
@@ -51,7 +49,7 @@ export function UserTable({
     setPendingId(modalUser.id);
     setError(null);
     try {
-      await addAdminUserToTeam(modalUser.id, token, payload);
+      await addAdminUserToTeam(modalUser.id, BROWSER_SESSION, payload);
       const selectedTeam = teams.find((team) => team.id === payload.teamId);
       if (!selectedTeam) return;
 
@@ -82,7 +80,7 @@ export function UserTable({
     setPendingId(userId);
     setError(null);
     try {
-      await removeAdminUserFromTeam(userId, teamId, token);
+      await removeAdminUserFromTeam(userId, teamId, BROWSER_SESSION);
       setUsers((current) =>
         current.map((entry) =>
           entry.id === userId ? { ...entry, teams: entry.teams.filter((team) => team.id !== teamId) } : entry,

@@ -6,7 +6,7 @@ import { AlertRuleForm } from "@/components/alerts/alert-rule-form";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
-import { createAlertRule, deleteAlertRule, updateAlertRule } from "@/lib/api/client";
+import { BROWSER_SESSION, createAlertRule, deleteAlertRule, updateAlertRule } from "@/lib/api/client";
 import { canWriteTeam } from "@/lib/auth/roles";
 import type { AlertRule, TeamRole } from "@/types";
 
@@ -21,12 +21,10 @@ const buttonClass =
 export function AlertRulesPanel({
   rules,
   teamId,
-  token,
   role,
 }: {
   rules: AlertRule[];
   teamId: string;
-  token: string;
   role: TeamRole;
 }) {
   const router = useRouter();
@@ -51,7 +49,7 @@ export function AlertRulesPanel({
     setBusyId(rule.id);
     setError(null);
     try {
-      await updateAlertRule(rule.id, token, { enabled: !rule.enabled });
+      await updateAlertRule(rule.id, BROWSER_SESSION, { enabled: !rule.enabled });
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Updating the rule failed.");
@@ -67,7 +65,7 @@ export function AlertRulesPanel({
     setBusyId(target.id);
     setError(null);
     try {
-      await deleteAlertRule(target.id, token);
+      await deleteAlertRule(target.id, BROWSER_SESSION);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Deleting the rule failed.");
@@ -173,9 +171,9 @@ export function AlertRulesPanel({
             onSubmit={async (input) => {
               if (editing) {
                 // description null clears an existing description.
-                await updateAlertRule(editing.id, token, { ...input, description: input.description ?? null });
+                await updateAlertRule(editing.id, BROWSER_SESSION, { ...input, description: input.description ?? null });
               } else {
-                await createAlertRule(token, { teamId, ...input });
+                await createAlertRule(BROWSER_SESSION, { teamId, ...input });
               }
               router.refresh();
             }}

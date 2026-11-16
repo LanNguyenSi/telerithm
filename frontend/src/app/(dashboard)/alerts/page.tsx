@@ -29,7 +29,7 @@ export default async function AlertsPage() {
       </div>
       <section className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr] lg:gap-6">
         <IncidentList incidents={incidents} />
-        <AlertRulesPanel rules={rules} teamId={team.id} token={token} role={team.role} />
+        <AlertRulesPanel rules={rules} teamId={team.id} role={team.role} />
       </section>
     </>
   );

@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   getIssues: vi.fn(),
 }));
 
-vi.mock("@/lib/api/client", () => ({ getIssues: mocks.getIssues }));
+vi.mock("@/lib/api/client", () => ({ BROWSER_SESSION: { via: "proxy" }, getIssues: mocks.getIssues }));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -154,7 +154,7 @@ describe("keyboard reachable table scroll regions", () => {
 
   it("makes the overflowing issues table scroll container a labelled focusable region", async () => {
     stubLayout(1200, 800);
-    render(<IssueExplorer team={team} token="tok" />);
+    render(<IssueExplorer team={team} />);
     await screen.findByRole("region", { name: "Issues table" });
     assertFocusableRegion("Issues table");
   });
@@ -170,7 +170,7 @@ describe("a table that fits is not a tab stop", () => {
 
   it("gives the fitting issues table region no tabindex", async () => {
     stubLayout(800, 800);
-    render(<IssueExplorer team={team} token="tok" />);
+    render(<IssueExplorer team={team} />);
     await screen.findByRole("region", { name: "Issues table" });
     assertFittingRegion("Issues table");
   });
@@ -192,7 +192,7 @@ describe("resize flips the tab stop", () => {
 
   it("removes the tab stop when a resize takes an overflowing issues table back to fit", async () => {
     stubLayout(1200, 800);
-    render(<IssueExplorer team={team} token="tok" />);
+    render(<IssueExplorer team={team} />);
     const region = await screen.findByRole("region", { name: "Issues table" });
     expect(region).toHaveAttribute("tabindex", "0");
 

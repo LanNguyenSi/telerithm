@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/guard", () => ({ requireAuth: mocks.requireAuth }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 vi.mock("@/lib/api/client", () => ({
+  BROWSER_SESSION: { via: "proxy" },
   getSubscriptions: mocks.getSubscriptions,
   getAlertRules: mocks.getAlertRules,
   createSubscription: mocks.createSubscription,
@@ -107,7 +108,7 @@ describe("subscription config stays on the server", () => {
     mocks.createSubscription.mockResolvedValue({
       subscription: { ...webhookSub, id: "sub-new" },
     });
-    const { container } = render(<SubscriptionsView subscriptions={[]} rules={rules} teamId="team-1" token="tok" />);
+    const { container } = render(<SubscriptionsView subscriptions={[]} rules={rules} teamId="team-1" />);
     fireEvent.click(screen.getByRole("button", { name: "New subscription" }));
     fireEvent.change(screen.getByLabelText("Webhook URL"), { target: { value: WEBHOOK_URL } });
     fireEvent.change(screen.getByLabelText("Signing secret (optional)"), { target: { value: SECRET } });
@@ -127,7 +128,7 @@ describe("subscription config stays on the server", () => {
     mocks.updateSubscription.mockResolvedValue({ subscription: { ...base, enabled: false } });
     const { config: _config, ...row } = base;
     void _config;
-    const { container } = render(<SubscriptionsView subscriptions={[row]} rules={rules} teamId="team-1" token="tok" />);
+    const { container } = render(<SubscriptionsView subscriptions={[row]} rules={rules} teamId="team-1" />);
     fireEvent.click(screen.getByRole("checkbox"));
     await waitFor(() => expect(screen.getByText("DISABLED")).toBeInTheDocument());
     expect(container.innerHTML).not.toContain(HOOK);

@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 vi.mock("@/lib/api/client", () => ({
+  BROWSER_SESSION: { via: "proxy" },
   createAlertRule: mocks.createAlertRule,
   updateAlertRule: mocks.updateAlertRule,
   deleteAlertRule: mocks.deleteAlertRule,
@@ -30,7 +31,7 @@ const rule: AlertRule = {
 };
 
 function renderPanel(role: TeamRole, rules: AlertRule[] = [rule]) {
-  return render(<AlertRulesPanel rules={rules} teamId="team-1" token="tok" role={role} />);
+  return render(<AlertRulesPanel rules={rules} teamId="team-1" role={role} />);
 }
 
 afterEach(() => {
@@ -81,7 +82,7 @@ describe("AlertRulesPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create rule" }));
 
     await waitFor(() => expect(mocks.createAlertRule).toHaveBeenCalledTimes(1));
-    expect(mocks.createAlertRule).toHaveBeenCalledWith("tok", {
+    expect(mocks.createAlertRule).toHaveBeenCalledWith({ via: "proxy" }, {
       teamId: "team-1",
       name: "Timeouts",
       description: undefined,
@@ -131,9 +132,9 @@ describe("AlertRulesPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
     await waitFor(() => expect(mocks.updateAlertRule).toHaveBeenCalledTimes(1));
-    const [id, token, payload] = mocks.updateAlertRule.mock.calls[0];
+    const [id, auth, payload] = mocks.updateAlertRule.mock.calls[0];
     expect(id).toBe("rule-1");
-    expect(token).toBe("tok");
+    expect(auth).toEqual({ via: "proxy" });
     expect(payload).toMatchObject({ threshold: 9, name: "Timeouts", condition: "GREATER_THAN" });
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
   });
@@ -164,7 +165,7 @@ describe("AlertRulesPanel", () => {
 
     fireEvent.click(screen.getByRole("checkbox", { name: /Enabled: Timeouts/ }));
 
-    await waitFor(() => expect(mocks.updateAlertRule).toHaveBeenCalledWith("rule-1", "tok", { enabled: false }));
+    await waitFor(() => expect(mocks.updateAlertRule).toHaveBeenCalledWith("rule-1", { via: "proxy" }, { enabled: false }));
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
   });
 
@@ -181,7 +182,7 @@ describe("AlertRulesPanel", () => {
     expect(within(dialog).getByText(/subscriptions that target this rule/)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
 
-    await waitFor(() => expect(mocks.deleteAlertRule).toHaveBeenCalledWith("rule-1", "tok"));
+    await waitFor(() => expect(mocks.deleteAlertRule).toHaveBeenCalledWith("rule-1", { via: "proxy" }));
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalled());
   });
 

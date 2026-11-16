@@ -7,11 +7,10 @@ import type { TeamWithRole } from "@/types";
 
 export function LogAuthShell({
   team,
-  token,
   children,
-}: PropsWithChildren<{ team: TeamWithRole; token: string }>) {
+}: PropsWithChildren<{ team: TeamWithRole }>) {
   return (
-    <LogAuthProvider value={{ team, token }}>
+    <LogAuthProvider value={{ team }}>
       <LogsTabNav />
       {children}
     </LogAuthProvider>

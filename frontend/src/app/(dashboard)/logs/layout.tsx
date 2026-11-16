@@ -5,7 +5,7 @@ import { LogAuthShell } from "./log-auth-shell";
 export const dynamic = "force-dynamic";
 
 export default async function LogsLayout({ children }: PropsWithChildren) {
-  const { team, token } = await requireAuth();
+  const { team } = await requireAuth();
 
-  return <LogAuthShell team={team} token={token}>{children}</LogAuthShell>;
+  return <LogAuthShell team={team}>{children}</LogAuthShell>;
 }

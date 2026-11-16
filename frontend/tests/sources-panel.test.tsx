@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 vi.mock("@/lib/api/client", () => ({
+  BROWSER_SESSION: { via: "proxy" },
   createSource: mocks.createSource,
   renameSource: mocks.renameSource,
   deleteSource: mocks.deleteSource,
@@ -45,7 +46,7 @@ const MASKED = "lf_****_key";
 const FULL_KEY = "lf_existing_key";
 
 function renderPanel(role: TeamRole, sources: Source[] = [source]) {
-  return render(<SourcesPanel sources={sources} teamId="team-1" token="tok" role={role} />);
+  return render(<SourcesPanel sources={sources} teamId="team-1" role={role} />);
 }
 
 function renderWithHint(keyHint: string): RenderResult {
@@ -127,7 +128,7 @@ describe("SourcesPanel", () => {
     fireEvent.change(screen.getByLabelText("Type"), { target: { value: "DOCKER" } });
     fireEvent.click(screen.getByRole("button", { name: "Create source" }));
 
-    await waitFor(() => expect(mocks.createSource).toHaveBeenCalledWith("tok", {
+    await waitFor(() => expect(mocks.createSource).toHaveBeenCalledWith({ via: "proxy" }, {
       teamId: "team-1",
       name: "api",
       type: "DOCKER",
@@ -223,7 +224,7 @@ describe("SourcesPanel: key hint and reveal in the list", () => {
       "aria-pressed",
       "true",
     );
-    expect(mocks.revealSourceKey).toHaveBeenCalledExactlyOnceWith("src-1", "tok");
+    expect(mocks.revealSourceKey).toHaveBeenCalledExactlyOnceWith("src-1", { via: "proxy" });
     expect(screen.getByTestId("source-api-key")).toHaveTextContent(FULL_KEY);
 
     fireEvent.click(screen.getByRole("button", { name: "Hide API key of web" }));
@@ -297,7 +298,7 @@ describe("SourcesPanel: key hint and reveal in the list", () => {
     fireEvent.click(screen.getByRole("button", { name: "Copy API key of web" }));
 
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(FULL_KEY));
-    expect(mocks.revealSourceKey).toHaveBeenCalledExactlyOnceWith("src-1", "tok");
+    expect(mocks.revealSourceKey).toHaveBeenCalledExactlyOnceWith("src-1", { via: "proxy" });
     expect(container.textContent).not.toMatch(/lf_existing_key/);
     expect(screen.getByTestId("source-api-key")).toHaveTextContent(MASKED);
     expect(await screen.findByRole("button", { name: "Copied API key of web" })).toBeInTheDocument();
@@ -359,7 +360,7 @@ describe("SourcesPanel: key hint and reveal in the list", () => {
       <SourcesPanel
         sources={[{ ...source, keyHint: "lf_****_new" }]}
         teamId="team-1"
-        token="tok"
+       
         role="OWNER"
       />,
     );
@@ -382,7 +383,7 @@ describe("SourcesPanel: key hint and reveal in the list", () => {
       <SourcesPanel
         sources={[{ ...source, keyHint: "lf_****_new" }]}
         teamId="team-1"
-        token="tok"
+       
         role="OWNER"
       />,
     );
@@ -422,7 +423,7 @@ describe("SourcesPanel: key hint and reveal in the list", () => {
       <SourcesPanel
         sources={[{ ...source, keyHint: "lf_****_new" }]}
         teamId="team-1"
-        token="tok"
+       
         role="OWNER"
       />,
     );
@@ -486,7 +487,7 @@ describe("SourcesPanel: key hint and reveal in the list", () => {
       <SourcesPanel
         sources={[{ ...source, keyHint: "lf_****_new" }]}
         teamId="team-1"
-        token="tok"
+       
         role="OWNER"
       />,
     );
@@ -656,7 +657,7 @@ describe("SourcesPanel: the copy feedback of a listed key is transient and singl
       <SourcesPanel
         sources={[{ ...source, keyHint: "lf_****_new" }]}
         teamId="team-1"
-        token="tok"
+       
         role="OWNER"
       />,
     );
@@ -676,7 +677,7 @@ describe("SourcesPanel: the copy feedback of a listed key is transient and singl
       <SourcesPanel
         sources={[{ ...source, keyHint: "lf_****gain" }]}
         teamId="team-1"
-        token="tok"
+       
         role="OWNER"
       />,
     );
@@ -735,7 +736,7 @@ describe("SourcesPanel: rename, rotate key and delete", () => {
     fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "  web-2 " } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Rename" }));
 
-    await waitFor(() => expect(mocks.renameSource).toHaveBeenCalledWith("src-1", "tok", { name: "web-2" }));
+    await waitFor(() => expect(mocks.renameSource).toHaveBeenCalledWith("src-1", { via: "proxy" }, { name: "web-2" }));
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -770,7 +771,7 @@ describe("SourcesPanel: rename, rotate key and delete", () => {
     expect(mocks.deleteSource).not.toHaveBeenCalled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
 
-    await waitFor(() => expect(mocks.deleteSource).toHaveBeenCalledWith("src-1", "tok"));
+    await waitFor(() => expect(mocks.deleteSource).toHaveBeenCalledWith("src-1", { via: "proxy" }));
     await waitFor(() => expect(mocks.refresh).toHaveBeenCalledTimes(1));
   });
 
@@ -806,7 +807,7 @@ describe("SourcesPanel: rename, rotate key and delete", () => {
     fireEvent.click(within(confirm).getByRole("button", { name: "Rotate key" }));
 
     expect(await screen.findByTestId("rotated-source-api-key")).toHaveTextContent("lf_rotated");
-    expect(mocks.rotateSourceKey).toHaveBeenCalledWith("src-1", "tok");
+    expect(mocks.rotateSourceKey).toHaveBeenCalledWith("src-1", { via: "proxy" });
     expect(screen.getByText(/shows only a\s+masked hint of the key/)).toBeInTheDocument();
     expect(mocks.refresh).not.toHaveBeenCalled();
 

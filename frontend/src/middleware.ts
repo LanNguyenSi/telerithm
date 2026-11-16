@@ -33,6 +33,9 @@ export function middleware(request: NextRequest) {
   return NextResponse.next();
 }
 
+// /bff is the API proxy: it answers a request without the session cookie with
+// its own 401, which a fetch from a client component can read; a redirect to
+// /login would hand that fetch an HTML page instead.
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|api).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|api(?:/|$)|bff(?:/|$)).*)"],
 };

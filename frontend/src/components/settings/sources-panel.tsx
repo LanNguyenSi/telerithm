@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
-import { createSource, deleteSource, renameSource, revealSourceKey, rotateSourceKey } from "@/lib/api/client";
+import { BROWSER_SESSION, createSource, deleteSource, renameSource, revealSourceKey, rotateSourceKey } from "@/lib/api/client";
 import { canManageSources, canWriteTeam } from "@/lib/auth/roles";
 import { SOURCE_TYPES, type Source, type SourceType, type TeamRole } from "@/types";
 
@@ -39,7 +39,7 @@ function describeFailure(action: "reveal" | "copy", err: unknown): string {
  * and a new attempt clears the stale error); the timer lives in a ref so a
  * second copy restarts the full 2 s, and an unmount clears it.
  */
-function SourceKey({ id, name, keyHint, token }: { id: string; name: string; keyHint: string; token: string }) {
+function SourceKey({ id, name, keyHint }: { id: string; name: string; keyHint: string }) {
   const [fullKey, setFullKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -75,7 +75,7 @@ function SourceKey({ id, name, keyHint, token }: { id: string; name: string; key
     setCopied(false);
     clearCopiedTimer();
     try {
-      const { apiKey } = await revealSourceKey(id, token);
+      const { apiKey } = await revealSourceKey(id, BROWSER_SESSION);
       return ticket === generation.current ? apiKey : null;
     } catch (err) {
       if (ticket === generation.current) setError(describeFailure(action, err));
@@ -231,12 +231,10 @@ function ShowOnceKey({
 export function SourcesPanel({
   sources,
   teamId,
-  token,
   role,
 }: {
   sources: Source[];
   teamId: string;
-  token: string;
   role: TeamRole;
 }) {
   const router = useRouter();
@@ -282,7 +280,7 @@ export function SourcesPanel({
     setPending(true);
     setError(null);
     try {
-      const { source } = await createSource(token, { teamId, name: name.trim(), type });
+      const { source } = await createSource(BROWSER_SESSION, { teamId, name: name.trim(), type });
       setCreated(source);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Creating the source failed.");
@@ -302,7 +300,7 @@ export function SourcesPanel({
     setBusyId(target.id);
     setActionError(null);
     try {
-      await renameSource(target.id, token, { name: value });
+      await renameSource(target.id, BROWSER_SESSION, { name: value });
       router.refresh();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Renaming the source failed.");
@@ -318,7 +316,7 @@ export function SourcesPanel({
     setBusyId(target.id);
     setActionError(null);
     try {
-      await deleteSource(target.id, token);
+      await deleteSource(target.id, BROWSER_SESSION);
       router.refresh();
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "Deleting the source failed.");
@@ -334,7 +332,7 @@ export function SourcesPanel({
     setBusyId(target.id);
     setActionError(null);
     try {
-      const { source } = await rotateSourceKey(target.id, token);
+      const { source } = await rotateSourceKey(target.id, BROWSER_SESSION);
       setRotations((current) => ({ ...current, [target.id]: (current[target.id] ?? 0) + 1 }));
       setRotated(source);
     } catch (err) {
@@ -413,7 +411,6 @@ export function SourcesPanel({
                     id={source.id}
                     name={source.name}
                     keyHint={source.keyHint}
-                    token={token}
                   />
                 ) : null}
               </div>

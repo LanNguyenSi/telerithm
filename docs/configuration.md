@@ -43,8 +43,8 @@ cp backend/.env.example backend/.env
 
 | Variable                   | Default                          | Description                |
 | -------------------------- | -------------------------------- | -------------------------- |
-| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:4000/api/v1`   | Backend API base URL used by the browser. Read at build time: in the Docker images, pass it as a build argument |
-| `INTERNAL_API_BASE_URL`    | unset, falls back to `NEXT_PUBLIC_API_BASE_URL` | Backend API base used by the Next.js server (server components, server actions), for example `http://backend:4000/api/v1` inside compose |
+| `NEXT_PUBLIC_API_BASE_URL` | `http://localhost:4000/api/v1`   | Backend API base URL the browser uses for the live tail stream (`/stream/logs`) only; every other browser call goes through the frontend's `/bff` proxy. Read at build time: in the Docker images, pass it as a build argument |
+| `INTERNAL_API_BASE_URL`    | unset, falls back to `NEXT_PUBLIC_API_BASE_URL` | Backend API base used by the Next.js server: server components, server actions, and the `/bff` proxy that carries all other browser API traffic (it attaches the session token from the httpOnly cookie). For example `http://backend:4000/api/v1` inside compose |
 
 Copy from `frontend/.env.local.example`.
 

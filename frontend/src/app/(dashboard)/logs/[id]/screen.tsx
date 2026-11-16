@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useLogAuth } from "@/components/logs/log-auth-context";
 import { Card } from "@/components/ui/card";
 import { SkeletonCard } from "@/components/ui/skeleton";
-import { getLogById, getLogContext } from "@/lib/api/client";
+import { BROWSER_SESSION, getLogById, getLogContext } from "@/lib/api/client";
 import { decodeHtml, formatDate, levelTone } from "@/lib/utils/format";
 import type { LogEntry } from "@/types";
 
@@ -15,7 +15,7 @@ export function LogDetailScreen({
   paramsPromise: Promise<{ id: string }>;
 }) {
   const { id: logId } = use(paramsPromise);
-  const { team, token } = useLogAuth();
+  const { team } = useLogAuth();
 
   const [log, setLog] = useState<LogEntry | null>(null);
   const [loading, setLoading] = useState(true);
@@ -29,7 +29,7 @@ export function LogDetailScreen({
     setLoading(true);
     setError(null);
 
-    void getLogById(team.id, logId, token)
+    void getLogById(team.id, logId, BROWSER_SESSION)
       .then(({ log: entry }) => {
         if (active) setLog(entry);
       })
@@ -39,11 +39,11 @@ export function LogDetailScreen({
       .finally(() => { if (active) setLoading(false); });
 
     return () => { active = false; };
-  }, [team.id, token, logId]);
+  }, [team.id, logId]);
 
   useEffect(() => {
     if (!log) return;
-    void getLogContext(token, {
+    void getLogContext(BROWSER_SESSION, {
       teamId: team.id,
       sourceId: log.sourceId,
       timestamp: log.timestamp,
@@ -59,7 +59,7 @@ export function LogDetailScreen({
         setContextBefore([]);
         setContextAfter([]);
       });
-  }, [log, contextScope, team.id, token]);
+  }, [log, contextScope, team.id]);
 
   if (loading) {
     return (
