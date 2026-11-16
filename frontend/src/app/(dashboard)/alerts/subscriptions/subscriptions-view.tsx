@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Dialog, useDialog } from "@/components/ui/dialog";
-import { createSubscription, deleteSubscription, testSubscription, updateSubscription } from "@/lib/api/client";
+import { BROWSER_SESSION, createSubscription, deleteSubscription, testSubscription, updateSubscription } from "@/lib/api/client";
 import { formatDate } from "@/lib/utils/format";
 import { subscriptionRuleLabel } from "@/lib/utils/subscription-rule-label";
 import type { AlertRule, SubscriptionRow } from "@/types";
@@ -41,12 +41,10 @@ export function SubscriptionsView({
   subscriptions,
   rules,
   teamId,
-  token,
 }: {
   subscriptions: SubscriptionRow[];
   rules: AlertRule[];
   teamId: string;
-  token: string;
 }) {
   const router = useRouter();
   const dialog = useDialog();
@@ -69,7 +67,7 @@ export function SubscriptionsView({
   };
 
   const create = async (payload: SubscriptionPayload) => {
-    const { subscription } = await createSubscription(token, payload);
+    const { subscription } = await createSubscription(BROWSER_SESSION, payload);
     const rule = rules.find((r) => r.id === subscription.ruleId);
     setItems((current) => [
       toSubscriptionRow({ ...subscription, rule: rule ? { id: rule.id, name: rule.name } : null }),
@@ -83,7 +81,7 @@ export function SubscriptionsView({
     setBusyId(sub.id);
     setError(null);
     try {
-      const { subscription } = await updateSubscription(sub.id, token, { enabled: !sub.enabled });
+      const { subscription } = await updateSubscription(sub.id, BROWSER_SESSION, { enabled: !sub.enabled });
       setItems((current) => current.map((s) => (s.id === sub.id ? { ...s, enabled: subscription.enabled } : s)));
       router.refresh();
     } catch (err) {
@@ -102,7 +100,7 @@ export function SubscriptionsView({
     setBusyId(sub.id);
     setError(null);
     try {
-      await deleteSubscription(sub.id, token);
+      await deleteSubscription(sub.id, BROWSER_SESSION);
       setItems((current) => current.filter((s) => s.id !== sub.id));
       router.refresh();
     } catch (err) {
@@ -116,7 +114,7 @@ export function SubscriptionsView({
     setBusyId(sub.id);
     setNotices((current) => Object.fromEntries(Object.entries(current).filter(([id]) => id !== sub.id)));
     try {
-      const result = await testSubscription(sub.id, token);
+      const result = await testSubscription(sub.id, BROWSER_SESSION);
       setNotices((current) => ({ ...current, [sub.id]: { kind: "ok", text: result.message || "Test notification sent" } }));
     } catch (err) {
       setNotices((current) => ({

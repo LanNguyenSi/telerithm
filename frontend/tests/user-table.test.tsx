@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api/client", () => ({
+  BROWSER_SESSION: { via: "proxy" },
   addAdminUserToTeam: mocks.addAdminUserToTeam,
   approveAdminUser: mocks.approveAdminUser,
   removeAdminUserFromTeam: mocks.removeAdminUserFromTeam,
@@ -29,7 +30,7 @@ const user: AdminUser = {
 };
 
 function renderTable() {
-  return render(<UserTable initialUsers={[user]} teams={[{ ...team, memberCount: 1 }] as Array<Team & { memberCount: number }>} token="tok" />);
+  return render(<UserTable initialUsers={[user]} teams={[{ ...team, memberCount: 1 }] as Array<Team & { memberCount: number }>} />);
 }
 
 afterEach(() => {
@@ -43,7 +44,7 @@ describe("UserTable: Approve button contrast", () => {
       <UserTable
         initialUsers={[{ ...user, status: "PENDING" }]}
         teams={[{ ...team, memberCount: 1 }] as Array<Team & { memberCount: number }>}
-        token="tok"
+       
       />,
     );
     const button = screen.getByRole("button", { name: "Approve" });
@@ -94,6 +95,6 @@ describe("UserTable: removing a team member asks for confirmation first", () => 
     fireEvent.click(within(dialog).getByRole("button", { name: "Remove" }));
 
     await waitFor(() => expect(mocks.removeAdminUserFromTeam).toHaveBeenCalledTimes(1));
-    expect(mocks.removeAdminUserFromTeam).toHaveBeenCalledWith("u1", "t1", "tok");
+    expect(mocks.removeAdminUserFromTeam).toHaveBeenCalledWith("u1", "t1", { via: "proxy" });
   });
 });

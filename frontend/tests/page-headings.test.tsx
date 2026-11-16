@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/auth/guard", () => ({ requireAuth: mocks.requireAuth, requireAdmin: mocks.requireAdmin }));
 
 vi.mock("@/lib/api/client", () => ({
+  BROWSER_SESSION: { via: "proxy" },
   getOverview: mocks.getOverview,
   getLogs: mocks.getLogs,
   getIssues: mocks.getIssues,
@@ -180,7 +181,7 @@ afterEach(() => {
 
 function renderInLogAuth(ui: React.ReactElement) {
   render(
-    <LogAuthProvider value={{ team, token: "tok" }}>
+    <LogAuthProvider value={{ team }}>
       <Suspense fallback={null}>{ui}</Suspense>
     </LogAuthProvider>,
   );
@@ -198,7 +199,7 @@ describe("dashboard page headings", () => {
   });
 
   it("names the logs today page with one h1", () => {
-    renderInLogAuth(<TodayScreen />);
+    renderInLogAuth(<TodayScreen liveTailToken="tok" />);
     assertPageHeading("Logs");
   });
 
@@ -216,7 +217,7 @@ describe("dashboard page headings", () => {
   });
 
   it("names the issues page with one h1", () => {
-    render(<IssueExplorer team={team} token="tok" />);
+    render(<IssueExplorer team={team} />);
     assertPageHeading("Issues");
   });
 

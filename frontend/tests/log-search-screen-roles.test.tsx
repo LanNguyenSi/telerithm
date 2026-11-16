@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn() }) }));
 
 vi.mock("@/lib/api/client", () => ({
+  BROWSER_SESSION: { via: "proxy" },
   createSavedLogView: mocks.createSavedLogView,
   updateSavedLogView: mocks.updateSavedLogView,
   getSavedLogViews: mocks.getSavedLogViews,
@@ -84,7 +85,7 @@ const view = {
 function renderScreen(role: TeamRole | undefined) {
   const team = { id: "team-1", name: "T", role } as unknown as TeamWithRole;
   render(
-    <LogAuthProvider value={{ team, token: "tok" }}>
+    <LogAuthProvider value={{ team }}>
       <SearchScreen />
     </LogAuthProvider>,
   );
@@ -114,7 +115,7 @@ describe.each(["OWNER", "ADMIN"] as const)("SearchScreen sharing controls for %s
     expect(setDefault).toBeEnabled();
     fireEvent.click(setDefault);
     await waitFor(() =>
-      expect(mocks.updateSavedLogView).toHaveBeenCalledWith("v1", "team-1", "tok", { isDefault: true }),
+      expect(mocks.updateSavedLogView).toHaveBeenCalledWith("v1", "team-1", { via: "proxy" }, { isDefault: true }),
     );
 
     await openSaveDialog();

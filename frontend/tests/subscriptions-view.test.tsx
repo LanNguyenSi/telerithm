@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: mocks.refresh }) }));
 vi.mock("@/lib/api/client", () => ({
+  BROWSER_SESSION: { via: "proxy" },
   createSubscription: mocks.createSubscription,
   updateSubscription: mocks.updateSubscription,
   deleteSubscription: mocks.deleteSubscription,
@@ -49,7 +50,7 @@ const emailSub: AlertSubscription = {
 };
 
 function renderView(subscriptions: AlertSubscription[] = [slackSub]) {
-  return render(<SubscriptionsView subscriptions={subscriptions} rules={rules} teamId="team-1" token="tok" />);
+  return render(<SubscriptionsView subscriptions={subscriptions} rules={rules} teamId="team-1" />);
 }
 
 function openForm() {
@@ -77,7 +78,7 @@ describe("create form", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create subscription" }));
 
     await waitFor(() => expect(mocks.createSubscription).toHaveBeenCalledTimes(1));
-    expect(mocks.createSubscription).toHaveBeenCalledWith("tok", {
+    expect(mocks.createSubscription).toHaveBeenCalledWith({ via: "proxy" }, {
       teamId: "team-1",
       ruleId: "r2",
       channel: "WEBHOOK",
@@ -100,7 +101,7 @@ describe("create form", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create subscription" }));
 
     await waitFor(() => expect(mocks.createSubscription).toHaveBeenCalledTimes(1));
-    expect(mocks.createSubscription).toHaveBeenCalledWith("tok", {
+    expect(mocks.createSubscription).toHaveBeenCalledWith({ via: "proxy" }, {
       teamId: "team-1",
       channel: "SLACK",
       config: { webhook_url: "https://hooks.example.com/s" },
@@ -215,7 +216,7 @@ describe("delete", () => {
 
     await waitFor(() => expect(screen.queryByText("Rule: High error rate")).toBeNull());
     expect(mocks.deleteSubscription).toHaveBeenCalledTimes(1);
-    expect(mocks.deleteSubscription).toHaveBeenCalledWith("sub-1", "tok");
+    expect(mocks.deleteSubscription).toHaveBeenCalledWith("sub-1", { via: "proxy" });
     expect(screen.getByText("All rules in team")).toBeInTheDocument();
     expect(mocks.refresh).toHaveBeenCalled();
   });
@@ -242,7 +243,7 @@ describe("enable, disable and test", () => {
     renderView();
     fireEvent.click(screen.getByRole("checkbox", { name: /^Enabled: SLACK subscription/ }));
     await waitFor(() => expect(screen.getByText("DISABLED")).toBeInTheDocument());
-    expect(mocks.updateSubscription).toHaveBeenCalledWith("sub-1", "tok", { enabled: false });
+    expect(mocks.updateSubscription).toHaveBeenCalledWith("sub-1", { via: "proxy" }, { enabled: false });
   });
 
   it("switches a disabled subscription back on", async () => {
@@ -250,7 +251,7 @@ describe("enable, disable and test", () => {
     renderView([{ ...slackSub, enabled: false }]);
     fireEvent.click(screen.getByRole("checkbox", { name: /^Enabled: SLACK subscription/ }));
     await waitFor(() => expect(screen.queryByText("DISABLED")).toBeNull());
-    expect(mocks.updateSubscription).toHaveBeenCalledWith("sub-1", "tok", { enabled: true });
+    expect(mocks.updateSubscription).toHaveBeenCalledWith("sub-1", { via: "proxy" }, { enabled: true });
   });
 
   it("shows the API message and keeps the old state when the update fails", async () => {
@@ -266,7 +267,7 @@ describe("enable, disable and test", () => {
     renderView();
     fireEvent.click(screen.getByRole("button", { name: /^Send test notification: SLACK/ }));
     expect(await screen.findByRole("status")).toHaveTextContent("Test notification sent");
-    expect(mocks.testSubscription).toHaveBeenCalledWith("sub-1", "tok");
+    expect(mocks.testSubscription).toHaveBeenCalledWith("sub-1", { via: "proxy" });
   });
 
   it("shows the rate-limit or channel error from the API for a test", async () => {

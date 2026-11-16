@@ -8,7 +8,7 @@ import { PaginationControls } from "@/components/ui/pagination-controls";
 import { Select } from "@/components/ui/select";
 import { SkeletonTable } from "@/components/ui/skeleton";
 import { useOverflowTabindex } from "@/components/ui/use-overflow-tabindex";
-import { getIssues } from "@/lib/api/client";
+import { BROWSER_SESSION, getIssues } from "@/lib/api/client";
 import { formatDate } from "@/lib/utils/format";
 import type { Issue, Team } from "@/types";
 
@@ -50,7 +50,7 @@ function levelTone(level: string) {
   return "neutral";
 }
 
-export function IssueExplorer({ team, token }: { team: Team; token: string }) {
+export function IssueExplorer({ team }: { team: Team }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -115,7 +115,7 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
 
       try {
         const offset = (currentPage - 1) * pageSize;
-        const result = await getIssues(team.id, token, {
+        const result = await getIssues(team.id, BROWSER_SESSION, {
           query: currentFilters.query || undefined,
           status: currentFilters.status || undefined,
           service: currentFilters.service || undefined,
@@ -159,7 +159,6 @@ export function IssueExplorer({ team, token }: { team: Team; token: string }) {
     pageSize,
     reloadToken,
     team.id,
-    token,
   ]);
 
   function updateSearch(next: {

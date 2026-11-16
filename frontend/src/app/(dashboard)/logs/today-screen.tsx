@@ -8,7 +8,7 @@ import { LogTable } from "@/components/logs/log-table";
 import { Card } from "@/components/ui/card";
 import { SkeletonTable } from "@/components/ui/skeleton";
 import { Select } from "@/components/ui/select";
-import { getLogs } from "@/lib/api/client";
+import { BROWSER_SESSION, getLogs } from "@/lib/api/client";
 import type { LogEntry } from "@/types";
 
 const LEVEL_OPTIONS = [
@@ -20,8 +20,13 @@ const LEVEL_OPTIONS = [
   { value: "debug", label: "debug" },
 ] as const;
 
-export function TodayScreen() {
-  const { team, token } = useLogAuth();
+/**
+ * `liveTailToken` feeds the live tail only: EventSource cannot send the
+ * proxy's header, so the stream still authenticates with the token in its URL.
+ * Every other call on this screen goes through the proxy.
+ */
+export function TodayScreen({ liveTailToken }: { liveTailToken: string }) {
+  const { team } = useLogAuth();
   const router = useRouter();
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -41,7 +46,7 @@ export function TodayScreen() {
         const filters = level
           ? [{ field: "level", operator: "eq" as const, value: level }]
           : [];
-        const result = await getLogs(team.id, token, {
+        const result = await getLogs(team.id, BROWSER_SESSION, {
           startTime: start.toISOString(),
           endTime: now.toISOString(),
           filters,
@@ -67,13 +72,13 @@ export function TodayScreen() {
     void load();
     const interval = setInterval(() => void load(), 30_000);
     return () => { active = false; clearInterval(interval); };
-  }, [team.id, token, level]);
+  }, [team.id, level]);
 
   return (
     <div className="space-y-4">
       <h1 className="text-lg font-semibold text-ink sm:text-xl">Logs</h1>
 
-      <LiveTail teamId={team.id} token={token} />
+      <LiveTail teamId={team.id} token={liveTailToken} />
 
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-3">

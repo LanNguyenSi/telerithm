@@ -8,11 +8,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/api/client", () => ({
+  BROWSER_SESSION: { via: "proxy" },
   getLogById: mocks.getLogById,
   getLogContext: mocks.getLogContext,
 }));
 vi.mock("@/components/logs/log-auth-context", () => ({
-  useLogAuth: () => ({ team: { id: "team-1" }, token: "tok" }),
+  useLogAuth: () => ({ team: { id: "team-1" } }),
 }));
 
 import { LogDetailScreen } from "@/app/(dashboard)/logs/[id]/screen";

@@ -30,7 +30,7 @@ export default async function SettingsPage() {
           </div>
         </dl>
       </Card>
-      <SourcesPanel sources={sources} teamId={team.id} token={token} role={team.role} />
+      <SourcesPanel sources={sources} teamId={team.id} role={team.role} />
       </div>
       <Card>
         <h2 className="text-lg font-semibold text-ink">Appearance</h2>

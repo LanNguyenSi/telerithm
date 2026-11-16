@@ -193,6 +193,15 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      # Starts the build above against a stub backend and loads every
+      # authenticated page with a known session cookie: the token must not
+      # appear in the HTML or the RSC payload (the logs page with its live tail
+      # is the one listed exception), and the API proxy must attach it as the
+      # Authorization header and refuse requests without cookie or header.
+      - name: Session token absent from rendered pages
+        working-directory: frontend
+        run: node scripts/check-token-absent.mjs
+
   sdk-js:
     name: SDK JS
     runs-on: ubuntu-latest

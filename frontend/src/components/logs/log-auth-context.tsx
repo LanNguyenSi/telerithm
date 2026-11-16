@@ -3,9 +3,10 @@
 import { createContext, useContext } from "react";
 import type { TeamWithRole } from "@/types";
 
+// The team only: API calls from the log screens go through the same-origin
+// proxy, so the session token is never part of this context.
 interface LogAuth {
   team: TeamWithRole;
-  token: string;
 }
 
 const LogAuthCtx = createContext<LogAuth | null>(null);

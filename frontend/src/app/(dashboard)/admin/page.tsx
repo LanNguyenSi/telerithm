@@ -29,7 +29,7 @@ export default async function AdminPage() {
           </div>
         </Card>
 
-        <UserTable initialUsers={users} teams={teams} token={token} />
+        <UserTable initialUsers={users} teams={teams} />
       </div>
     );
   } catch {

@@ -14,6 +14,7 @@ import { Card } from "@/components/ui/card";
 import { Dialog, useDialog } from "@/components/ui/dialog";
 import { SkeletonTable } from "@/components/ui/skeleton";
 import {
+  BROWSER_SESSION,
   createSavedLogView,
   deleteSavedLogView,
   duplicateSavedLogView,
@@ -46,7 +47,7 @@ import type {
 import { isSavedLogViewStub } from "@/types";
 
 export function SearchScreen() {
-  const { team, token } = useLogAuth();
+  const { team } = useLogAuth();
   const canManageShared = canManageSharedViews(team.role);
   const router = useRouter();
   const search = useLogSearch();
@@ -138,7 +139,7 @@ export function SearchScreen() {
     let active = true;
     setSavedViewsLoading(true);
     setSavedViewsError(null);
-    void getSavedLogViews(team.id, token)
+    void getSavedLogViews(team.id, BROWSER_SESSION)
       .then((response) => {
         if (active) setSavedViews(response.views);
       })
@@ -153,7 +154,7 @@ export function SearchScreen() {
     return () => {
       active = false;
     };
-  }, [team.id, token]);
+  }, [team.id]);
 
   // Main data loading
   useEffect(() => {
@@ -198,9 +199,9 @@ export function SearchScreen() {
         );
         const [explanation, result, facetResult, histogramResult, patternResult] = await Promise.all([
           currentQuery
-            ? getNaturalExplanation(team.id, currentQuery, token).catch(() => null)
+            ? getNaturalExplanation(team.id, currentQuery, BROWSER_SESSION).catch(() => null)
             : Promise.resolve(null),
-          getLogs(team.id, token, {
+          getLogs(team.id, BROWSER_SESSION, {
             sourceId: currentSourceId || undefined,
             startTime: currentTimeRange.startTime,
             endTime: currentTimeRange.endTime,
@@ -227,7 +228,7 @@ export function SearchScreen() {
                 }
               : undefined,
           }),
-          getLogFacets(team.id, token, {
+          getLogFacets(team.id, BROWSER_SESSION, {
             sourceId: currentSourceId || undefined,
             startTime: currentTimeRange.startTime,
             endTime: currentTimeRange.endTime,
@@ -236,7 +237,7 @@ export function SearchScreen() {
             fields: FACET_FIELDS,
             limit: 10,
           }),
-          getLogHistogram(team.id, token, {
+          getLogHistogram(team.id, BROWSER_SESSION, {
             sourceId: currentSourceId || undefined,
             startTime: currentTimeRange.startTime,
             endTime: currentTimeRange.endTime,
@@ -244,7 +245,7 @@ export function SearchScreen() {
             filters,
             interval: "5m",
           }),
-          getLogPatterns(team.id, token, {
+          getLogPatterns(team.id, BROWSER_SESSION, {
             sourceId: currentSourceId || undefined,
             startTime: currentTimeRange.startTime,
             endTime: currentTimeRange.endTime,
@@ -428,7 +429,7 @@ export function SearchScreen() {
               disabledReason: SHARED_VIEWS_REASON,
             });
             if (!result) return;
-            void createSavedLogView(token, {
+            void createSavedLogView(BROWSER_SESSION, {
               teamId: team.id,
               name: result.name,
               isShared: canManageShared && result.shared,
@@ -436,7 +437,7 @@ export function SearchScreen() {
               definition: currentDefinition,
             })
               .then(async ({ view }) => {
-                const { views } = await getSavedLogViews(team.id, token);
+                const { views } = await getSavedLogViews(team.id, BROWSER_SESSION);
                 setSavedViews(views);
                 applySavedView(view);
               })
@@ -451,9 +452,9 @@ export function SearchScreen() {
               "Die aktuelle Definition dieser Ansicht wird ersetzt.",
             );
             if (!ok) return;
-            void updateSavedLogView(selectedView.id, team.id, token, { definition: currentDefinition })
+            void updateSavedLogView(selectedView.id, team.id, BROWSER_SESSION, { definition: currentDefinition })
               .then(async ({ view }) => {
-                const { views } = await getSavedLogViews(team.id, token);
+                const { views } = await getSavedLogViews(team.id, BROWSER_SESSION);
                 setSavedViews(views);
                 if (!isSavedLogViewStub(view)) applySavedView(view);
               })
@@ -465,9 +466,9 @@ export function SearchScreen() {
             if (!selectedView) return;
             const name = await dialog.prompt("Name für Kopie", `${selectedView.name} (copy)`);
             if (!name) return;
-            void duplicateSavedLogView(selectedView.id, token, { teamId: team.id, name })
+            void duplicateSavedLogView(selectedView.id, BROWSER_SESSION, { teamId: team.id, name })
               .then(async ({ view }) => {
-                const { views } = await getSavedLogViews(team.id, token);
+                const { views } = await getSavedLogViews(team.id, BROWSER_SESSION);
                 setSavedViews(views);
                 applySavedView(view);
               })
@@ -481,9 +482,9 @@ export function SearchScreen() {
             if (!selectedView || !canManageSelectedView) return;
             const name = await dialog.prompt("Neuer Name", selectedView.name);
             if (!name) return;
-            void updateSavedLogView(selectedView.id, team.id, token, { name })
+            void updateSavedLogView(selectedView.id, team.id, BROWSER_SESSION, { name })
               .then(async ({ view }) => {
-                const { views } = await getSavedLogViews(team.id, token);
+                const { views } = await getSavedLogViews(team.id, BROWSER_SESSION);
                 setSavedViews(views);
                 if (!isSavedLogViewStub(view)) applySavedView(view);
               })
@@ -495,9 +496,9 @@ export function SearchScreen() {
           sharedDisabledReason={SHARED_VIEWS_REASON}
           onSetDefault={() => {
             if (!selectedView || !canManageShared) return;
-            void updateSavedLogView(selectedView.id, team.id, token, { isDefault: true })
+            void updateSavedLogView(selectedView.id, team.id, BROWSER_SESSION, { isDefault: true })
               .then(async ({ view }) => {
-                const { views } = await getSavedLogViews(team.id, token);
+                const { views } = await getSavedLogViews(team.id, BROWSER_SESSION);
                 setSavedViews(views);
                 if (!isSavedLogViewStub(view)) applySavedView(view);
               })
@@ -514,9 +515,9 @@ export function SearchScreen() {
               "Diese Ansicht wird unwiderruflich gelöscht.",
             );
             if (!ok) return;
-            void deleteSavedLogView(selectedView.id, team.id, token)
+            void deleteSavedLogView(selectedView.id, team.id, BROWSER_SESSION)
               .then(async () => {
-                const { views } = await getSavedLogViews(team.id, token);
+                const { views } = await getSavedLogViews(team.id, BROWSER_SESSION);
                 setSavedViews(views);
                 updateSearch({ viewId: "" });
               })

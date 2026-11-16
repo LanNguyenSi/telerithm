@@ -20,18 +20,33 @@ import type {
   Team,
   TeamWithRole,
 } from "@/types";
+import { PROXY_BASE_PATH, PROXY_HEADER } from "./proxy-constants";
+
+/**
+ * The backend API base URL as the server reaches it: INTERNAL_API_BASE_URL
+ * wins, then NEXT_PUBLIC_API_BASE_URL, then the local default.
+ */
+export function serverApiBaseUrl(env: Record<string, string | undefined> = process.env) {
+  return env.INTERNAL_API_BASE_URL ?? env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api/v1";
+}
 
 export function getApiBaseUrl() {
   if (typeof window === "undefined") {
-    return (
-      process.env.INTERNAL_API_BASE_URL ??
-      process.env.NEXT_PUBLIC_API_BASE_URL ??
-      "http://localhost:4000/api/v1"
-    );
+    return serverApiBaseUrl();
   }
 
   return process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:4000/api/v1";
 }
+
+/**
+ * Credentials of an authenticated call. A server component passes the session
+ * token it read from the httpOnly cookie, and the call goes straight to the
+ * backend. A client component passes BROWSER_SESSION: the call goes to the
+ * same-origin proxy route, which reads the cookie on the server, so the token
+ * is never handed to client code or written into a page.
+ */
+export const BROWSER_SESSION = Object.freeze({ via: "proxy" as const });
+export type ApiAuth = string | typeof BROWSER_SESSION;
 
 // Validation failures arrive as a flattened Zod error: top-level `formErrors`
 // and per-field `fieldErrors`. Turn it into one readable line.
@@ -48,8 +63,8 @@ function describeValidationError(error: Record<string, unknown>, fallback: strin
   return messages.length > 0 ? messages.join("; ") : fallback;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${getApiBaseUrl()}${path}`, {
+async function request<T>(path: string, init?: RequestInit, baseUrl: string = getApiBaseUrl()): Promise<T> {
+  const response = await fetch(`${baseUrl}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -86,14 +101,14 @@ function isAsyncEnvelope(value: unknown): value is { requestId: string; status: 
   );
 }
 
-async function waitForAsyncJob<T>(requestId: string, token: string): Promise<T> {
+async function waitForAsyncJob<T>(requestId: string, auth: ApiAuth): Promise<T> {
   const attempts = 20;
   const delayMs = 250;
 
   for (let index = 0; index < attempts; index += 1) {
     const status = await authedRequest<{ status: "pending" | "completed" | "failed"; data?: T; error?: string }>(
       `/query/jobs/${requestId}`,
-      token,
+      auth,
     );
     if (status.status === "completed") {
       return status.data as T;
@@ -107,51 +122,64 @@ async function waitForAsyncJob<T>(requestId: string, token: string): Promise<T> 
   throw new Error("Async query timed out");
 }
 
-function authedRequest<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  return request<T>(path, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(init?.headers ?? {}),
+function authedRequest<T>(path: string, auth: ApiAuth, init?: RequestInit): Promise<T> {
+  if (typeof auth === "string") {
+    return request<T>(path, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${auth}`,
+        ...(init?.headers ?? {}),
+      },
+    });
+  }
+  return request<T>(
+    path,
+    {
+      ...init,
+      headers: {
+        [PROXY_HEADER]: "1",
+        ...(init?.headers ?? {}),
+      },
     },
-  });
+    PROXY_BASE_PATH,
+  );
 }
 
-export async function getTeams(token: string) {
-  return authedRequest<{ teams: TeamWithRole[] }>("/teams", token);
+export async function getTeams(auth: ApiAuth) {
+  return authedRequest<{ teams: TeamWithRole[] }>("/teams", auth);
 }
 
-export async function getOverview(teamId: string, token: string) {
-  return authedRequest<{ overview: DashboardOverview }>(`/dashboards/overview?teamId=${teamId}`, token);
+export async function getOverview(teamId: string, auth: ApiAuth) {
+  return authedRequest<{ overview: DashboardOverview }>(`/dashboards/overview?teamId=${teamId}`, auth);
 }
 
-export async function getSources(teamId: string, token: string) {
-  return authedRequest<{ sources: Source[] }>(`/sources?teamId=${teamId}`, token);
+export async function getSources(teamId: string, auth: ApiAuth) {
+  return authedRequest<{ sources: Source[] }>(`/sources?teamId=${teamId}`, auth);
 }
 
-export async function createSource(token: string, payload: { teamId: string; name: string; type: SourceType }) {
-  return authedRequest<{ source: Source }>("/sources", token, {
+export async function createSource(auth: ApiAuth, payload: { teamId: string; name: string; type: SourceType }) {
+  return authedRequest<{ source: Source }>("/sources", auth, {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export async function renameSource(id: string, token: string, payload: { name: string }) {
-  return authedRequest<{ source: Source }>(`/sources/${encodeURIComponent(id)}`, token, {
+export async function renameSource(id: string, auth: ApiAuth, payload: { name: string }) {
+  return authedRequest<{ source: Source }>(`/sources/${encodeURIComponent(id)}`, auth, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
 }
 
-export async function deleteSource(id: string, token: string) {
-  return authedRequest<void>(`/sources/${encodeURIComponent(id)}`, token, { method: "DELETE" });
+export async function deleteSource(id: string, auth: ApiAuth) {
+  return authedRequest<void>(`/sources/${encodeURIComponent(id)}`, auth, { method: "DELETE" });
 }
 
 // Hard cutover: the response carries the new key, shown to the caller once
 // (OWNER and ADMIN can read it again with revealSourceKey); the old key stops
 // working at once.
-export async function rotateSourceKey(id: string, token: string) {
-  return authedRequest<{ source: Source }>(`/sources/${encodeURIComponent(id)}/rotate-key`, token, {
+export async function rotateSourceKey(id: string, auth: ApiAuth) {
+  return authedRequest<{ source: Source }>(`/sources/${encodeURIComponent(id)}/rotate-key`, auth, {
     method: "POST",
   });
 }
@@ -159,8 +187,8 @@ export async function rotateSourceKey(id: string, token: string) {
 // The only read path to a stored ingest key (OWNER and ADMIN; others get 403,
 // an unknown or foreign id 404). The backend writes an audit line per call, so
 // call it on a click, never to prefetch.
-export async function revealSourceKey(id: string, token: string) {
-  return authedRequest<{ apiKey: string }>(`/sources/${encodeURIComponent(id)}/reveal`, token, {
+export async function revealSourceKey(id: string, auth: ApiAuth) {
+  return authedRequest<{ apiKey: string }>(`/sources/${encodeURIComponent(id)}/reveal`, auth, {
     method: "POST",
   });
 }
@@ -173,7 +201,7 @@ export interface LogQueryContext {
 
 export async function getLogs(
   teamId: string,
-  token: string,
+  auth: ApiAuth,
   options?: {
     sourceId?: string;
     startTime?: string;
@@ -203,7 +231,7 @@ export async function getLogs(
     executionTimeMs: number;
     cached: boolean;
     nextPageToken?: string;
-  }>("/logs/search", token, {
+  }>("/logs/search", auth, {
     method: "POST",
     body: JSON.stringify({
       teamId,
@@ -225,12 +253,12 @@ export async function getLogs(
   });
 }
 
-export async function getLogById(teamId: string, logId: string, token: string) {
-  return authedRequest<{ log: LogEntry }>(`/logs/${logId}?teamId=${teamId}`, token);
+export async function getLogById(teamId: string, logId: string, auth: ApiAuth) {
+  return authedRequest<{ log: LogEntry }>(`/logs/${logId}?teamId=${teamId}`, auth);
 }
 
-export async function getNaturalExplanation(teamId: string, query: string, token: string) {
-  return authedRequest<NaturalQueryPlan>("/query/natural", token, {
+export async function getNaturalExplanation(teamId: string, query: string, auth: ApiAuth) {
+  return authedRequest<NaturalQueryPlan>("/query/natural", auth, {
     method: "POST",
     body: JSON.stringify({ teamId, query }),
   });
@@ -238,7 +266,7 @@ export async function getNaturalExplanation(teamId: string, query: string, token
 
 export async function getLogFacets(
   teamId: string,
-  token: string,
+  auth: ApiAuth,
   options?: {
     sourceId?: string;
     startTime?: string;
@@ -255,7 +283,7 @@ export async function getLogFacets(
 ) {
   const response = await authedRequest<{ facets: LogFacet[] } | { requestId: string; status: "pending" }>(
     "/logs/facets",
-    token,
+    auth,
     {
       method: "POST",
       body: JSON.stringify({
@@ -272,14 +300,14 @@ export async function getLogFacets(
     },
   );
   if (isAsyncEnvelope(response)) {
-    return waitForAsyncJob<{ facets: LogFacet[] }>(response.requestId, token);
+    return waitForAsyncJob<{ facets: LogFacet[] }>(response.requestId, auth);
   }
   return response;
 }
 
 export async function getLogHistogram(
   teamId: string,
-  token: string,
+  auth: ApiAuth,
   options?: {
     sourceId?: string;
     startTime?: string;
@@ -299,7 +327,7 @@ export async function getLogHistogram(
         buckets: LogHistogramBucket[];
       }
     | { requestId: string; status: "pending" }
-  >("/logs/histogram", token, {
+  >("/logs/histogram", auth, {
     method: "POST",
     body: JSON.stringify({
       teamId,
@@ -316,14 +344,14 @@ export async function getLogHistogram(
     return waitForAsyncJob<{
       interval: "minute" | "5m" | "15m" | "hour" | "day";
       buckets: LogHistogramBucket[];
-    }>(response.requestId, token);
+    }>(response.requestId, auth);
   }
   return response;
 }
 
 export async function getLogPatterns(
   teamId: string,
-  token: string,
+  auth: ApiAuth,
   options?: {
     sourceId?: string;
     startTime?: string;
@@ -340,7 +368,7 @@ export async function getLogPatterns(
 ) {
   const response = await authedRequest<{ patterns: LogPattern[] } | { requestId: string; status: "pending" }>(
     "/logs/patterns",
-    token,
+    auth,
     {
       method: "POST",
       body: JSON.stringify({
@@ -357,17 +385,17 @@ export async function getLogPatterns(
     },
   );
   if (isAsyncEnvelope(response)) {
-    return waitForAsyncJob<{ patterns: LogPattern[] }>(response.requestId, token);
+    return waitForAsyncJob<{ patterns: LogPattern[] }>(response.requestId, auth);
   }
   return response;
 }
 
-export async function getSavedLogViews(teamId: string, token: string) {
-  return authedRequest<{ views: SavedLogView[] }>(`/logs/views?teamId=${encodeURIComponent(teamId)}`, token);
+export async function getSavedLogViews(teamId: string, auth: ApiAuth) {
+  return authedRequest<{ views: SavedLogView[] }>(`/logs/views?teamId=${encodeURIComponent(teamId)}`, auth);
 }
 
 export async function createSavedLogView(
-  token: string,
+  auth: ApiAuth,
   payload: {
     teamId: string;
     name: string;
@@ -376,7 +404,7 @@ export async function createSavedLogView(
     definition: SavedLogViewDefinition;
   },
 ) {
-  return authedRequest<{ view: SavedLogView }>("/logs/views", token, {
+  return authedRequest<{ view: SavedLogView }>("/logs/views", auth, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -385,7 +413,7 @@ export async function createSavedLogView(
 export async function updateSavedLogView(
   id: string,
   teamId: string,
-  token: string,
+  auth: ApiAuth,
   payload: Partial<{
     name: string;
     isShared: boolean;
@@ -395,7 +423,7 @@ export async function updateSavedLogView(
 ) {
   return authedRequest<{ view: SavedLogView | SavedLogViewStub }>(
     `/logs/views/${id}?teamId=${encodeURIComponent(teamId)}`,
-    token,
+    auth,
     {
       method: "PUT",
       body: JSON.stringify({ teamId, ...payload }),
@@ -405,23 +433,23 @@ export async function updateSavedLogView(
 
 export async function duplicateSavedLogView(
   id: string,
-  token: string,
+  auth: ApiAuth,
   payload: { teamId: string; name?: string },
 ) {
-  return authedRequest<{ view: SavedLogView }>(`/logs/views/${id}/duplicate`, token, {
+  return authedRequest<{ view: SavedLogView }>(`/logs/views/${id}/duplicate`, auth, {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
-export async function deleteSavedLogView(id: string, teamId: string, token: string) {
-  return authedRequest<void>(`/logs/views/${id}?teamId=${encodeURIComponent(teamId)}`, token, {
+export async function deleteSavedLogView(id: string, teamId: string, auth: ApiAuth) {
+  return authedRequest<void>(`/logs/views/${id}?teamId=${encodeURIComponent(teamId)}`, auth, {
     method: "DELETE",
   });
 }
 
 export async function getLogContext(
-  token: string,
+  auth: ApiAuth,
   options: {
     teamId: string;
     sourceId: string;
@@ -436,7 +464,7 @@ export async function getLogContext(
   return authedRequest<{
     before: LogEntry[];
     after: LogEntry[];
-  }>("/logs/context", token, {
+  }>("/logs/context", auth, {
     method: "POST",
     body: JSON.stringify({
       teamId: options.teamId,
@@ -451,12 +479,12 @@ export async function getLogContext(
   });
 }
 
-export async function getAlertRules(teamId: string, token: string) {
-  return authedRequest<{ rules: AlertRule[] }>(`/alerts/rules?teamId=${teamId}`, token);
+export async function getAlertRules(teamId: string, auth: ApiAuth) {
+  return authedRequest<{ rules: AlertRule[] }>(`/alerts/rules?teamId=${teamId}`, auth);
 }
 
-export async function createAlertRule(token: string, payload: AlertRuleInput & { teamId: string }) {
-  return authedRequest<{ rule: AlertRule }>("/alerts/rules", token, {
+export async function createAlertRule(auth: ApiAuth, payload: AlertRuleInput & { teamId: string }) {
+  return authedRequest<{ rule: AlertRule }>("/alerts/rules", auth, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -465,29 +493,29 @@ export async function createAlertRule(token: string, payload: AlertRuleInput & {
 /** Partial update: only the keys present are changed. `description: null` clears it. */
 export async function updateAlertRule(
   id: string,
-  token: string,
+  auth: ApiAuth,
   payload: Partial<Omit<AlertRuleInput, "description">> & { description?: string | null },
 ) {
-  return authedRequest<{ rule: AlertRule }>(`/alerts/rules/${encodeURIComponent(id)}`, token, {
+  return authedRequest<{ rule: AlertRule }>(`/alerts/rules/${encodeURIComponent(id)}`, auth, {
     method: "PUT",
     body: JSON.stringify(payload),
   });
 }
 
-export async function deleteAlertRule(id: string, token: string) {
-  return authedRequest<void>(`/alerts/rules/${encodeURIComponent(id)}`, token, { method: "DELETE" });
+export async function deleteAlertRule(id: string, auth: ApiAuth) {
+  return authedRequest<void>(`/alerts/rules/${encodeURIComponent(id)}`, auth, { method: "DELETE" });
 }
 
-export async function getAlertIncidents(teamId: string, token: string) {
-  return authedRequest<{ incidents: AlertIncident[] }>(`/alerts/incidents?teamId=${teamId}`, token);
+export async function getAlertIncidents(teamId: string, auth: ApiAuth) {
+  return authedRequest<{ incidents: AlertIncident[] }>(`/alerts/incidents?teamId=${teamId}`, auth);
 }
 
-export async function getSubscriptions(teamId: string, token: string) {
-  return authedRequest<{ subscriptions: AlertSubscription[] }>(`/subscriptions?teamId=${teamId}`, token);
+export async function getSubscriptions(teamId: string, auth: ApiAuth) {
+  return authedRequest<{ subscriptions: AlertSubscription[] }>(`/subscriptions?teamId=${teamId}`, auth);
 }
 
 export async function createSubscription(
-  token: string,
+  auth: ApiAuth,
   data: {
     teamId: string;
     ruleId?: string;
@@ -496,7 +524,7 @@ export async function createSubscription(
     severities?: string[];
   },
 ) {
-  return authedRequest<{ subscription: AlertSubscription }>("/subscriptions", token, {
+  return authedRequest<{ subscription: AlertSubscription }>("/subscriptions", auth, {
     method: "POST",
     body: JSON.stringify(data),
   });
@@ -505,29 +533,29 @@ export async function createSubscription(
 /** Partial update: only the keys present change. `enabled` switches delivery off and on. */
 export async function updateSubscription(
   id: string,
-  token: string,
+  auth: ApiAuth,
   data: { channel?: string; config?: Record<string, unknown>; severities?: string[]; enabled?: boolean },
 ) {
-  return authedRequest<{ subscription: AlertSubscription }>(`/subscriptions/${encodeURIComponent(id)}`, token, {
+  return authedRequest<{ subscription: AlertSubscription }>(`/subscriptions/${encodeURIComponent(id)}`, auth, {
     method: "PUT",
     body: JSON.stringify(data),
   });
 }
 
-export async function deleteSubscription(id: string, token: string) {
-  return authedRequest<void>(`/subscriptions/${id}`, token, { method: "DELETE" });
+export async function deleteSubscription(id: string, auth: ApiAuth) {
+  return authedRequest<void>(`/subscriptions/${id}`, auth, { method: "DELETE" });
 }
 
 /** Sends a synthetic notification to the caller's own subscription (rate limited by the API). */
-export async function testSubscription(id: string, token: string) {
-  return authedRequest<{ ok: boolean; message: string }>(`/subscriptions/${encodeURIComponent(id)}/test`, token, {
+export async function testSubscription(id: string, auth: ApiAuth) {
+  return authedRequest<{ ok: boolean; message: string }>(`/subscriptions/${encodeURIComponent(id)}/test`, auth, {
     method: "POST",
   });
 }
 
 export async function getIssues(
   teamId: string,
-  token: string,
+  auth: ApiAuth,
   options?: {
     query?: string;
     status?: string;
@@ -548,40 +576,40 @@ export async function getIssues(
   if (options?.sortDirection) params.set("sortDirection", options.sortDirection);
   if (options?.limit) params.set("limit", String(options.limit));
   if (options?.offset) params.set("offset", String(options.offset));
-  return authedRequest<{ issues: Issue[]; total: number }>(`/issues?${params.toString()}`, token);
+  return authedRequest<{ issues: Issue[]; total: number }>(`/issues?${params.toString()}`, auth);
 }
 
 export async function getRegistrationSettings() {
   return request<{ registrationMode: "open" | "invite-only" | "approval" }>("/auth/settings");
 }
 
-export async function getAdminUsers(token: string) {
-  return authedRequest<{ users: AdminUser[] }>("/admin/users", token);
+export async function getAdminUsers(auth: ApiAuth) {
+  return authedRequest<{ users: AdminUser[] }>("/admin/users", auth);
 }
 
-export async function getAdminTeams(token: string) {
-  return authedRequest<{ teams: Array<Team & { memberCount: number }> }>("/admin/teams", token);
+export async function getAdminTeams(auth: ApiAuth) {
+  return authedRequest<{ teams: Array<Team & { memberCount: number }> }>("/admin/teams", auth);
 }
 
-export async function approveAdminUser(userId: string, token: string) {
-  return authedRequest<{ user: SessionUser }>(`/admin/users/${userId}/approve`, token, {
+export async function approveAdminUser(userId: string, auth: ApiAuth) {
+  return authedRequest<{ user: SessionUser }>(`/admin/users/${userId}/approve`, auth, {
     method: "POST",
   });
 }
 
 export async function addAdminUserToTeam(
   userId: string,
-  token: string,
+  auth: ApiAuth,
   data: { teamId: string; role: "OWNER" | "ADMIN" | "MEMBER" | "VIEWER" },
 ) {
-  return authedRequest<{ membership: { id: string } }>(`/admin/users/${userId}/add-to-team`, token, {
+  return authedRequest<{ membership: { id: string } }>(`/admin/users/${userId}/add-to-team`, auth, {
     method: "POST",
     body: JSON.stringify(data),
   });
 }
 
-export async function removeAdminUserFromTeam(userId: string, teamId: string, token: string) {
-  return authedRequest<void>(`/admin/users/${userId}/remove-from-team/${teamId}`, token, {
+export async function removeAdminUserFromTeam(userId: string, teamId: string, auth: ApiAuth) {
+  return authedRequest<void>(`/admin/users/${userId}/remove-from-team/${teamId}`, auth, {
     method: "DELETE",
   });
 }
