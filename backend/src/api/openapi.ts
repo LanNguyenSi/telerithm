@@ -67,6 +67,19 @@ export const openApiSpec = {
         },
       },
     },
+    "/auth/me": {
+      get: {
+        summary: "The authenticated user",
+        description:
+          "The caller as the database has them (id, email, name, role, status), for authorization decisions in the frontend.",
+        tags: ["Auth"],
+        security: [{ bearerAuth: [] }],
+        responses: {
+          200: { description: "The user" },
+          401: { description: "Missing, expired or unknown token, or the user is not ACTIVE" },
+        },
+      },
+    },
     "/teams": {
       get: {
         summary: "List teams for authenticated user",
@@ -462,21 +475,61 @@ export const openApiSpec = {
         responses: { 200: { description: "Dashboard summary" } },
       },
     },
+    "/stream/ticket": {
+      post: {
+        summary: "Issue a one-time ticket for the log stream",
+        description:
+          "Returns a random single-use ticket that opens GET /stream/logs?ticket=... for the given team without an Authorization header (EventSource cannot send one). The ticket is valid for 60 seconds, is consumed by its first use, and is bound to the caller's session and the team. Ask for a new ticket before every connection, reconnects included. Needs a team membership of any role.",
+        tags: ["Streaming"],
+        security: [{ bearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["teamId"],
+                properties: { teamId: { type: "string" } },
+              },
+            },
+          },
+        },
+        responses: {
+          201: {
+            description: "Ticket issued",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    ticket: { type: "string" },
+                    expiresInSeconds: { type: "integer", example: 60 },
+                  },
+                },
+              },
+            },
+          },
+          400: { description: "teamId missing" },
+          401: { description: "Missing or invalid bearer token" },
+          403: { description: "Not a member of the team" },
+        },
+      },
+    },
     "/stream/logs": {
       get: {
         summary: "Server-Sent Events log stream",
         description:
-          "Accepts the bearer either via the Authorization header or via ?token= query parameter. The query fallback exists because EventSource cannot set headers; the backend HTTP access log redacts the token. The token and the membership of the caller in the team are re-checked on every 15-second heartbeat; the stream ends at the first heartbeat after the user stops being ACTIVE, is removed from the team or the session is gone.",
+          "Authenticates with the bearer in the Authorization header, or with a one-time ?ticket= from POST /stream/ticket (EventSource cannot set headers). The session token is not accepted as a query parameter. When both are sent, the header wins and the ticket is not consumed. A ticket opens the stream of the team it was issued for only; an unknown, expired, already used or other-team ticket answers 401 with the same body. The session and the membership of the caller in the team are re-checked on every 15-second heartbeat; the stream ends at the first heartbeat after the user stops being ACTIVE, is removed from the team or the session is gone.",
         tags: ["Streaming"],
         security: [{ bearerAuth: [] }],
         parameters: [
           { name: "teamId", in: "query", required: true, schema: { type: "string" } },
           {
-            name: "token",
+            name: "ticket",
             in: "query",
             schema: { type: "string" },
             description:
-              "Bearer token (use only when the Authorization header is not available, e.g. EventSource).",
+              "One-time stream ticket (use when the Authorization header is not available, e.g. EventSource).",
           },
           { name: "sourceId", in: "query", schema: { type: "string" } },
           { name: "service", in: "query", schema: { type: "string" } },
@@ -486,7 +539,9 @@ export const openApiSpec = {
         ],
         responses: {
           200: { description: "SSE stream", content: { "text/event-stream": {} } },
-          401: { description: "Missing or invalid bearer token" },
+          401: {
+            description: "Missing or invalid bearer token, or an unknown, expired, used or other-team ticket",
+          },
         },
       },
     },

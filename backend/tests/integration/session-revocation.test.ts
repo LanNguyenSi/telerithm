@@ -89,6 +89,7 @@ vi.mock("../../src/repositories/redis.js", () => ({
   redis: {
     get: vi.fn(),
     set: vi.fn(),
+    getdel: vi.fn(),
     keys: vi.fn(),
     del: vi.fn(),
     ping: vi.fn(),
@@ -101,6 +102,7 @@ vi.mock("../../src/repositories/redis.js", () => ({
 }));
 
 import { prisma } from "../../src/repositories/prisma.js";
+import { redis } from "../../src/repositories/redis.js";
 
 type Mock = ReturnType<typeof vi.fn>;
 const db = prisma as unknown as {
@@ -110,6 +112,8 @@ const db = prisma as unknown as {
   teamMember: { findMany: Mock; findUnique: Mock; delete: Mock };
   alertSubscription: { deleteMany: Mock };
 };
+
+const redisMock = redis as unknown as { getdel: ReturnType<typeof vi.fn> };
 
 let server: Server;
 let app: supertest.Agent;
@@ -141,9 +145,11 @@ function sessionFor(token: string, userId: string, status: Status) {
   };
 }
 
+// Looks a row up by token (bearer) or by id (a stream opened with a ticket).
 function mockSessions(...rows: Array<ReturnType<typeof sessionFor>>) {
   db.session.findUnique.mockImplementation(
-    async ({ where }: { where: { token: string } }) => rows.find((row) => row.token === where.token) ?? null,
+    async ({ where }: { where: { token?: string; id?: string } }) =>
+      rows.find((row) => (where.token !== undefined ? row.token === where.token : row.id === where.id)) ?? null,
   );
 }
 
@@ -182,14 +188,15 @@ describe("a session whose user is not ACTIVE", () => {
     expect(res.status).toBe(401);
   });
 
-  it("is rejected with 401 on the log stream, by header and by ?token=", async () => {
+  it("is rejected with 401 on the log stream, by header and by ticket", async () => {
     mockSessions(sessionFor("sess_a", "u1", "DISABLED"));
+    redisMock.getdel.mockResolvedValue(JSON.stringify({ sessionId: "row-sess_a", userId: "u1", teamId: "t1" }));
 
     const byHeader = await app.get("/api/v1/stream/logs?teamId=t1").set(bearer("sess_a"));
-    const byQuery = await app.get("/api/v1/stream/logs?teamId=t1&token=sess_a");
+    const byTicket = await app.get("/api/v1/stream/logs?teamId=t1&ticket=tk");
 
     expect(byHeader.status).toBe(401);
-    expect(byQuery.status).toBe(401);
+    expect(byTicket.status).toBe(401);
   });
 
   it("is rejected with 401 on the admin routes even for a DISABLED admin", async () => {
@@ -243,12 +250,13 @@ describe("GET /api/v1/stream/logs re-validation", () => {
     db.teamMember.findUnique.mockResolvedValue({ id: "tm", teamId: "t1", userId: "u1", role: "MEMBER" });
   });
 
-  async function openStream(by: "header" | "query") {
+  async function openStream(by: "header" | "ticket") {
     mockSessions(sessionFor("sess_a", "u1", "ACTIVE"));
+    redisMock.getdel.mockResolvedValue(JSON.stringify({ sessionId: "row-sess_a", userId: "u1", teamId: "t1" }));
     const req =
       by === "header"
         ? app.get("/api/v1/stream/logs?teamId=t1").set(bearer("sess_a"))
-        : app.get("/api/v1/stream/logs?teamId=t1&token=sess_a");
+        : app.get("/api/v1/stream/logs?teamId=t1&ticket=tk");
     await req;
     expect(subscribeCalls).toHaveLength(1);
     expect(subscribeCalls[0].teamId).toBe("t1");
@@ -261,10 +269,31 @@ describe("GET /api/v1/stream/logs re-validation", () => {
     await expect(revalidate()).resolves.toBe(true);
   });
 
-  it("uses the ?token= token too", async () => {
-    const revalidate = await openStream("query");
+  it("does the same for a stream opened with a ticket, which keeps the session by id", async () => {
+    const revalidate = await openStream("ticket");
 
     await expect(revalidate()).resolves.toBe(true);
+  });
+
+  it("fails the ticket stream's check once the user is disabled after the stream opened", async () => {
+    const revalidate = await openStream("ticket");
+    mockSessions(sessionFor("sess_a", "u1", "DISABLED"));
+
+    await expect(revalidate()).resolves.toBe(false);
+  });
+
+  it("fails the ticket stream's check once the session is deleted after the stream opened", async () => {
+    const revalidate = await openStream("ticket");
+    mockSessions();
+
+    await expect(revalidate()).resolves.toBe(false);
+  });
+
+  it("fails the ticket stream's check once the user is removed from the team after the stream opened", async () => {
+    const revalidate = await openStream("ticket");
+    db.teamMember.findUnique.mockResolvedValue(null);
+
+    await expect(revalidate()).resolves.toBe(false);
   });
 
   it("fails the check once the user is disabled after the stream opened", async () => {

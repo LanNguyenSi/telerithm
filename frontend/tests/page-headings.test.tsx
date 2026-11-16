@@ -199,7 +199,7 @@ describe("dashboard page headings", () => {
   });
 
   it("names the logs today page with one h1", () => {
-    renderInLogAuth(<TodayScreen liveTailToken="tok" />);
+    renderInLogAuth(<TodayScreen />);
     assertPageHeading("Logs");
   });
 

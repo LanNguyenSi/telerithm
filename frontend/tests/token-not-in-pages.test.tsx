@@ -6,8 +6,8 @@ import type { TeamWithRole } from "@/types";
 // The props a server page hands to its client components are what Next writes
 // into the RSC payload of the page, and the rendered tree is the HTML. Every
 // authenticated page is rendered here with a known session token, and the token
-// must appear in neither. The one exception is the logs page, whose live tail
-// still authenticates its EventSource with the token in the stream URL.
+// must appear in neither. That includes the logs page: its live tail
+// authenticates the EventSource with a one-time stream ticket, not the token.
 
 const SECRET = "sess_known_cookie_value_4f1d2c";
 
@@ -57,6 +57,7 @@ import AdminPage from "@/app/(dashboard)/admin/page";
 import IssuesPage from "@/app/(dashboard)/issues/page";
 import LogsLayout from "@/app/(dashboard)/logs/layout";
 import LogsPage from "@/app/(dashboard)/logs/page";
+import { LogAuthProvider } from "@/components/logs/log-auth-context";
 
 const team = { id: "team-1", name: "Team One", slug: "team-one", role: "OWNER" } as TeamWithRole;
 const user = { id: "u1", email: "a@example.test", name: "A", role: "ADMIN" };
@@ -139,10 +140,9 @@ describe("the session token stays out of rendered pages", () => {
     expect(serializeTree(<div><Leaky token={SECRET} /></div>)).toContain(SECRET);
   });
 
-  // Known exception until live tail gets its own stream ticket: when that
-  // lands, this assertion flips to not.toContain.
-  it("logs page: the live tail still receives the token for its stream URL", async () => {
+  it("logs page: the live tail gets no token, in no prop and not in the HTML", async () => {
     const tree = await LogsPage();
-    expect(serializeTree(tree)).toContain(SECRET);
+    expect(serializeTree(tree)).not.toContain(SECRET);
+    expect(html(<LogAuthProvider value={{ team }}>{tree}</LogAuthProvider>)).not.toContain(SECRET);
   });
 });

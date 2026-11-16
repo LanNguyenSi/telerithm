@@ -66,7 +66,7 @@ describe("middleware — unauthenticated users (no token)", () => {
   });
 });
 
-describe("middleware — authenticated non-admin users", () => {
+describe("middleware - authenticated requests", () => {
   const AUTH_COOKIES = { telerithm_token: "valid-session-token" };
 
   it("passes through a normal authenticated request", () => {
@@ -78,97 +78,36 @@ describe("middleware — authenticated non-admin users", () => {
     const res = middleware(makeRequest("/", AUTH_COOKIES));
     expect(isPassThrough(res)).toBe(true);
   });
-
-  it("redirects non-admin user away from /admin to /", () => {
-    const res = middleware(
-      makeRequest("/admin", {
-        ...AUTH_COOKIES,
-        telerithm_user: JSON.stringify({ role: "USER" }),
-      }),
-    );
-    expect(res.status).toBe(307);
-    expect(redirectTarget(res)).toBe("/");
-  });
-
-  it("redirects authenticated user with no telerithm_user cookie away from /admin to /", () => {
-    // Token present, but no user-info cookie — role defaults to null -> not ADMIN
-    const res = middleware(makeRequest("/admin/settings", AUTH_COOKIES));
-    expect(res.status).toBe(307);
-    expect(redirectTarget(res)).toBe("/");
-  });
-
-  it("redirects authenticated user on /admin sub-path to / when role is USER", () => {
-    const res = middleware(
-      makeRequest("/admin/teams", {
-        ...AUTH_COOKIES,
-        telerithm_user: JSON.stringify({ role: "USER" }),
-      }),
-    );
-    expect(res.status).toBe(307);
-    expect(redirectTarget(res)).toBe("/");
-  });
 });
 
-describe("middleware — admin users", () => {
-  const ADMIN_COOKIES = {
-    telerithm_token: "valid-session-token",
-    telerithm_user: JSON.stringify({ role: "ADMIN" }),
-  };
+// The middleware checks that a session cookie exists and nothing else. Which
+// role the session has is decided on the server by requireAdmin (see
+// auth-guard.test.ts and admin-gate.test.tsx), because telerithm_user is
+// readable and writable by the browser: whatever it holds must not change the
+// middleware's answer, in either direction.
+describe("middleware - /admin does not trust the telerithm_user cookie", () => {
+  const TOKEN = { telerithm_token: "valid-session-token" };
+  const userCookies: Array<[string, Record<string, string>]> = [
+    ["no user cookie", {}],
+    ["role USER", { telerithm_user: JSON.stringify({ role: "USER" }) }],
+    ["role ADMIN (possibly forged)", { telerithm_user: JSON.stringify({ role: "ADMIN" }) }],
+    ["no role field", { telerithm_user: JSON.stringify({ userId: "u1" }) }],
+    ["invalid JSON", { telerithm_user: "not-valid-json{{{" }],
+  ];
 
-  it("passes through /admin for an ADMIN-role user", () => {
-    const res = middleware(makeRequest("/admin", ADMIN_COOKIES));
+  it.each(userCookies)("passes /admin through with a token and %s", (_name, cookies) => {
+    const res = middleware(makeRequest("/admin", { ...TOKEN, ...cookies }));
     expect(isPassThrough(res)).toBe(true);
   });
 
-  it("passes through /admin/users for an ADMIN-role user", () => {
-    const res = middleware(makeRequest("/admin/users", ADMIN_COOKIES));
+  it.each(userCookies)("passes /admin/users through with a token and %s", (_name, cookies) => {
+    const res = middleware(makeRequest("/admin/users", { ...TOKEN, ...cookies }));
     expect(isPassThrough(res)).toBe(true);
   });
 
-  it("passes through /dashboard for an ADMIN-role user (admin check only on /admin paths)", () => {
-    const res = middleware(makeRequest("/dashboard", ADMIN_COOKIES));
-    expect(isPassThrough(res)).toBe(true);
-  });
-});
-
-describe("middleware — malformed telerithm_user cookie", () => {
-  const TOKEN_COOKIES = { telerithm_token: "valid-session-token" };
-
-  it("redirects to /login when telerithm_user contains invalid JSON on an /admin path", () => {
-    const res = middleware(
-      makeRequest("/admin/dashboard", {
-        ...TOKEN_COOKIES,
-        telerithm_user: "not-valid-json{{{",
-      }),
-    );
+  it("still sends /admin to /login without a token, whatever the user cookie says", () => {
+    const res = middleware(makeRequest("/admin", { telerithm_user: JSON.stringify({ role: "ADMIN" }) }));
     expect(res.status).toBe(307);
     expect(redirectTarget(res)).toBe("/login");
-  });
-
-  it("redirects to /login when telerithm_user is a bare string (not an object)", () => {
-    const res = middleware(
-      makeRequest("/admin", {
-        ...TOKEN_COOKIES,
-        telerithm_user: "just-a-string",
-      }),
-    );
-    // "just-a-string" is valid JSON (a string literal), role is undefined -> redirects to /
-    // Hmm, actually JSON.parse("just-a-string") throws because it's not valid JSON
-    expect(res.status).toBe(307);
-    // Could be /login (parse error) or / (valid JSON with no role)
-    // "just-a-string" without surrounding quotes is NOT valid JSON, so it throws -> /login
-    expect(redirectTarget(res)).toBe("/login");
-  });
-
-  it("redirects to / when telerithm_user is valid JSON without a role field", () => {
-    // Valid JSON, but no role key -> role is undefined -> not ADMIN -> redirect to /
-    const res = middleware(
-      makeRequest("/admin", {
-        ...TOKEN_COOKIES,
-        telerithm_user: JSON.stringify({ userId: "u1" }),
-      }),
-    );
-    expect(res.status).toBe(307);
-    expect(redirectTarget(res)).toBe("/");
   });
 });

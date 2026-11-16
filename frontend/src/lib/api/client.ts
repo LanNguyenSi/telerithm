@@ -145,6 +145,15 @@ function authedRequest<T>(path: string, auth: ApiAuth, init?: RequestInit): Prom
   );
 }
 
+/**
+ * The caller as the backend has them in its database. Authorization decisions
+ * (the admin pages) read the role from here, never from the `telerithm_user`
+ * cookie, which the browser can write.
+ */
+export async function getCurrentUser(auth: ApiAuth) {
+  return authedRequest<{ user: SessionUser }>("/auth/me", auth);
+}
+
 export async function getTeams(auth: ApiAuth) {
   return authedRequest<{ teams: TeamWithRole[] }>("/teams", auth);
 }
@@ -614,9 +623,23 @@ export async function removeAdminUserFromTeam(userId: string, teamId: string, au
   });
 }
 
+/**
+ * A one-time ticket that opens the live-tail stream for one team. EventSource
+ * cannot send headers, and the session token must not go into a URL, so the
+ * stream authenticates with this instead: valid for about a minute, spent by
+ * its first use. Ask for a new one before every connection, reconnects
+ * included.
+ */
+export async function createStreamTicket(teamId: string, auth: ApiAuth) {
+  return authedRequest<{ ticket: string; expiresInSeconds: number }>("/stream/ticket", auth, {
+    method: "POST",
+    body: JSON.stringify({ teamId }),
+  });
+}
+
 export function streamLogs(
   teamId: string,
-  token: string,
+  ticket: string,
   filters?: {
     sourceId?: string;
     service?: string;
@@ -625,9 +648,7 @@ export function streamLogs(
     query?: string;
   },
 ) {
-  // EventSource can't set headers, so the backend /stream/logs handler
-  // accepts the bearer via ?token=. Backend http logger redacts it.
-  const params = new URLSearchParams({ teamId, token });
+  const params = new URLSearchParams({ teamId, ticket });
   if (filters?.sourceId) params.set("sourceId", filters.sourceId);
   if (filters?.service) params.set("service", filters.service);
   if (filters?.host) params.set("host", filters.host);
