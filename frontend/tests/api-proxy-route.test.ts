@@ -5,12 +5,12 @@ const mocks = vi.hoisted(() => ({ getSessionToken: vi.fn() }));
 
 vi.mock("@/lib/auth/session", () => ({ getSessionToken: mocks.getSessionToken }));
 
-import { DELETE, GET } from "@/app/api/proxy/[...path]/route";
+import { DELETE, GET, OPTIONS } from "@/app/bff/[...path]/route";
 import { PROXY_HEADER } from "@/lib/api/proxy-constants";
 import type { NextRequest } from "next/server";
 
 function call(handler: typeof GET, method: string, path: string[]) {
-  const request = new Request(`http://frontend.test/api/proxy/${path.join("/")}?teamId=t1`, {
+  const request = new Request(`http://frontend.test/bff/${path.join("/")}?teamId=t1`, {
     method,
     headers: { [PROXY_HEADER]: "1" },
   }) as unknown as NextRequest;
@@ -46,6 +46,19 @@ describe("proxy route handler", () => {
     const response = await call(DELETE, "DELETE", ["sources", "s1"]);
 
     expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("answers a CORS preflight with 405 and no CORS headers, so a cross-site page cannot send the proxy header", async () => {
+    mocks.getSessionToken.mockResolvedValue("sess_from_cookie");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await call(OPTIONS, "OPTIONS", ["sources"]);
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get("access-control-allow-origin")).toBeNull();
+    expect(response.headers.get("access-control-allow-headers")).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

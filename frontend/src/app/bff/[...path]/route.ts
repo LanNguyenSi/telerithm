@@ -25,3 +25,6 @@ export const POST = handle;
 export const PUT = handle;
 export const PATCH = handle;
 export const DELETE = handle;
+// Answered by the proxy with 405 and no CORS headers, so a cross-site preflight
+// for the proxy header fails (Next would otherwise answer OPTIONS itself).
+export const OPTIONS = handle;

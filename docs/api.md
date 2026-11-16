@@ -110,6 +110,8 @@ The global limiter (`app.use(rateLimit(...))` in `backend/src/app.ts`, mounted b
 
 "Client IP" in the table is `req.ip`. By default (`TRUST_PROXY` unset) that is the address of the socket peer, and an `X-Forwarded-For` header sent by a client is ignored, so it cannot change which bucket a request lands in. Behind a reverse proxy (the Traefik deployment) the peer is the proxy, so every client would share one bucket; set `TRUST_PROXY` to the number of proxy hops in front of the backend so `req.ip` becomes the real client address. See [Behind a reverse proxy](#behind-a-reverse-proxy-trust_proxy) below.
 
+Browser calls other than the live tail stream reach the backend through the frontend's `/bff` proxy, so their socket peer is the frontend container. The proxy forwards exactly one `X-Forwarded-For` value, the rightmost entry of the header it received (the one Traefik appended), and none when the header is absent or that entry is not an IP address; with `TRUST_PROXY=1` (one hop, the frontend or Traefik) `req.ip` is that client address. Server-side calls of the frontend send no such header and share the frontend container's bucket. This relies on the frontend being reachable only through Traefik: a caller that reaches the frontend directly sets the header itself and so chooses its rate-limit key.
+
 A request over the limit gets `429 Too Many Requests` with:
 
 - A `Retry-After` header (integer seconds until the window resets).

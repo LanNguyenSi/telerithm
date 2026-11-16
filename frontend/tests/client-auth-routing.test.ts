@@ -19,7 +19,7 @@ describe("authenticated calls: token versus proxy", () => {
     await getTeams(BROWSER_SESSION);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/proxy/teams");
+    expect(url).toBe("/bff/teams");
     const headers = init.headers as Record<string, string>;
     expect(headers[PROXY_HEADER]).toBe("1");
     expect(headers.Authorization).toBeUndefined();
@@ -42,7 +42,7 @@ describe("authenticated calls: token versus proxy", () => {
     await deleteAlertRule("r 1", BROWSER_SESSION);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("/api/proxy/alerts/rules/r%201");
+    expect(url).toBe("/bff/alerts/rules/r%201");
     expect(init.method).toBe("DELETE");
   });
 });

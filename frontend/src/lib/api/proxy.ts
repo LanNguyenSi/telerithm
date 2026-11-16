@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { PROXY_HEADER } from "./proxy-constants";
 
 // Same-origin proxy from the browser to the backend API. The browser never
@@ -11,7 +12,8 @@ export const MAX_PROXY_BODY_BYTES = 1024 * 1024;
 const ALLOWED_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
 
 // Only these request headers reach the backend. Cookie, Authorization, Host and
-// the forwarding headers of the incoming request are never passed on.
+// the forwarding headers of the incoming request are never passed on as they
+// are; X-Forwarded-For is rebuilt from one entry (see clientAddressFrom).
 const FORWARDED_REQUEST_HEADERS = ["accept", "accept-language", "content-type"];
 
 // Only these response headers come back. Content-Encoding and Content-Length are
@@ -43,11 +45,41 @@ function errorResponse(status: number, error: string): Response {
 }
 
 /**
+ * The client address to hand the backend for its IP-keyed rate limits: the
+ * rightmost entry of the incoming X-Forwarded-For, which is the one the edge
+ * proxy in front of the frontend appended, or null when the header is absent or
+ * that entry is not an IP address. Entries to its left come from the caller and
+ * are never forwarded.
+ *
+ * Trust assumption: the frontend is reachable only through the edge proxy. A
+ * caller that reaches it directly sets the whole header and so picks its own
+ * rate-limit key (without the header, Next fills it with the socket peer).
+ */
+export function clientAddressFrom(headers: Headers): string | null {
+  const raw = headers.get("x-forwarded-for");
+  if (raw === null) return null;
+  const entries = raw.split(",");
+  const rightmost = entries[entries.length - 1].trim();
+  return isIP(rightmost) === 0 ? null : rightmost;
+}
+
+/** The configured backend base URL, or null when it is not an http(s) URL. */
+export function parseBackendBaseUrl(value: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  return url.protocol === "http:" || url.protocol === "https:" ? url : null;
+}
+
+/**
  * The backend URL for the path segments of a proxied request, or null when a
  * segment could leave the API base path. Each segment is percent-encoded on its
  * own, so a segment can never add a path separator, a scheme or a host.
  */
-export function buildBackendUrl(backendBaseUrl: string, segments: readonly string[], search: string): URL | null {
+export function buildBackendUrl(backendBaseUrl: string | URL, segments: readonly string[], search: string): URL | null {
   if (segments.length === 0) return null;
   for (const segment of segments) {
     if (segment === "" || segment === "." || segment === "..") return null;
@@ -56,10 +88,18 @@ export function buildBackendUrl(backendBaseUrl: string, segments: readonly strin
     if (/[\u0000-\u001f\u007f]/.test(segment)) return null;
   }
 
+  let encoded: string[];
+  try {
+    encoded = segments.map((segment) => encodeURIComponent(segment));
+  } catch {
+    // encodeURIComponent throws on a lone surrogate.
+    return null;
+  }
+
   const base = new URL(backendBaseUrl);
   const basePath = base.pathname.replace(/\/+$/, "");
   const target = new URL(base.origin);
-  target.pathname = `${basePath}/${segments.map((segment) => encodeURIComponent(segment)).join("/")}`;
+  target.pathname = `${basePath}/${encoded.join("/")}`;
   target.search = search;
 
   if (target.origin !== base.origin || !target.pathname.startsWith(`${basePath}/`)) return null;
@@ -109,7 +149,10 @@ export async function proxyRequest(
 
   if (!options.token) return errorResponse(401, "Not authenticated");
 
-  const target = buildBackendUrl(options.backendBaseUrl, segments, new URL(request.url).search);
+  const base = parseBackendBaseUrl(options.backendBaseUrl);
+  if (!base) return errorResponse(502, "Backend not configured");
+
+  const target = buildBackendUrl(base, segments, new URL(request.url).search);
   if (!target) return errorResponse(400, "Invalid API path");
 
   // A GET request has no body stream, so this is null for it.
@@ -122,6 +165,8 @@ export async function proxyRequest(
     if (value !== null) headers.set(name, value);
   }
   headers.set("authorization", `Bearer ${options.token}`);
+  const clientAddress = clientAddressFrom(request.headers);
+  if (clientAddress !== null) headers.set("x-forwarded-for", clientAddress);
 
   let upstream: Response;
   try {

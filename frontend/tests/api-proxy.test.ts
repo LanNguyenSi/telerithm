@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildBackendUrl, MAX_PROXY_BODY_BYTES, proxyRequest } from "@/lib/api/proxy";
+import { buildBackendUrl, clientAddressFrom, MAX_PROXY_BODY_BYTES, proxyRequest } from "@/lib/api/proxy";
 import { PROXY_HEADER } from "@/lib/api/proxy-constants";
 
 const BACKEND = "http://backend.internal:4000/api/v1";
@@ -14,7 +14,7 @@ function upstream(body: BodyInit | null, init?: ResponseInit) {
 function proxied(path: string, init: RequestInit & { noHeader?: boolean } = {}) {
   const headers = new Headers(init.headers);
   if (!init.noHeader) headers.set(PROXY_HEADER, "1");
-  return new Request(`http://frontend.test/api/proxy/${path}`, { ...init, headers });
+  return new Request(`http://frontend.test/bff/${path}`, { ...init, headers });
 }
 
 function calledUrl(fetchImpl: ReturnType<typeof upstream>): URL {
@@ -380,5 +380,140 @@ describe("proxyRequest: response", () => {
 
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({ error: "Backend unreachable" });
+  });
+});
+
+describe("proxyRequest: client address for the backend's rate limits", () => {
+  // The rightmost X-Forwarded-For entry wins (the edge proxy appended it); every
+  // entry to its left is the caller's and is dropped. Nothing is sent when the
+  // header is absent or the rightmost entry is not an IP address.
+  async function forwardedFor(xff: string[] | null): Promise<string | null> {
+    const fetchImpl = upstream("{}", { status: 200 });
+    const headers = new Headers({ [PROXY_HEADER]: "1" });
+    for (const value of xff ?? []) headers.append("x-forwarded-for", value);
+    await proxyRequest(new Request("http://frontend.test/bff/teams", { headers }), ["teams"], {
+      token: TOKEN,
+      backendBaseUrl: BACKEND,
+      fetchImpl,
+    });
+    return new Headers(calledInit(fetchImpl).headers).get("x-forwarded-for");
+  }
+
+  it("forwards nothing when the header is absent", async () => {
+    expect(await forwardedFor(null)).toBeNull();
+  });
+
+  it("forwards a single value", async () => {
+    expect(await forwardedFor(["203.0.113.7"])).toBe("203.0.113.7");
+  });
+
+  it("forwards only the rightmost of several values", async () => {
+    expect(await forwardedFor(["198.51.100.1, 10.0.0.2, 203.0.113.7"])).toBe("203.0.113.7");
+  });
+
+  it("trims whitespace around the rightmost entry", async () => {
+    expect(await forwardedFor(["198.51.100.1 ,   203.0.113.7  "])).toBe("203.0.113.7");
+  });
+
+  it("forwards nothing when the rightmost entry is empty, instead of falling back to a caller-chosen one", async () => {
+    expect(await forwardedFor(["198.51.100.1, "])).toBeNull();
+  });
+
+  it("forwards nothing for an empty header", async () => {
+    expect(await forwardedFor([""])).toBeNull();
+  });
+
+  it("forwards nothing when the rightmost entry is not an IP address", async () => {
+    expect(await forwardedFor(["203.0.113.7, not-an-ip"])).toBeNull();
+  });
+
+  it("keeps the edge proxy's entry when the browser sent its own X-Forwarded-For line first", async () => {
+    expect(await forwardedFor(["198.51.100.66", "203.0.113.7"])).toBe("203.0.113.7");
+  });
+
+  it("forwards an IPv6 address", async () => {
+    expect(clientAddressFrom(new Headers({ "x-forwarded-for": "198.51.100.1, 2001:db8::7" }))).toBe("2001:db8::7");
+  });
+});
+
+describe("proxyRequest: errors, aborts, bounds", () => {
+  it.each([
+    ["400 for a bad path", 400, () => proxyRequest(proxied("x"), [".."], { token: TOKEN, backendBaseUrl: BACKEND, fetchImpl: upstream("{}") })],
+    ["401 without a cookie", 401, () => proxyRequest(proxied("x"), ["x"], { token: null, backendBaseUrl: BACKEND, fetchImpl: upstream("{}") })],
+    ["403 without the header", 403, () => proxyRequest(proxied("x", { noHeader: true }), ["x"], { token: TOKEN, backendBaseUrl: BACKEND, fetchImpl: upstream("{}") })],
+    ["405 for OPTIONS", 405, () => proxyRequest(proxied("x", { method: "OPTIONS" }), ["x"], { token: TOKEN, backendBaseUrl: BACKEND, fetchImpl: upstream("{}") })],
+    ["413 for a large body", 413, () => proxyRequest(proxied("x", { method: "POST", body: "xx" }), ["x"], { token: TOKEN, backendBaseUrl: BACKEND, fetchImpl: upstream("{}"), maxBodyBytes: 1 })],
+    ["502 for an unreachable backend", 502, () => proxyRequest(proxied("x"), ["x"], { token: TOKEN, backendBaseUrl: BACKEND, fetchImpl: vi.fn(async () => { throw new TypeError("fetch failed"); }) })],
+    ["502 for an unusable base URL", 502, () => proxyRequest(proxied("x"), ["x"], { token: TOKEN, backendBaseUrl: "not a url", fetchImpl: upstream("{}") })],
+  ])("answers %s with cache-control no-store", async (_name, status, run) => {
+    const response = await run();
+    expect(response.status).toBe(status);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it.each([["not a url"], ["file:///etc/passwd"], ["javascript:alert(1)"]])(
+    "answers 502 with a fixed message, without a backend call, for the base URL %s",
+    async (backendBaseUrl) => {
+      const fetchImpl = upstream("{}");
+      const response = await proxyRequest(proxied("teams"), ["teams"], { token: TOKEN, backendBaseUrl, fetchImpl });
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({ error: "Backend not configured" });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    },
+  );
+
+  it("answers 400 for a segment encodeURIComponent cannot encode (a lone surrogate)", async () => {
+    const fetchImpl = upstream("{}");
+    const response = await proxyRequest(proxied("x"), ["logs", "\uD800"], { token: TOKEN, backendBaseUrl: BACKEND, fetchImpl });
+    expect(response.status).toBe(400);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("aborts the backend request when the browser's request is aborted", async () => {
+    const controller = new AbortController();
+    const fetchImpl = upstream("{}", { status: 200 });
+    await proxyRequest(proxied("teams", { signal: controller.signal }), ["teams"], {
+      token: TOKEN,
+      backendBaseUrl: BACKEND,
+      fetchImpl,
+    });
+    const signal = calledInit(fetchImpl).signal;
+    expect(signal?.aborted).toBe(false);
+    controller.abort();
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it.each([[205], [304]])("drops a body the backend sent with a %s", async (status) => {
+    const stray = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("stray"));
+        controller.close();
+      },
+    });
+    const fetchImpl = vi.fn(async () => ({ status, statusText: "", headers: new Headers(), body: stray }) as unknown as Response);
+    const response = await proxyRequest(proxied("teams"), ["teams"], { token: TOKEN, backendBaseUrl: BACKEND, fetchImpl });
+
+    expect(response.status).toBe(status);
+    expect(response.body).toBeNull();
+  });
+
+  it("cancels the browser's body stream once it grows past the limit", async () => {
+    const cancel = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(10));
+      },
+      cancel,
+    });
+    const request = proxied("sources", { method: "POST", body: stream, duplex: "half" } as RequestInit);
+    const response = await proxyRequest(request, ["sources"], {
+      token: TOKEN,
+      backendBaseUrl: BACKEND,
+      fetchImpl: upstream("{}"),
+      maxBodyBytes: 15,
+    });
+
+    expect(response.status).toBe(413);
+    expect(cancel).toHaveBeenCalledTimes(1);
   });
 });

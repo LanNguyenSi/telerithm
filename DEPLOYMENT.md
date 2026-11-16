@@ -106,7 +106,7 @@ Compose project names are fixed in the files: `docker-compose.traefik.yml` sets 
 
 ## Architecture
 
-Traefik routes requests under `/api` to the backend and everything else to the frontend. Backend and frontend join both the external `traefik` network and `telerithm-internal`; the datastores join only `telerithm-internal`, and only the backend uses them. The diagram shows these connections.
+Traefik routes requests under `/api` to the backend and everything else to the frontend. The browser reaches the backend in two ways: the live tail opens its event stream on `/api/v1/stream/logs` directly, and every other API call goes to the frontend's `/bff` proxy (outside `/api` on purpose, so Traefik sends it to the frontend), which forwards it to `INTERNAL_API_BASE_URL` with the session token from the httpOnly cookie. Backend and frontend join both the external `traefik` network and `telerithm-internal`; the datastores join only `telerithm-internal`, and only the backend uses them. The diagram shows these connections.
 
 ```mermaid
 flowchart TD
@@ -118,9 +118,9 @@ flowchart TD
     CH[("clickhouse:8123")]
     RD[("redis:6379")]
   end
-  TRAEFIK -->|"yourdomain/api"| BE
-  TRAEFIK -->|"yourdomain/"| FE
-  FE -->|"server side: INTERNAL_API_BASE_URL<br/>http://backend:4000/api/v1"| BE
+  TRAEFIK -->|"yourdomain/api<br/>(browser: live tail stream only)"| BE
+  TRAEFIK -->|"yourdomain/ (pages and the /bff API proxy)"| FE
+  FE -->|"server side and /bff: INTERNAL_API_BASE_URL<br/>http://backend:4000/api/v1"| BE
   BE --> PG
   BE --> CH
   BE --> RD
@@ -135,6 +135,8 @@ flowchart TD
 ### Security model
 
 - **Credentials.** Users authenticate with opaque session tokens (`sess_...`), stored in Postgres and valid for 7 days; the frontend keeps the token in an httpOnly cookie. Each log source has one API key, which is accepted only for ingest into that source (`X-API-Key` on `/api/v1/ingest/:sourceId`).
+- **Browser API proxy.** Client components never receive the session token. They call `/bff/<api path>` on the frontend, and that route handler (`frontend/src/app/bff/[...path]/route.ts`) reads the httpOnly cookie, attaches `Authorization: Bearer` and forwards to `INTERNAL_API_BASE_URL`. It answers 401 without the cookie and 403 without the `x-telerithm-proxy: 1` header (a cross-site page cannot send that header, since the proxy answers the CORS preflight with 405), and refuses path segments that could leave the API path and bodies over 1 MiB. The one exception is the logs page: its live tail opens an `EventSource` on the backend with the token in the URL (`?token=`), so that page still carries the token in its HTML.
+- **Client address behind the proxy.** The proxy forwards one `X-Forwarded-For` value to the backend, the rightmost entry of the header it received (the one Traefik appended), and nothing when the header is missing or that entry is not an IP address; with `TRUST_PROXY=1` the backend keys its rate limits on it. This assumes the frontend is reachable only through Traefik: a caller that reaches port 3000 directly can set the header and so choose its own rate-limit key.
 - **Roles.** The instance role (`USER` or `ADMIN`) gates the `/api/v1/admin/*` routes; only the `ADMIN_EMAIL` account gets `ADMIN` at signup, and an existing admin can grant it through `PUT /api/v1/admin/users/:id`. Team roles (`OWNER`, `ADMIN`, `MEMBER`, `VIEWER`) gate team-scoped routes and do not grant access to `/admin/*`.
 - **Stored secrets.** Source API keys are stored in clear text in Postgres, so treat database backups as secrets.
 - **CORS.** `CORS_ORIGINS` applies only when `NODE_ENV` is not `development`; in development the backend accepts any origin with credentials.
