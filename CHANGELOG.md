@@ -15,6 +15,10 @@ App-suite releases are tagged on the parent repo as `vX.Y.Z`.
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Set `METRICS_TOKEN` in `.env.production` before deploying.** `GET /metrics` now answers `404` until `METRICS_TOKEN` is set (the endpoint was public before), and the `GET /api/v1/health` body loses its per-dependency `checks` object for callers without the token (the status code and top-level `status` are unchanged, so the healthchecks keep working). See the Security entry below for the full change and `DEPLOYMENT.md`, "Prometheus metrics", for the scrape setup.
+
 ### Security
 
 - **`GET /metrics` now needs a bearer token, and the unauthenticated `GET /api/v1/health` body no longer names the dependencies.** New optional backend variable `METRICS_TOKEN` (`backend/src/config/index.ts`, at least 32 characters when set; an empty value counts as unset; wired through the backend `environment:` of both prod composes as `${METRICS_TOKEN:-}` and into `.env.production.example` and `backend/.env.example`): `/metrics` answers `404` when the variable is unset or empty (the endpoint is disabled, which is the new default) and `401` to a wrong or missing `Authorization: Bearer <METRICS_TOKEN>`; the Prometheus text is served only with the token, matched in constant time (SHA-256 digests, `crypto.timingSafeEqual`), and the token travels in the header only, never in the access-logged URL. `GET /api/v1/health` keeps its path, its 200/503 codes and its top-level `status` field for every caller, so the compose healthchecks, the relay deploy check and `scripts/clickhouse-config-guard.sh` keep working unchanged; the per-dependency `checks` object (which of Postgres, ClickHouse, Redis is down) is now returned only to a caller that presents the same bearer token. Upgrade note: set `METRICS_TOKEN` in `.env.production` before deploying and before scraping, and point the scrape's `authorization` block at the same value (`DEPLOYMENT.md`, "Prometheus metrics"); without it the scrape now answers 404. Nothing that reads only the health status code needs the token.

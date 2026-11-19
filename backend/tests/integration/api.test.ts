@@ -3064,6 +3064,25 @@ describe("API Routes", () => {
       expect(res.text).toContain("telerithm_http_requests_total");
       expect(res.text).toContain("telerithm_http_request_duration_ms");
     });
+
+    // A credential sent as a query parameter must never reach the access log,
+    // under any name: the redaction covers every name ending in "token"
+    // (access_token here) and authorization=, not just the bare token=.
+    it("redacts access_token= and authorization= from the access log line of GET /metrics", async () => {
+      mockedConfig.metricsToken = METRICS_TEST_TOKEN;
+      childLog.info.mockClear();
+      await app.get("/metrics?access_token=query-secret-1&authorization=Bearer%20query-secret-2");
+
+      await vi.waitFor(() => {
+        const lines = childLog.info.mock.calls
+          .map((call) => call[1] as string)
+          .filter((line) => typeof line === "string" && line.includes("/metrics"));
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toContain("access_token=REDACTED");
+        expect(lines[0]).toContain("authorization=REDACTED");
+        expect(lines[0]).not.toContain("query-secret");
+      });
+    });
   });
 
   describe("GET /docs", () => {

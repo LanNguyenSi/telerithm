@@ -13,11 +13,14 @@ import { openApiSpec } from "./api/openapi.js";
 const log = createChildLogger("http");
 
 // /stream/logs takes a one-time `?ticket=` because EventSource can't set
-// Authorization headers. A ticket is spent on first use, but strip it (and a
-// `token=` some older client may still send, which the stream no longer
-// accepts) before logging so neither lands in the http access log.
+// Authorization headers. A ticket is spent on first use, but strip it before
+// logging so it does not land in the http access log, and as a safety net
+// strip every other query parameter whose name ends in "token" (token= from
+// older clients, access_token= from OAuth-style ones) or is named
+// "authorization": a credential that travels in the URL must never be
+// logged, whatever it is called.
 function redactTokenQuery(url: string): string {
-  return url.replace(/([?&])(token|ticket)=[^&#]*/gi, "$1$2=REDACTED");
+  return url.replace(/([?&])([\w-]*token|ticket|authorization)=[^&#]*/gi, "$1$2=REDACTED");
 }
 
 export function createApp() {
@@ -86,7 +89,7 @@ export function createApp() {
   });
 
   // 5.1 — Prometheus metrics endpoint
-  // Now behind the METRICS_TOKEN bearer token (DEPLOYMENT.md, "Prometheus
+  // Behind the METRICS_TOKEN bearer token (DEPLOYMENT.md, "Prometheus
   // metrics"): 404 when METRICS_TOKEN is unset (endpoint disabled), 401 on a
   // wrong or missing token, the Prometheus text only with the token. The token
   // travels in the Authorization header, never in the URL, so the access log
