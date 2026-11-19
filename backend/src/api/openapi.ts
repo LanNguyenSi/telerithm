@@ -19,7 +19,8 @@ export const openApiSpec = {
             content: { "application/json": { schema: { $ref: "#/components/schemas/HealthResponse" } } },
           },
           503: {
-            description: "One or more services degraded (`checks` only with a valid METRICS_TOKEN bearer token)",
+            description:
+              "One or more services degraded (`checks` only with a valid METRICS_TOKEN bearer token)",
             content: { "application/json": { schema: { $ref: "#/components/schemas/HealthResponse" } } },
           },
         },
