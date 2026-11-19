@@ -126,6 +126,10 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Static token for GET /metrics and the per-dependency checks of
+      # GET /api/v1/health (Authorization: Bearer). Empty (the default) keeps
+      # /metrics disabled (404) and health answering { status } only.
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy

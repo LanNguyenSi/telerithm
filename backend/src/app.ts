@@ -3,7 +3,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { randomUUID } from "node:crypto";
-import { apiRouter } from "./api/rest/router.js";
+import { apiRouter, hasValidMetricsToken } from "./api/rest/router.js";
 import { config } from "./config/index.js";
 import { createChildLogger } from "./logger.js";
 import { httpRequestsTotal, httpRequestDuration, registry } from "./metrics/index.js";
@@ -86,7 +86,20 @@ export function createApp() {
   });
 
   // 5.1 — Prometheus metrics endpoint
-  app.get("/metrics", async (_req, res) => {
+  // Now behind the METRICS_TOKEN bearer token (DEPLOYMENT.md, "Prometheus
+  // metrics"): 404 when METRICS_TOKEN is unset (endpoint disabled), 401 on a
+  // wrong or missing token, the Prometheus text only with the token. The token
+  // travels in the Authorization header, never in the URL, so the access log
+  // (URL only) cannot record it.
+  app.get("/metrics", async (req, res) => {
+    if (!config.metricsToken) {
+      res.status(404).end();
+      return;
+    }
+    if (!hasValidMetricsToken(req.header("authorization"))) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
     res.set("Content-Type", registry.contentType);
     res.end(await registry.metrics());
   });

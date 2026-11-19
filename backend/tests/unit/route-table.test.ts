@@ -66,6 +66,7 @@ const mockConfig = vi.hoisted(() => ({
   maxSyncRuntimeMs: 1500,
   notificationTestRateLimitWindowMs: 200,
   notificationTestRateLimitMax: 3,
+  metricsToken: undefined as string | undefined,
   trustProxy: undefined as number | undefined,
 }));
 vi.mock("../../src/config/index.js", () => ({ config: mockConfig }));
@@ -375,7 +376,11 @@ describe("the runtime route table of createApp()", () => {
 // written by hand: a registration gated on any other config key or value
 // (registrationMode, the OpenAI settings, a new feature flag, a trustProxy
 // value other than set/unset) is not built here. Add the key to the matrix
-// when createApp() starts branching on it.
+// when createApp() starts branching on it. metricsToken is not such a key:
+// the /metrics and /health handlers read it per request (404/401/200 and the
+// checks detail), it registers no layer, so the layer table cannot change
+// with it; the behaviour itself is pinned by the GET /metrics and health
+// cases in tests/integration/api.test.ts and tests/unit/metrics-auth.test.ts.
 interface ConfigVariant {
   nodeEnv: "development" | "production" | "test";
   multiTenant: boolean;

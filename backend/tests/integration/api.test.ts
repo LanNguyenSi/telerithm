@@ -47,6 +47,9 @@ vi.mock("../../src/config/index.js", () => ({
     // make 2 calls total with the "sess_admin" token, under this limit of 3.
     notificationTestRateLimitWindowMs: 200,
     notificationTestRateLimitMax: 3,
+    // GET /metrics and the /health checks detail gate on this; unset means
+    // "endpoint disabled / status-only body". Tests set it per case.
+    metricsToken: undefined as string | undefined,
   },
 }));
 
@@ -195,6 +198,9 @@ let app: supertest.Agent;
 let server: Server;
 
 const mockedConfig = config;
+// A METRICS_TOKEN for the token-gated tests (GET /metrics, the /health checks
+// detail). The real config schema demands at least 32 characters when set.
+const METRICS_TEST_TOKEN = "test-metrics-token-0123456789abcdef";
 const mockedPrisma = prisma as typeof prisma & {
   $queryRaw: ReturnType<typeof vi.fn>;
   user: {
@@ -384,6 +390,7 @@ beforeEach(() => {
   mockedConfig.maxPageSize = 500;
   mockedConfig.maxLookbackMs = 7 * 24 * 60 * 60 * 1000;
   mockedConfig.maxSyncRuntimeMs = 1500;
+  mockedConfig.metricsToken = undefined;
 
   mockedClickhouse.ping.mockResolvedValue({ success: true });
 
@@ -456,13 +463,44 @@ beforeEach(() => {
 
 describe("API Routes", () => {
   describe("GET /api/v1/health", () => {
-    it("returns health status", async () => {
+    it("answers 200 with the top-level status only, unauthenticated", async () => {
       const res = await app.get("/api/v1/health");
       expect(res.status).toBe(200);
+      // The body must not name the individual dependencies without a token.
+      expect(res.body).toEqual({ status: "ok" });
+    });
+
+    it("includes the per-dependency checks with a valid METRICS_TOKEN bearer token", async () => {
+      mockedConfig.metricsToken = METRICS_TEST_TOKEN;
+      const res = await app.get("/api/v1/health").set("Authorization", `Bearer ${METRICS_TEST_TOKEN}`);
+      expect(res.status).toBe(200);
       expect(res.body.status).toBe("ok");
-      expect(res.body.checks).toHaveProperty("postgres");
-      expect(res.body.checks).toHaveProperty("clickhouse");
-      expect(res.body.checks).toHaveProperty("redis");
+      expect(res.body.checks).toEqual({ postgres: "ok", clickhouse: "ok", redis: "ok" });
+    });
+
+    it("answers 503 with the degraded status only, unauthenticated, when a dependency is down", async () => {
+      mockedPrisma.$queryRaw.mockRejectedValueOnce(new Error("postgres unavailable"));
+      const res = await app.get("/api/v1/health");
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({ status: "degraded" });
+    });
+
+    it("names the failed dependency in checks with a valid METRICS_TOKEN when degraded", async () => {
+      mockedConfig.metricsToken = METRICS_TEST_TOKEN;
+      mockedPrisma.$queryRaw.mockRejectedValueOnce(new Error("postgres unavailable"));
+      const res = await app
+        .get("/api/v1/health")
+        .set("Authorization", `Bearer ${METRICS_TEST_TOKEN}`);
+      expect(res.status).toBe(503);
+      expect(res.body.status).toBe("degraded");
+      expect(res.body.checks).toEqual({ postgres: "error", clickhouse: "ok", redis: "ok" });
+    });
+
+    it("answers 200 with no checks for a wrong bearer token (same status code, no detail)", async () => {
+      mockedConfig.metricsToken = METRICS_TEST_TOKEN;
+      const res = await app.get("/api/v1/health").set("Authorization", "Bearer wrong-token-value");
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ status: "ok" });
     });
   });
 
@@ -2993,8 +3031,35 @@ describe("API Routes", () => {
   });
 
   describe("GET /metrics", () => {
-    it("returns Prometheus metrics", async () => {
+    // METRICS_TOKEN gates the endpoint: unset -> 404 (disabled), wrong or
+    // missing token -> 401, the Prometheus text only with the token. None of
+    // the refused answers may carry metric content.
+    it("answers 404 with no metric content when METRICS_TOKEN is unset", async () => {
+      // mockedConfig.metricsToken is undefined here (reset in beforeEach).
+      const res = await app.get("/metrics").set("Authorization", `Bearer ${METRICS_TEST_TOKEN}`);
+      expect(res.status).toBe(404);
+      expect(res.text).not.toContain("telerithm_http_requests_total");
+    });
+
+    it("answers 401 with no metric content when METRICS_TOKEN is set and no header is sent", async () => {
+      mockedConfig.metricsToken = METRICS_TEST_TOKEN;
       const res = await app.get("/metrics");
+      expect(res.status).toBe(401);
+      expect(res.text).not.toContain("telerithm_http_requests_total");
+    });
+
+    it("answers 401 with no metric content for a wrong token", async () => {
+      mockedConfig.metricsToken = METRICS_TEST_TOKEN;
+      const res = await app
+        .get("/metrics")
+        .set("Authorization", "Bearer wrong-token-0123456789abcdef-000000");
+      expect(res.status).toBe(401);
+      expect(res.text).not.toContain("telerithm_http_requests_total");
+    });
+
+    it("returns the Prometheus text with the right token", async () => {
+      mockedConfig.metricsToken = METRICS_TEST_TOKEN;
+      const res = await app.get("/metrics").set("Authorization", `Bearer ${METRICS_TEST_TOKEN}`);
       expect(res.status).toBe(200);
       expect(res.text).toContain("telerithm_http_requests_total");
       expect(res.text).toContain("telerithm_http_request_duration_ms");

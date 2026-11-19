@@ -200,6 +200,16 @@ const configSchema = z.object({
   // (currently POST /subscriptions/:id/test). Default: 5 requests / 5 minutes.
   notificationTestRateLimitWindowMs: coercedIntSchema.positive().default(5 * 60_000),
   notificationTestRateLimitMax: coercedIntSchema.positive().default(5),
+  // Static token for GET /metrics and the per-dependency detail of
+  // GET /api/v1/health (Authorization: Bearer). Unset or empty: /metrics
+  // answers 404 (disabled) and health answers without the checks object.
+  // At least 32 characters when set, so a scrape token is not brute-forceable.
+  metricsToken: z
+    .string()
+    .min(32)
+    .optional()
+    .or(z.literal(""))
+    .transform((v) => (v === "" ? undefined : v)),
   // Opt-in proxy trust for the IP-keyed rate limiters; see parseTrustProxy.
   trustProxy: z
     .string()
@@ -238,6 +248,7 @@ function loadConfig(): Config {
     maxSyncRuntimeMs: process.env.MAX_SYNC_RUNTIME_MS,
     notificationTestRateLimitWindowMs: process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS,
     notificationTestRateLimitMax: process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX,
+    metricsToken: process.env.METRICS_TOKEN,
     trustProxy: process.env.TRUST_PROXY,
   });
 
