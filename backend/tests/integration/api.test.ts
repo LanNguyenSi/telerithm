@@ -3068,10 +3068,10 @@ describe("API Routes", () => {
     // A credential sent as a query parameter must never reach the access log,
     // under any name: the redaction covers every name ending in "token"
     // (access_token here) and authorization=, not just the bare token=.
-    it("redacts access_token= and authorization= from the access log line of GET /metrics", async () => {
+    it("redacts access_token=, authorization= and a mixed-case X-Auth-Token= from the access log line of GET /metrics", async () => {
       mockedConfig.metricsToken = METRICS_TEST_TOKEN;
       childLog.info.mockClear();
-      await app.get("/metrics?access_token=query-secret-1&authorization=Bearer%20query-secret-2");
+      await app.get("/metrics?access_token=query-secret-1&authorization=Bearer%20query-secret-2&X-Auth-Token=query-secret-3");
 
       await vi.waitFor(() => {
         const lines = childLog.info.mock.calls
@@ -3080,6 +3080,7 @@ describe("API Routes", () => {
         expect(lines).toHaveLength(1);
         expect(lines[0]).toContain("access_token=REDACTED");
         expect(lines[0]).toContain("authorization=REDACTED");
+        expect(lines[0]).toContain("X-Auth-Token=REDACTED"); // the match ignores case
         expect(lines[0]).not.toContain("query-secret");
       });
     });
