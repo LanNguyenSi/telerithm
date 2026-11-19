@@ -17,7 +17,7 @@ Telerithm turns plain-language questions into structured queries over your logs.
 - Alert incidents (acknowledge, resolve, reopen, timeline), alert rules (create, edit, enable or disable, delete, mute and unmute), log source creation in Settings, maintenance windows, and notification channels for Webhook, Slack and Microsoft Teams
 - Error grouping with fingerprinting and an assignment workflow
 - Team management with RBAC (Owner, Admin, Member, Viewer), invites, and an admin API; single-tenant by default, optional multi-tenant via config flag
-- Prometheus metrics endpoint (`/metrics`) covering HTTP, ingest, alert, SSE, and NLQ stats
+- Prometheus metrics endpoint (`/metrics`) covering HTTP, ingest, alert, SSE, and NLQ stats, behind the `METRICS_TOKEN` bearer token (unset: endpoint disabled)
 
 **Planned:** email delivery (new Email subscriptions are rejected until a mail transport exists), escalation policies (schema exists, evaluation not yet wired), AI root-cause analysis, anomaly detection, custom dashboards, SSO/OIDC, per-source retention (logs currently expire after a fixed 30 days), `telerithm` CLI.
 

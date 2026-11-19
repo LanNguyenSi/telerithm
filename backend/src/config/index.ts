@@ -200,6 +200,23 @@ const configSchema = z.object({
   // (currently POST /subscriptions/:id/test). Default: 5 requests / 5 minutes.
   notificationTestRateLimitWindowMs: coercedIntSchema.positive().default(5 * 60_000),
   notificationTestRateLimitMax: coercedIntSchema.positive().default(5),
+  // Static token for GET /metrics and the per-dependency detail of
+  // GET /api/v1/health (Authorization: Bearer). Unset or empty: /metrics
+  // answers 404 (disabled) and health answers without the checks object; an
+  // empty string must load cleanly because both prod composes pass
+  // ${METRICS_TOKEN:-}. Trimmed first: Node trims header values, so a token
+  // padded with white space could never match a presented bearer value; a
+  // value that trims to empty counts as unset, anything shorter than 32
+  // characters after trimming is refused, so a scrape token is not
+  // brute-forceable.
+  metricsToken: z
+    .string()
+    .trim()
+    .transform((v) => (v === "" ? undefined : v))
+    .optional()
+    .refine((v) => v === undefined || v.length >= 32, {
+      message: "METRICS_TOKEN must be at least 32 characters after trimming white space",
+    }),
   // Opt-in proxy trust for the IP-keyed rate limiters; see parseTrustProxy.
   trustProxy: z
     .string()
@@ -238,6 +255,7 @@ function loadConfig(): Config {
     maxSyncRuntimeMs: process.env.MAX_SYNC_RUNTIME_MS,
     notificationTestRateLimitWindowMs: process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS,
     notificationTestRateLimitMax: process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX,
+    metricsToken: process.env.METRICS_TOKEN,
     trustProxy: process.env.TRUST_PROXY,
   });
 

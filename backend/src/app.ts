@@ -3,7 +3,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { randomUUID } from "node:crypto";
-import { apiRouter } from "./api/rest/router.js";
+import { apiRouter, hasValidMetricsToken } from "./api/rest/router.js";
 import { config } from "./config/index.js";
 import { createChildLogger } from "./logger.js";
 import { httpRequestsTotal, httpRequestDuration, registry } from "./metrics/index.js";
@@ -13,11 +13,14 @@ import { openApiSpec } from "./api/openapi.js";
 const log = createChildLogger("http");
 
 // /stream/logs takes a one-time `?ticket=` because EventSource can't set
-// Authorization headers. A ticket is spent on first use, but strip it (and a
-// `token=` some older client may still send, which the stream no longer
-// accepts) before logging so neither lands in the http access log.
+// Authorization headers. A ticket is spent on first use, but strip it before
+// logging so it does not land in the http access log, and as a safety net
+// strip every other query parameter whose name ends in "token" (token= from
+// older clients, access_token= from OAuth-style ones) or is named
+// "authorization": a credential that travels in the URL must never be
+// logged, whatever it is called.
 function redactTokenQuery(url: string): string {
-  return url.replace(/([?&])(token|ticket)=[^&#]*/gi, "$1$2=REDACTED");
+  return url.replace(/([?&])([\w-]*token|ticket|authorization)=[^&#]*/gi, "$1$2=REDACTED");
 }
 
 export function createApp() {
@@ -86,7 +89,20 @@ export function createApp() {
   });
 
   // 5.1 — Prometheus metrics endpoint
-  app.get("/metrics", async (_req, res) => {
+  // Behind the METRICS_TOKEN bearer token (DEPLOYMENT.md, "Prometheus
+  // metrics"): 404 when METRICS_TOKEN is unset (endpoint disabled), 401 on a
+  // wrong or missing token, the Prometheus text only with the token. The token
+  // travels in the Authorization header, never in the URL, so the access log
+  // (URL only) cannot record it.
+  app.get("/metrics", async (req, res) => {
+    if (!config.metricsToken) {
+      res.status(404).end();
+      return;
+    }
+    if (!hasValidMetricsToken(req.header("authorization"))) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
     res.set("Content-Type", registry.contentType);
     res.end(await registry.metrics());
   });

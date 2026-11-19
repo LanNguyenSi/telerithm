@@ -10,13 +10,19 @@ export const openApiSpec = {
     "/health": {
       get: {
         summary: "Health check",
+        description:
+          "Unauthenticated: answers 200 (all dependencies ok) or 503 (degraded) with `{ status }` only; the body names no dependency. The per-dependency `checks` object is included only when the request carries `Authorization: Bearer <METRICS_TOKEN>`, the same static token that guards the Prometheus endpoint GET /metrics at the app root (401 with a wrong or missing token, 404 when METRICS_TOKEN is unset).",
         tags: ["System"],
         responses: {
           200: {
-            description: "All services healthy",
+            description: "All services healthy (`checks` only with a valid METRICS_TOKEN bearer token)",
             content: { "application/json": { schema: { $ref: "#/components/schemas/HealthResponse" } } },
           },
-          503: { description: "One or more services degraded" },
+          503: {
+            description:
+              "One or more services degraded (`checks` only with a valid METRICS_TOKEN bearer token)",
+            content: { "application/json": { schema: { $ref: "#/components/schemas/HealthResponse" } } },
+          },
         },
       },
     },
@@ -554,10 +560,12 @@ export const openApiSpec = {
     schemas: {
       HealthResponse: {
         type: "object",
+        required: ["status"],
         properties: {
           status: { type: "string", enum: ["ok", "degraded"] },
           checks: {
             type: "object",
+            description: "Present only when the request carries a valid METRICS_TOKEN bearer token",
             properties: {
               postgres: { type: "string" },
               clickhouse: { type: "string" },

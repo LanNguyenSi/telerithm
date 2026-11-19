@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import express, { type Request, type Response, type NextFunction, Router } from "express";
 import rateLimit, { ipKeyGenerator, type RateLimitInfo } from "express-rate-limit";
 import { IngestionService, IngestBatchTooLargeError } from "../../ingestion/ingestion-service.js";
@@ -255,9 +255,28 @@ async function authenticateApiKey(req: Request, res: Response, next: NextFunctio
 
 // --- Routes ---
 
+// SHA-256 digests are fixed-length, so timingSafeEqual cannot early-return on a
+// length difference and the comparison time does not leak the token length.
+function sha256Digest(value: string): Buffer {
+  return createHash("sha256").update(value).digest();
+}
+
+// True when the request carries `Authorization: Bearer <METRICS_TOKEN>`,
+// compared in constant time. False when METRICS_TOKEN is unset (no token to
+// match). Shared by GET /health (the per-dependency detail) and GET /metrics
+// (app.ts); the token is read from the header, so it never enters the URL or
+// the access log.
+export function hasValidMetricsToken(authorization: string | undefined): boolean {
+  const expected = config.metricsToken;
+  if (!expected) return false;
+  const provided = /^Bearer (.+)$/i.exec(authorization ?? "")?.[1];
+  if (!provided) return false;
+  return timingSafeEqual(sha256Digest(provided), sha256Digest(expected));
+}
+
 apiRouter.get(
   "/health",
-  asyncHandler(async (_req, res) => {
+  asyncHandler(async (req, res) => {
     const checks: Record<string, "ok" | "error"> = {
       postgres: "error",
       clickhouse: "error",
@@ -284,7 +303,19 @@ apiRouter.get(
     }
 
     const healthy = Object.values(checks).every((v) => v === "ok");
-    res.status(healthy ? 200 : 503).json({ status: healthy ? "ok" : "degraded", checks });
+    // The compose healthchecks, the relay deploy check and
+    // scripts/clickhouse-config-guard.sh use only the status code, and the
+    // docs tell operators to read `status`: those stay unauthenticated and
+    // name no dependency. The per-dependency checks object (which dependency
+    // is down) is for a caller holding METRICS_TOKEN, the same Bearer token
+    // as GET /metrics.
+    const body: { status: "ok" | "degraded"; checks?: typeof checks } = {
+      status: healthy ? "ok" : "degraded",
+    };
+    if (hasValidMetricsToken(req.header("authorization"))) {
+      body.checks = checks;
+    }
+    res.status(healthy ? 200 : 503).json(body);
   }),
 );
 
