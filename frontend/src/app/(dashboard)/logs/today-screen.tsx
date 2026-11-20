@@ -82,8 +82,8 @@ export function TodayScreen() {
             <p className="mt-0.5 text-xs text-muted">Last hour, auto-refreshing every 30s</p>
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs text-muted">Level</label>
-            <Select value={level} onChange={setLevel} options={[...LEVEL_OPTIONS]} className="w-32" />
+            <label htmlFor="today-level" className="text-xs text-muted">Level</label>
+            <Select id="today-level" value={level} onChange={setLevel} options={[...LEVEL_OPTIONS]} className="w-32" />
           </div>
         </div>
       </Card>

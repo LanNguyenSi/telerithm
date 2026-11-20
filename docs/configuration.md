@@ -24,6 +24,7 @@ All configuration is environment-driven. The backend validates its env vars on s
 | `MAX_LOOKBACK_MS`    | `604800000` (7 days)          | Hard cap on query time range                                                        |
 | `MAX_PAGE_SIZE`      | `500`                         | Max page size for log search. Accepted range 50 to 500: the request schema caps `limit` at 500, so this setting can only lower the maximum. A value above 500 is clamped to 500 and logged as one startup warning; a non-numeric value or one below 50 fails startup |
 | `MAX_SYNC_RUNTIME_MS`| `1500`                        | Max wall time for facet, histogram and pattern requests before they return 202 and continue as a job |
+| `MAX_STREAMS_PER_USER` | `5`                          | Max open live tail streams (`GET /stream/logs`) per user, counted in each backend process separately: with several backend replicas the effective cap is this value times the replicas. The next stream answers `429`. A value below 1 or a non-numeric value fails startup, an empty value included |
 | `SEED_DEMO_DATA`     | unset                         | Set to `true` to allow demo seeding when `NODE_ENV=production` (otherwise seeding is skipped in production) |
 | `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS` | `300000` (5 minutes) | Rate-limit window for `POST /subscriptions/:id/test`, see [api.md](api.md) |
 | `NOTIFICATION_TEST_RATE_LIMIT_MAX`       | `5`                  | Max `POST /subscriptions/:id/test` requests per window, per caller               |

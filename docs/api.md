@@ -31,7 +31,7 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `POST` | `/logs/views/:id/duplicate`       | Duplicate a saved view; a teammate's private view gets the same 404 as an unknown id |
 | `POST` | `/query/natural`                  | Translate NL to query plan        |
 | `POST` | `/stream/ticket`                  | One-time ticket for `/stream/logs`; body `{ "teamId" }`, any team role may ask, answer `201` `{ "ticket", "expiresInSeconds": 60 }` with `Cache-Control: no-store` (see Live tail below) |
-| `GET`  | `/stream/logs`                    | SSE live tail; authenticated by the `Authorization` header or a one-time `?ticket=`; closed by the server within 15 seconds once the user is no longer `ACTIVE` or no longer a member of the team |
+| `GET`  | `/stream/logs`                    | SSE live tail; authenticated by the `Authorization` header or a one-time `?ticket=`; closed by the server within 15 seconds once the user is no longer `ACTIVE` or no longer a member of the team; at most `MAX_STREAMS_PER_USER` (default 5) open streams per user and backend process, the next one answers `429` (see Live tail below) |
 | `GET`, `POST` | `/alerts/rules`            | Alert rules (list, create)        |
 | `PUT`, `DELETE` | `/alerts/rules/:id`      | Update (partial), delete an alert rule |
 | `POST` | `/alerts/rules/:id/mute`, `/alerts/rules/:id/unmute` | Mute and unmute a rule |
@@ -96,6 +96,10 @@ The by-id read routes follow the same rule: `GET /issues/:id`, `GET /alerts/inci
 A ticket is bound to the session it was issued for, that session's user and one team; it opens that team's stream and no other. The server stores only the SHA-256 hash of the ticket, in Redis with a 60-second expiry (so every backend instance accepts a ticket another one issued; if Redis evicts or loses the entry, the stream answers `401` and the client asks again). The heartbeat re-check applies to a ticket-opened stream as well: it ends at the first heartbeat after the session is deleted, the user stops being `ACTIVE` or the user leaves the team.
 
 Clients that can set headers (curl, a server-side consumer) keep sending `Authorization: Bearer <token>` to `/stream/logs`; when both a header and a ticket are present, the header decides and the ticket is not consumed. The earlier `?token=<session token>` query parameter is no longer accepted: no client in this repository used it (the frontend was the only one), and keeping it would keep the token in URLs. Both `ticket` and `token` query values are replaced by `REDACTED` in the backend access log.
+
+### Live tail stream cap
+
+One user may hold at most `MAX_STREAMS_PER_USER` open `/stream/logs` streams at once (default 5; see [configuration.md](configuration.md)), whether they were opened with the header or with a ticket and whichever team they follow. The next request answers `429 {"error":"Too many open live tail streams"}` as JSON, with no stream headers, and opens nothing. The check comes after the credentials and the team membership, so a request that answers `401` or `403` does not count. A stream gives its slot back when the client disconnects, when the connection fails and when the server ends it at a failed heartbeat check; a client that leaves while the server is still checking its credentials never takes one. The counter is per backend process and in memory: with several backend replicas the effective cap per user is `MAX_STREAMS_PER_USER` times the number of replicas, and a restart resets it. The frontend does not show the `429` separately: like any stream error it closes the source and reconnects with a backoff of 1 to 30 seconds.
 
 ### Subscription channels
 
