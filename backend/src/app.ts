@@ -23,6 +23,25 @@ function redactTokenQuery(url: string): string {
   return url.replace(/([?&])([\w-]*token|ticket|authorization)=[^&#]*/gi, "$1$2=REDACTED");
 }
 
+// redactTokenQuery only sees query parameters, but POST /invites/:token/accept
+// carries its invite token in the PATH, where the query rule cannot reach it.
+// Redact that one segment before logging; the id in DELETE /invites/:id is not
+// a credential, so only a path ending in "/accept" after "/invites/<seg>" is
+// touched. Any NEW route that takes a credential in its path must be added to
+// this rule (or move the credential to a header or the body).
+function redactTokenPath(url: string): string {
+  return url.replace(/(\/invites\/)[^/?#]+(\/accept)(?![^/?#])/gi, "$1REDACTED$2");
+}
+
+// Route label for requests that match no route: every 404, the /docs static
+// handler and CORS preflights answered by cors all have req.route undefined
+// (the general limiter answers before this middleware, so its 429s are not
+// counted at all). Labelling those with the raw path would let any probe
+// path mint its own time series (unbounded cardinality), so they all share
+// this one constant. Matched routes keep the router-relative pattern
+// (req.route.path) for series continuity with existing dashboards.
+export const UNMATCHED_ROUTE = "_unmatched";
+
 export function createApp() {
   const app = express();
 
@@ -70,8 +89,8 @@ export function createApp() {
 
     res.on("finish", () => {
       const duration = Math.round(performance.now() - start);
-      const route = req.route?.path ?? req.path;
-      const safeUrl = redactTokenQuery(req.originalUrl);
+      const route = req.route?.path ?? UNMATCHED_ROUTE;
+      const safeUrl = redactTokenPath(redactTokenQuery(req.originalUrl));
 
       log.info(
         { requestId, method: req.method, url: safeUrl, status: res.statusCode, durationMs: duration },
