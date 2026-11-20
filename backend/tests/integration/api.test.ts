@@ -193,6 +193,7 @@ import { config } from "../../src/config/index.js";
 import { clickhouse } from "../../src/repositories/clickhouse.js";
 import { prisma } from "../../src/repositories/prisma.js";
 import { redis } from "../../src/repositories/redis.js";
+import { QueryService } from "../../src/services/query/query-service.js";
 
 let app: supertest.Agent;
 let server: Server;
@@ -5847,6 +5848,278 @@ describe("API Routes", () => {
       expect(canWrite("ADMIN")).toBe(true);
       expect(canWrite("MEMBER")).toBe(true);
       expect(canWrite("VIEWER")).toBe(false);
+    });
+  });
+
+  describe("bounded search inputs", () => {
+    // Own app instance: the file-wide app's general limiter (200 requests a
+    // minute) is shared by every request in this file, and this block alone
+    // sends dozens, so it must not draw from the shared bucket.
+    let app: supertest.Agent;
+    let boundedServer: Server;
+
+    beforeAll(async () => {
+      const { createApp } = await import("../../src/app.js");
+      boundedServer = await new Promise<Server>((resolve, reject) => {
+        const s = createApp().listen(0);
+        s.once("listening", () => resolve(s));
+        s.once("error", reject);
+      });
+      app = supertest(boundedServer);
+    });
+
+    afterAll(async () => {
+      if (!boundedServer) return;
+      await new Promise<void>((resolve, reject) => {
+        boundedServer.close((err) => (err ? reject(err) : resolve()));
+      });
+    });
+
+    // Values mirror the constants in backend/src/constants/search.ts spelled
+    // out here so the pins are visible at the route; the unit file
+    // tests/unit/search-input-limits.test.ts pins the constants themselves.
+    const queryAt = "q".repeat(2000);
+    const queryOver = "q".repeat(2001);
+    const tokensAt = Array.from({ length: 64 }, (_, i) => `tok${i}`).join(" ");
+    const tokensOver = Array.from({ length: 65 }, (_, i) => `tok${i}`).join(" ");
+
+    afterEach(() => {
+      // Only spies created by this describe exist at this point (spies are the
+      // only thing restoreAllMocks unwraps; the vi.fn() module mocks are
+      // re-seeded by the top-level beforeEach), so this just drops the
+      // QueryService.prototype spies created below.
+      vi.restoreAllMocks();
+    });
+
+    function authedMember() {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-1",
+        teamId: "t1",
+        userId: "user-1",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+    }
+
+    function stubEmptySearch() {
+      mockedClickhouse.query
+        .mockResolvedValueOnce(makeClickhouseResult([{ total: "0" }]))
+        .mockResolvedValueOnce(makeClickhouseResult([]));
+    }
+
+    it("POST /logs/search accepts a query of exactly the maximum length", async () => {
+      authedMember();
+      stubEmptySearch();
+      const res = await app.post("/api/v1/logs/search").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        query: queryAt,
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("POST /logs/search rejects a query one character over the maximum with the flatten shape", async () => {
+      authedMember();
+      const res = await app.post("/api/v1/logs/search").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        query: queryOver,
+      });
+      expect(res.status).toBe(400);
+      expect(res.body.error.fieldErrors.query).toBeDefined();
+      expect(mockedClickhouse.query).not.toHaveBeenCalled();
+    });
+
+    it("POST /logs/search accepts the maximum filter count and rejects one more", async () => {
+      authedMember();
+      stubEmptySearch();
+      const filters = Array.from({ length: 100 }, (_, i) => ({
+        field: `field_${i}`,
+        operator: "eq",
+        value: `v${i}`,
+      }));
+      const ok = await app.post("/api/v1/logs/search").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        filters,
+      });
+      expect(ok.status).toBe(200);
+
+      authedMember();
+      const over = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", filters: [...filters, { field: "f101", operator: "eq", value: "v101" }] });
+      expect(over.status).toBe(400);
+      expect(over.body.error.fieldErrors.filters).toBeDefined();
+    });
+
+    it("POST /logs/search accepts 64 distinct tokens and rejects 65 with the limit-error shape", async () => {
+      authedMember();
+      stubEmptySearch();
+      const ok = await app.post("/api/v1/logs/search").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        query: tokensAt,
+      });
+      expect(ok.status).toBe(200);
+
+      authedMember();
+      const over = await app.post("/api/v1/logs/search").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        query: tokensOver,
+      });
+      expect(over.status).toBe(400);
+      expect(typeof over.body.error).toBe("string");
+      expect(over.body.error).toContain("64 search terms");
+      // The refusal happens before the query service runs: no ClickHouse call
+      // beyond the two the accepted request already made.
+      expect(mockedClickhouse.query).toHaveBeenCalledTimes(2);
+    });
+
+    it("POST /logs/search with queryType natural is not refused by the token cap", async () => {
+      const searchSpy = vi
+        .spyOn(QueryService.prototype, "search")
+        .mockResolvedValue({ logs: [], total: 0 } as never);
+      authedMember();
+      const natural = await app.post("/api/v1/logs/search").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        query: tokensOver,
+        queryType: "natural",
+      });
+      expect(natural.status).toBe(200);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+
+      authedMember();
+      const sql = await app.post("/api/v1/logs/search").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        query: tokensOver,
+        queryType: "sql",
+      });
+      expect(sql.status).toBe(400);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["facets", "histogram", "patterns"])(
+      "POST /logs/%s rejects 65 distinct tokens with the limit-error shape",
+      async (route) => {
+        authedMember();
+        const res = await app.post(`/api/v1/logs/${route}`).set("Authorization", "Bearer sess_admin").send({
+          teamId: "t1",
+          query: tokensOver,
+        });
+        expect(res.status).toBe(400);
+        expect(typeof res.body.error).toBe("string");
+        expect(res.body.error).toContain("64 search terms");
+        expect(mockedClickhouse.query).not.toHaveBeenCalled();
+      },
+    );
+
+    it("POST /logs/search counts repeated tokens once against the token cap", async () => {
+      authedMember();
+      stubEmptySearch();
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", query: Array.from({ length: 200 }, () => "alpha").join(" ") });
+      expect(res.status).toBe(200);
+    });
+
+    it("GET /logs accepts the maximum query length and rejects one character over", async () => {
+      authedMember();
+      stubEmptySearch();
+      const ok = await app
+        .get(`/api/v1/logs?teamId=t1&query=${queryAt}`)
+        .set("Authorization", "Bearer sess_admin");
+      expect(ok.status).toBe(200);
+
+      authedMember();
+      const over = await app
+        .get(`/api/v1/logs?teamId=t1&query=${queryOver}`)
+        .set("Authorization", "Bearer sess_admin");
+      expect(over.status).toBe(400);
+      expect(over.body.error.fieldErrors.query).toBeDefined();
+    });
+
+    it("GET /logs rejects 65 distinct tokens and accepts 64", async () => {
+      authedMember();
+      stubEmptySearch();
+      const ok = await app
+        .get(`/api/v1/logs?teamId=t1&query=${encodeURIComponent(tokensAt)}`)
+        .set("Authorization", "Bearer sess_admin");
+      expect(ok.status).toBe(200);
+
+      authedMember();
+      const over = await app
+        .get(`/api/v1/logs?teamId=t1&query=${encodeURIComponent(tokensOver)}`)
+        .set("Authorization", "Bearer sess_admin");
+      expect(over.status).toBe(400);
+      expect(typeof over.body.error).toBe("string");
+    });
+
+    it("GET /logs with queryType=natural is not refused by the token cap", async () => {
+      const searchSpy = vi
+        .spyOn(QueryService.prototype, "search")
+        .mockResolvedValue({ logs: [], total: 0 } as never);
+      authedMember();
+      const res = await app
+        .get(`/api/v1/logs?teamId=t1&queryType=natural&query=${encodeURIComponent(tokensOver)}`)
+        .set("Authorization", "Bearer sess_admin");
+      expect(res.status).toBe(200);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("POST /query/natural accepts the maximum query and rejects one character over", async () => {
+      const explainSpy = vi
+        .spyOn(QueryService.prototype, "explainNaturalQuery")
+        .mockResolvedValue({ explanation: "stub", filtersApplied: [] } as never);
+      authedMember();
+      const ok = await app.post("/api/v1/query/natural").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        query: queryAt,
+      });
+      expect(ok.status).toBe(200);
+      expect(explainSpy).toHaveBeenCalledTimes(1);
+
+      authedMember();
+      const over = await app.post("/api/v1/query/natural").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        query: queryOver,
+      });
+      expect(over.status).toBe(400);
+      expect(over.body.error.fieldErrors.query).toBeDefined();
+      expect(explainSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["facets", "histogram", "patterns"])("POST /logs/%s rejects a query over the maximum", async (route) => {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app
+        .post(`/api/v1/logs/${route}`)
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", query: queryOver });
+      expect(res.status).toBe(400);
+      expect(res.body.error.fieldErrors.query).toBeDefined();
+    });
+
+    it("a ~9 MB search query is rejected without reaching queryService.search", async () => {
+      const searchSpy = vi.spyOn(QueryService.prototype, "search");
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app
+        .post("/api/v1/logs/search")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", query: "x".repeat(9_000_000) });
+      expect(res.status).toBe(400);
+      expect(res.body.error.fieldErrors.query).toBeDefined();
+      expect(searchSpy).not.toHaveBeenCalled();
+    });
+
+    it("a ~9 MB natural query is rejected without reaching queryService.explainNaturalQuery", async () => {
+      const explainSpy = vi.spyOn(QueryService.prototype, "explainNaturalQuery");
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      const res = await app
+        .post("/api/v1/query/natural")
+        .set("Authorization", "Bearer sess_admin")
+        .send({ teamId: "t1", query: "x".repeat(9_000_000) });
+      expect(res.status).toBe(400);
+      expect(res.body.error.fieldErrors.query).toBeDefined();
+      expect(explainSpy).not.toHaveBeenCalled();
     });
   });
 });
