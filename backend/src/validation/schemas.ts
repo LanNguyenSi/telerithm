@@ -5,6 +5,8 @@ import {
   SEARCH_FILTER_VALUE_MAX_LENGTH,
   SEARCH_LIMIT_CEILING,
   SEARCH_QUERY_MAX_LENGTH,
+  SEARCH_QUERY_MAX_TOKENS,
+  searchQueryTokens,
 } from "../constants/search.js";
 
 // ---------------------------------------------------------------------------
@@ -187,7 +189,7 @@ const savedViewFacetFilterSchema = z.object({
   value: z.string().max(SEARCH_FILTER_VALUE_MAX_LENGTH),
 });
 
-export const savedViewDefinitionSchema = z.object({
+const savedViewDefinitionBaseSchema = z.object({
   mode: z.enum(["raw", "patterns"]).optional(),
   startTime: dateTimeSchema.optional(),
   endTime: dateTimeSchema.optional(),
@@ -201,6 +203,48 @@ export const savedViewDefinitionSchema = z.object({
   facets: z.array(savedViewFacetFilterSchema).max(SEARCH_FILTERS_MAX).default([]),
   exclusions: z.array(savedViewFacetFilterSchema).max(SEARCH_FILTERS_MAX).default([]),
   pageSize: intSchema.min(1).max(500).default(50),
+});
+
+// Replaying a saved view in the search screen sends one `filters` entry per
+// facet and per exclusion, plus at most one entry each for the level (eq),
+// service (contains) and host (contains) form fields, which the screen takes
+// from the first matching entry of the definition's `filters` and sends only
+// when its value is non-empty. Other `filters` entries are not replayed.
+const REPLAYED_FORM_FILTERS = [
+  { field: "level", operator: "eq" },
+  { field: "service", operator: "contains" },
+  { field: "host", operator: "contains" },
+] as const;
+
+function savedViewReplayFilterCount(definition: {
+  filters: Array<{ field: string; operator: string; value: string | number }>;
+  facets: unknown[];
+  exclusions: unknown[];
+}): number {
+  const formFilters = REPLAYED_FORM_FILTERS.filter((slot) => {
+    const match = definition.filters.find(
+      (item) => item.field === slot.field && item.operator === slot.operator,
+    );
+    return match !== undefined && String(match.value) !== "";
+  }).length;
+  return formFilters + definition.facets.length + definition.exclusions.length;
+}
+
+export const savedViewDefinitionSchema = savedViewDefinitionBaseSchema.superRefine((definition, ctx) => {
+  if (definition.text !== undefined && searchQueryTokens(definition.text).length > SEARCH_QUERY_MAX_TOKENS) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["text"],
+      message: `text is limited to ${SEARCH_QUERY_MAX_TOKENS} search terms`,
+    });
+  }
+  if (savedViewReplayFilterCount(definition) > SEARCH_FILTERS_MAX) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["facets"],
+      message: `facets, exclusions and the level, service and host filters together are limited to ${SEARCH_FILTERS_MAX} entries`,
+    });
+  }
 });
 
 export const createSavedViewSchema = z.object({

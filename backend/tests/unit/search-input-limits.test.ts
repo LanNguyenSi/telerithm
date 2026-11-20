@@ -3,6 +3,7 @@ import {
   SEARCH_FILTER_FIELD_MAX_LENGTH,
   SEARCH_FILTERS_MAX,
   SEARCH_FILTER_VALUE_MAX_LENGTH,
+  SEARCH_LIMIT_CEILING,
   SEARCH_QUERY_MAX_LENGTH,
   SEARCH_QUERY_MAX_TOKENS,
   searchQueryTokens,
@@ -30,6 +31,17 @@ function filterList(count: number) {
   }));
 }
 
+describe("search limit constants", () => {
+  it("pins every limit to its documented value", () => {
+    expect(SEARCH_LIMIT_CEILING).toBe(500);
+    expect(SEARCH_QUERY_MAX_LENGTH).toBe(2000);
+    expect(SEARCH_FILTERS_MAX).toBe(100);
+    expect(SEARCH_FILTER_FIELD_MAX_LENGTH).toBe(200);
+    expect(SEARCH_FILTER_VALUE_MAX_LENGTH).toBe(2000);
+    expect(SEARCH_QUERY_MAX_TOKENS).toBe(64);
+  });
+});
+
 describe("search input limits (query length)", () => {
   it("accepts a query of exactly the maximum length", () => {
     const result = searchSchema.safeParse({ teamId: "t1", query: repeatedChar(SEARCH_QUERY_MAX_LENGTH) });
@@ -37,9 +49,9 @@ describe("search input limits (query length)", () => {
   });
 
   it("rejects a query one character over the maximum", () => {
-    expect(searchSchema.safeParse({ teamId: "t1", query: repeatedChar(SEARCH_QUERY_MAX_LENGTH + 1) }).success).toBe(
-      false,
-    );
+    expect(
+      searchSchema.safeParse({ teamId: "t1", query: repeatedChar(SEARCH_QUERY_MAX_LENGTH + 1) }).success,
+    ).toBe(false);
   });
 
   it.each([
@@ -47,15 +59,18 @@ describe("search input limits (query length)", () => {
     ["histogramSchema", histogramSchema],
     ["patternsSchema", patternsSchema],
   ])("%s inherits the query cap through the search scope", (_name, schema) => {
-    expect(schema.safeParse({ teamId: "t1", query: repeatedChar(SEARCH_QUERY_MAX_LENGTH) }).success).toBe(true);
-    expect(
-      schema.safeParse({ teamId: "t1", query: repeatedChar(SEARCH_QUERY_MAX_LENGTH + 1) }).success,
-    ).toBe(false);
+    expect(schema.safeParse({ teamId: "t1", query: repeatedChar(SEARCH_QUERY_MAX_LENGTH) }).success).toBe(
+      true,
+    );
+    expect(schema.safeParse({ teamId: "t1", query: repeatedChar(SEARCH_QUERY_MAX_LENGTH + 1) }).success).toBe(
+      false,
+    );
   });
 
   it("naturalQuerySchema caps the query at the same maximum and keeps the minimum", () => {
     expect(
-      naturalQuerySchema.safeParse({ teamId: "t1", query: repeatedChar(SEARCH_QUERY_MAX_LENGTH, "q") }).success,
+      naturalQuerySchema.safeParse({ teamId: "t1", query: repeatedChar(SEARCH_QUERY_MAX_LENGTH, "q") })
+        .success,
     ).toBe(true);
     expect(
       naturalQuerySchema.safeParse({
@@ -69,13 +84,15 @@ describe("search input limits (query length)", () => {
 
 describe("search input limits (filters, field, value)", () => {
   it("accepts exactly the maximum number of filters", () => {
-    expect(searchSchema.safeParse({ teamId: "t1", filters: filterList(SEARCH_FILTERS_MAX) }).success).toBe(true);
+    expect(searchSchema.safeParse({ teamId: "t1", filters: filterList(SEARCH_FILTERS_MAX) }).success).toBe(
+      true,
+    );
   });
 
   it("rejects one filter over the maximum", () => {
-    expect(searchSchema.safeParse({ teamId: "t1", filters: filterList(SEARCH_FILTERS_MAX + 1) }).success).toBe(
-      false,
-    );
+    expect(
+      searchSchema.safeParse({ teamId: "t1", filters: filterList(SEARCH_FILTERS_MAX + 1) }).success,
+    ).toBe(false);
   });
 
   it("accepts a filter field of exactly the maximum length and rejects one more character", () => {
@@ -97,12 +114,13 @@ describe("search input limits (filters, field, value)", () => {
   });
 
   it("does not length-limit the number branch of the filter value", () => {
-    expect(searchSchema.safeParse({ teamId: "t1", filters: [{ field: "n", operator: "eq", value: 1e999 }] }).success).toBe(
-      true,
-    );
-    expect(searchSchema.safeParse({ teamId: "t1", filters: [{ field: "n", operator: "gt", value: 0 }] }).success).toBe(
-      true,
-    );
+    expect(
+      searchSchema.safeParse({ teamId: "t1", filters: [{ field: "n", operator: "eq", value: 1e999 }] })
+        .success,
+    ).toBe(true);
+    expect(
+      searchSchema.safeParse({ teamId: "t1", filters: [{ field: "n", operator: "gt", value: 0 }] }).success,
+    ).toBe(true);
   });
 });
 
@@ -142,7 +160,9 @@ describe("saved-view definition limits", () => {
   });
 
   it("accepts the maximum number of filters and rejects one more", () => {
-    expect(savedViewDefinitionSchema.safeParse({ filters: filterList(SEARCH_FILTERS_MAX) }).success).toBe(true);
+    expect(savedViewDefinitionSchema.safeParse({ filters: filterList(SEARCH_FILTERS_MAX) }).success).toBe(
+      true,
+    );
     expect(savedViewDefinitionSchema.safeParse({ filters: filterList(SEARCH_FILTERS_MAX + 1) }).success).toBe(
       false,
     );
@@ -153,7 +173,9 @@ describe("saved-view definition limits", () => {
     (list) => {
       const facetList = (count: number) =>
         Array.from({ length: count }, (_, i) => ({ field: `f${i}`, value: "v" }));
-      expect(savedViewDefinitionSchema.safeParse({ [list]: facetList(SEARCH_FILTERS_MAX) }).success).toBe(true);
+      expect(savedViewDefinitionSchema.safeParse({ [list]: facetList(SEARCH_FILTERS_MAX) }).success).toBe(
+        true,
+      );
       expect(savedViewDefinitionSchema.safeParse({ [list]: facetList(SEARCH_FILTERS_MAX + 1) }).success).toBe(
         false,
       );
@@ -179,6 +201,84 @@ describe("saved-view definition limits", () => {
       ).toBe(false);
     },
   );
+
+  describe("replay consistency", () => {
+    const tokens = (count: number) => Array.from({ length: count }, (_, i) => `tok${i}`).join(" ");
+    const pairs = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({ field: `f${i}`, value: "v" }));
+    const formFilters = [
+      { field: "level", operator: "eq", value: "error" },
+      { field: "service", operator: "contains", value: "api" },
+      { field: "host", operator: "contains", value: "h1" },
+    ];
+
+    it("accepts text with the maximum distinct tokens and rejects one more", () => {
+      expect(savedViewDefinitionSchema.safeParse({ text: tokens(SEARCH_QUERY_MAX_TOKENS) }).success).toBe(
+        true,
+      );
+      const over = savedViewDefinitionSchema.safeParse({ text: tokens(SEARCH_QUERY_MAX_TOKENS + 1) });
+      expect(over.success).toBe(false);
+      if (!over.success) {
+        expect(over.error.flatten().fieldErrors.text).toBeDefined();
+      }
+    });
+
+    it("counts repeated text tokens once", () => {
+      const text = Array.from({ length: 200 }, () => "alpha").join(" ");
+      expect(savedViewDefinitionSchema.safeParse({ text }).success).toBe(true);
+    });
+
+    it("accepts facets plus exclusions at the maximum and rejects one more", () => {
+      expect(
+        savedViewDefinitionSchema.safeParse({ facets: pairs(60), exclusions: pairs(SEARCH_FILTERS_MAX - 60) })
+          .success,
+      ).toBe(true);
+      const over = savedViewDefinitionSchema.safeParse({
+        facets: pairs(60),
+        exclusions: pairs(SEARCH_FILTERS_MAX - 60 + 1),
+      });
+      expect(over.success).toBe(false);
+      if (!over.success) {
+        expect(over.error.flatten().fieldErrors.facets).toBeDefined();
+      }
+    });
+
+    it("counts the level, service and host form filters that the replay derives", () => {
+      const room = SEARCH_FILTERS_MAX - 3;
+      expect(savedViewDefinitionSchema.safeParse({ filters: formFilters, facets: pairs(room) }).success).toBe(
+        true,
+      );
+      expect(
+        savedViewDefinitionSchema.safeParse({ filters: formFilters, facets: pairs(room + 1) }).success,
+      ).toBe(false);
+      expect(
+        savedViewDefinitionSchema.safeParse({ filters: formFilters, exclusions: pairs(room + 1) }).success,
+      ).toBe(false);
+    });
+
+    it("counts each form filter on its own and ignores filters the replay drops", () => {
+      const full = { facets: pairs(SEARCH_FILTERS_MAX) };
+      for (const one of formFilters) {
+        expect(savedViewDefinitionSchema.safeParse({ ...full, filters: [one] }).success).toBe(false);
+      }
+      // Wrong operator, other fields and an empty value are not replayed.
+      const dropped = [
+        { field: "level", operator: "neq", value: "error" },
+        { field: "service", operator: "eq", value: "api" },
+        { field: "other", operator: "eq", value: "x" },
+        { field: "host", operator: "contains", value: "" },
+      ];
+      expect(savedViewDefinitionSchema.safeParse({ ...full, filters: dropped }).success).toBe(true);
+    });
+
+    it("counts only the first matching entry of a form filter once", () => {
+      const twice = [formFilters[0], { field: "level", operator: "eq", value: "warn" }];
+      expect(
+        savedViewDefinitionSchema.safeParse({ filters: twice, facets: pairs(SEARCH_FILTERS_MAX - 1) })
+          .success,
+      ).toBe(true);
+    });
+  });
 
   it("keeps an existing minimal definition parseable", () => {
     const result = savedViewDefinitionSchema.safeParse({});

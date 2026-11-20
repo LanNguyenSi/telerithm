@@ -5679,6 +5679,44 @@ describe("API Routes", () => {
       expect(mockedClickhouse.query).toHaveBeenCalledTimes(2);
     });
 
+    it("POST /logs/search with queryType natural is not refused by the token cap", async () => {
+      const searchSpy = vi
+        .spyOn(QueryService.prototype, "search")
+        .mockResolvedValue({ logs: [], total: 0 } as never);
+      authedMember();
+      const natural = await app.post("/api/v1/logs/search").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        query: tokensOver,
+        queryType: "natural",
+      });
+      expect(natural.status).toBe(200);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+
+      authedMember();
+      const sql = await app.post("/api/v1/logs/search").set("Authorization", "Bearer sess_admin").send({
+        teamId: "t1",
+        query: tokensOver,
+        queryType: "sql",
+      });
+      expect(sql.status).toBe(400);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["facets", "histogram", "patterns"])(
+      "POST /logs/%s rejects 65 distinct tokens with the limit-error shape",
+      async (route) => {
+        authedMember();
+        const res = await app.post(`/api/v1/logs/${route}`).set("Authorization", "Bearer sess_admin").send({
+          teamId: "t1",
+          query: tokensOver,
+        });
+        expect(res.status).toBe(400);
+        expect(typeof res.body.error).toBe("string");
+        expect(res.body.error).toContain("64 search terms");
+        expect(mockedClickhouse.query).not.toHaveBeenCalled();
+      },
+    );
+
     it("POST /logs/search counts repeated tokens once against the token cap", async () => {
       authedMember();
       stubEmptySearch();

@@ -207,6 +207,7 @@ function enforceSearchLimits(input: {
   endTime?: string;
   limit?: number;
   query?: string;
+  queryType?: string;
 }): string | null {
   if (typeof input.limit === "number" && input.limit > config.maxPageSize) {
     return `limit exceeds maximum of ${config.maxPageSize}`;
@@ -215,8 +216,14 @@ function enforceSearchLimits(input: {
   // own ILIKE group in the generated SQL, so a query at the length cap can
   // still carry a very large number of them. Reject past the token cap with the
   // same 400 shape as the limit errors instead of silently truncating; the
-  // repository keeps a defensive cap for non-route callers.
-  if (typeof input.query === "string" && searchQueryTokens(input.query).length > SEARCH_QUERY_MAX_TOKENS) {
+  // repository keeps a defensive cap for non-route callers. A "natural" query
+  // is not tokenized into SQL (the AI planner's terms are capped by the
+  // repository), so the cap applies to the sql query type only.
+  if (
+    (input.queryType ?? "sql") === "sql" &&
+    typeof input.query === "string" &&
+    searchQueryTokens(input.query).length > SEARCH_QUERY_MAX_TOKENS
+  ) {
     return `query is limited to ${SEARCH_QUERY_MAX_TOKENS} search terms`;
   }
   if (input.startTime && input.endTime) {

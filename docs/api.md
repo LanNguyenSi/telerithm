@@ -117,9 +117,11 @@ The search inputs are bounded (the maxima are named constants in `backend/src/co
 | `filters` | 100 entries | the same search routes |
 | filter `field` | 200 characters | every filter |
 | filter `value` (string) | 2000 characters | every filter (the number branch is not length-limited) |
-| distinct search tokens in `query` | 64 | the five log-search routes (`POST /query/natural` has no token cap; its `query` is length-capped like the others) |
+| distinct search tokens in `query` | 64 | the five log-search routes, when `queryType` is `sql` (the default); not applied to `queryType: "natural"` and not to `POST /query/natural`, whose `query` is only length-capped |
 
-The token maximum is checked per distinct token (a token is a whitespace-separated run of `[a-z0-9_-]` after lowercasing, at least 2 characters long; repeats count once), because every token becomes its own `ILIKE` group in the generated SQL; exceeding it answers `400` with `{ "error": "query is limited to 64 search terms" }` instead of truncating. Saved-view definitions carry the same caps on `text`, `filters`, `facets` and `exclusions`, so a saved view can never hold more than a search accepts.
+The token maximum is checked per distinct token, because every token becomes its own `ILIKE` group in the generated SQL: the query is split on whitespace, lowercased, every character outside `[a-z0-9_-]` is removed, tokens shorter than 2 characters are dropped and repeats count once. Exceeding it answers `400` with `{ "error": "query is limited to 64 search terms" }` instead of truncating.
+
+Saved-view definitions are checked against what replaying them as a search sends, so a saved view can never hold more than a search accepts: `text` is at most 2000 characters and at most 64 distinct search tokens (counted as above), `filters`, `facets` and `exclusions` are each at most 100 entries with the field and value length caps above, and `facets` plus `exclusions` plus the level (`eq`), service (`contains`) and host (`contains`) filters of `filters` that the replay turns into form filters (the first matching entry of each, when its value is non-empty; other `filters` entries are not replayed) may total at most 100. A definition over any of these answers `400` with the usual validation-error shape.
 
 ## Rate limiting
 
