@@ -51,6 +51,7 @@ export function SavedViewBar({
     <Card className="flex flex-wrap items-center gap-2">
       <p className="text-xs uppercase tracking-[0.16em] text-muted">Saved Views</p>
       <Select
+        aria-label="Saved view"
         value={selectedId}
         onChange={onSelect}
         disabled={loading}

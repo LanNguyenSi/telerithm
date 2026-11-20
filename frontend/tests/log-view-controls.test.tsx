@@ -108,6 +108,11 @@ describe("fail-closed defaults", () => {
     expect(screen.getByLabelText("Als Standardansicht setzen")).toBeDisabled();
   });
 
+  it("names the saved view combobox", () => {
+    renderBar("OWNER");
+    expect(screen.getByRole("combobox", { name: "Saved view" })).toBeInTheDocument();
+  });
+
   it("disables Set Default when the bar prop is omitted at runtime", () => {
     render(
       <SavedViewBar
