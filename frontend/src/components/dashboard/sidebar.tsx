@@ -132,7 +132,7 @@ function UserMenu({ user, onNavigate }: { user: SessionUser; onNavigate?: () => 
           open ? "bg-white/10" : "hover:bg-white/6"
         }`}
       >
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-signal/20 text-[11px] font-semibold text-signal">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#22d3ee]/20 text-[11px] font-semibold text-[#22d3ee]">
           {user.name.charAt(0).toUpperCase()}
         </div>
         <div className="min-w-0 flex-1 text-left">
@@ -247,6 +247,7 @@ export function Sidebar({ user }: SidebarProps) {
               key={item.href}
               href={item.href}
               onClick={closeForNavigation}
+              aria-current={active ? "page" : undefined}
               className={`group flex items-center gap-3 rounded-lg px-3 py-2 text-[13px] font-medium transition ${
                 active
                   ? "bg-white/10 text-white"
