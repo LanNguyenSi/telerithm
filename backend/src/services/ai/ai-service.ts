@@ -40,6 +40,13 @@ const ALLOWED_FILTER_FIELDS = new Set([
   "route",
 ]);
 
+// Label value for nlqFilterPrunedTotal counts of fields outside the allowlist.
+// The field name in an NLQ filter comes from the LLM, which the user's prompt
+// steers, so echoing it into the counter's "field" label would mint one time
+// series per invented name; everything outside the allowlist shares this
+// constant instead. Allowlisted fields keep their own names as labels.
+export const NLQ_UNKNOWN_FIELD_LABEL = "_unknown";
+
 type FacetHints = Partial<Record<"service" | "host" | "level", string[]>>;
 type FormContext = LogQueryContext;
 const TERM_VARIANTS: Record<string, string[]> = {
@@ -361,7 +368,7 @@ ${NLQ_STOPWORD_PROMPT_HINT}`;
     // Field allowlist: reject AI-hallucinated or unknown field names so they
     // never reach the column builder, regardless of the sanitizer there.
     if (!ALLOWED_FILTER_FIELDS.has(candidate.field)) {
-      nlqFilterPrunedTotal.inc({ field: candidate.field.slice(0, 64), reason: "unknown_field" });
+      nlqFilterPrunedTotal.inc({ field: NLQ_UNKNOWN_FIELD_LABEL, reason: "unknown_field" });
       return null;
     }
     const normalizedField = candidate.field === "sourceId" ? "source_id" : candidate.field;
