@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { Issue, LogEntry, Team } from "@/types";
 
 const mocks = vi.hoisted(() => ({
@@ -155,7 +155,12 @@ describe("keyboard reachable table scroll regions", () => {
   it("makes the overflowing issues table scroll container a labelled focusable region", async () => {
     stubLayout(1200, 800);
     render(<IssueExplorer team={team} />);
-    await screen.findByRole("region", { name: "Issues table" });
+    const region = await screen.findByRole("region", { name: "Issues table" });
+    // The region lands in the DOM one commit before the hook has measured it,
+    // and that gap is outside any `act` here (the screen renders it only after
+    // the async fetch resolves), so wait for the measured state before
+    // asserting the rest of it.
+    await waitFor(() => expect(region).toHaveAttribute("tabindex", "0"));
     assertFocusableRegion("Issues table");
   });
 });
@@ -171,7 +176,11 @@ describe("a table that fits is not a tab stop", () => {
   it("gives the fitting issues table region no tabindex", async () => {
     stubLayout(800, 800);
     render(<IssueExplorer team={team} />);
-    await screen.findByRole("region", { name: "Issues table" });
+    const region = await screen.findByRole("region", { name: "Issues table" });
+    // "No tabindex" only means something once the measurement has run, and
+    // the effect that measures is the one that attaches the observer, so an
+    // observer on the region is the proof to wait for.
+    await waitFor(() => expect(() => observerFor(region)).not.toThrow());
     assertFittingRegion("Issues table");
   });
 });
@@ -194,7 +203,10 @@ describe("resize flips the tab stop", () => {
     stubLayout(1200, 800);
     render(<IssueExplorer team={team} />);
     const region = await screen.findByRole("region", { name: "Issues table" });
-    expect(region).toHaveAttribute("tabindex", "0");
+    // Same race as the overflowing case: the region exists before the hook has
+    // measured it, so wait for the tab stop to be there before testing that a
+    // resize takes it away.
+    await waitFor(() => expect(region).toHaveAttribute("tabindex", "0"));
 
     stubLayout(966, 966);
     await act(async () => {
