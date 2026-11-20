@@ -107,6 +107,20 @@ A `ruleId` in the `POST /subscriptions` body must be a rule of the body's `teamI
 
 `limit` on the search requests is 1 to 500 (default 100). `MAX_PAGE_SIZE` can lower that maximum (50 to 500) but not raise it (a larger value is clamped to 500 with a startup warning); see [configuration.md](configuration.md).
 
+### Log search input limits
+
+The search inputs are bounded (the maxima are named constants in `backend/src/constants/search.ts`, and a request over any of them answers `400`):
+
+| Input | Maximum | Applies to |
+| ----- | ------- | ---------- |
+| `query` | 2000 characters | `POST /logs/search`, `GET /logs`, `POST /logs/facets`, `/logs/histogram`, `/logs/patterns`, `POST /query/natural` |
+| `filters` | 100 entries | the same search routes |
+| filter `field` | 200 characters | every filter |
+| filter `value` (string) | 2000 characters | every filter (the number branch is not length-limited) |
+| distinct search tokens in `query` | 64 | the five log-search routes (`POST /query/natural` has no token cap; its `query` is length-capped like the others) |
+
+The token maximum is checked per distinct token (a token is a whitespace-separated run of `[a-z0-9_-]` after lowercasing, at least 2 characters long; repeats count once), because every token becomes its own `ILIKE` group in the generated SQL; exceeding it answers `400` with `{ "error": "query is limited to 64 search terms" }` instead of truncating. Saved-view definitions carry the same caps on `text`, `filters`, `facets` and `exclusions`, so a saved view can never hold more than a search accepts.
+
 ## Rate limiting
 
 Every request passes through a global limiter first, then (for a few route groups) a second, more specific one. All limiters are per-process, in-memory counters (`express-rate-limit`'s default `MemoryStore`); see [architecture.md#rate-limiting](architecture.md#rate-limiting) for what that means for a multi-instance deployment.

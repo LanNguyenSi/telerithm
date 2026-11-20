@@ -1,5 +1,11 @@
 import { z } from "zod";
-import { SEARCH_LIMIT_CEILING } from "../constants/search.js";
+import {
+  SEARCH_FILTER_FIELD_MAX_LENGTH,
+  SEARCH_FILTERS_MAX,
+  SEARCH_FILTER_VALUE_MAX_LENGTH,
+  SEARCH_LIMIT_CEILING,
+  SEARCH_QUERY_MAX_LENGTH,
+} from "../constants/search.js";
 
 // ---------------------------------------------------------------------------
 // Helpers that keep the zod 3 semantics these schemas were written against:
@@ -39,7 +45,7 @@ const levelSchema = z.enum(["debug", "info", "warn", "error", "fatal"]);
 export const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6),
-  name: z.string().min(2),
+  name: z.string().min(2).max(100),
 });
 
 export const loginSchema = z.object({
@@ -52,7 +58,7 @@ export const streamTicketSchema = z.object({
 });
 
 export const createTeamSchema = z.object({
-  name: z.string().min(2),
+  name: z.string().min(2).max(100),
   slug: z
     .string()
     .min(2)
@@ -118,9 +124,9 @@ export const updateAlertRuleSchema = z
   });
 
 export const logFilterSchema = z.object({
-  field: z.string(),
+  field: z.string().max(SEARCH_FILTER_FIELD_MAX_LENGTH),
   operator: z.enum(["eq", "neq", "gt", "lt", "contains"]),
-  value: z.union([z.string(), numberSchema]),
+  value: z.union([z.string().max(SEARCH_FILTER_VALUE_MAX_LENGTH), numberSchema]),
 });
 
 export const searchSchema = z.object({
@@ -128,9 +134,9 @@ export const searchSchema = z.object({
   sourceId: z.string().optional(),
   startTime: dateTimeSchema.optional(),
   endTime: dateTimeSchema.optional(),
-  query: z.string().optional(),
+  query: z.string().max(SEARCH_QUERY_MAX_LENGTH).optional(),
   queryType: z.enum(["sql", "natural"]).default("sql"),
-  filters: z.array(logFilterSchema).optional(),
+  filters: z.array(logFilterSchema).max(SEARCH_FILTERS_MAX).optional(),
   sortBy: z.enum(["timestamp", "level", "service", "host"]).default("timestamp"),
   sortDirection: z.enum(["asc", "desc"]).default("desc"),
   limit: intSchema.min(1).max(SEARCH_LIMIT_CEILING).default(100),
@@ -173,19 +179,27 @@ export const patternsSchema = searchScopeSchema.extend({
   async: z.boolean().default(false),
 });
 
+// A saved view replays its definition as a search, so its lists carry the same
+// caps as the search request they turn into: a saved view can never hold more
+// than a search accepts.
+const savedViewFacetFilterSchema = z.object({
+  field: z.string().max(SEARCH_FILTER_FIELD_MAX_LENGTH),
+  value: z.string().max(SEARCH_FILTER_VALUE_MAX_LENGTH),
+});
+
 export const savedViewDefinitionSchema = z.object({
   mode: z.enum(["raw", "patterns"]).optional(),
   startTime: dateTimeSchema.optional(),
   endTime: dateTimeSchema.optional(),
   relativeTime: z.string().optional(),
-  text: z.string().optional(),
+  text: z.string().max(SEARCH_QUERY_MAX_LENGTH).optional(),
   sourceId: z.string().optional(),
-  filters: z.array(logFilterSchema).default([]),
+  filters: z.array(logFilterSchema).max(SEARCH_FILTERS_MAX).default([]),
   columns: z.array(z.string()).default([]),
   sortBy: z.enum(["timestamp", "level", "service", "host"]).default("timestamp"),
   sortDirection: z.enum(["asc", "desc"]).default("desc"),
-  facets: z.array(z.object({ field: z.string(), value: z.string() })).default([]),
-  exclusions: z.array(z.object({ field: z.string(), value: z.string() })).default([]),
+  facets: z.array(savedViewFacetFilterSchema).max(SEARCH_FILTERS_MAX).default([]),
+  exclusions: z.array(savedViewFacetFilterSchema).max(SEARCH_FILTERS_MAX).default([]),
   pageSize: intSchema.min(1).max(500).default(50),
 });
 
@@ -217,7 +231,7 @@ export const contextSchema = z.object({
 
 export const naturalQuerySchema = z.object({
   teamId: z.string().min(1),
-  query: z.string().min(3),
+  query: z.string().min(3).max(SEARCH_QUERY_MAX_LENGTH),
 });
 
 export const incidentActionSchema = z.object({

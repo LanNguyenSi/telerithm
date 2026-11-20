@@ -52,6 +52,7 @@ import {
   updateSubscriptionSchema,
   updateUserRoleSchema,
 } from "../../validation/schemas.js";
+import { SEARCH_QUERY_MAX_TOKENS, searchQueryTokens } from "../../constants/search.js";
 import { prisma } from "../../repositories/prisma.js";
 import { clickhouse } from "../../repositories/clickhouse.js";
 import { redis } from "../../repositories/redis.js";
@@ -201,9 +202,22 @@ function withDefaultSearchRange(input: unknown): unknown {
   };
 }
 
-function enforceSearchLimits(input: { startTime?: string; endTime?: string; limit?: number }): string | null {
+function enforceSearchLimits(input: {
+  startTime?: string;
+  endTime?: string;
+  limit?: number;
+  query?: string;
+}): string | null {
   if (typeof input.limit === "number" && input.limit > config.maxPageSize) {
     return `limit exceeds maximum of ${config.maxPageSize}`;
+  }
+  // The schema bounds the query's length, but every distinct token becomes its
+  // own ILIKE group in the generated SQL, so a query at the length cap can
+  // still carry a very large number of them. Reject past the token cap with the
+  // same 400 shape as the limit errors instead of silently truncating; the
+  // repository keeps a defensive cap for non-route callers.
+  if (typeof input.query === "string" && searchQueryTokens(input.query).length > SEARCH_QUERY_MAX_TOKENS) {
+    return `query is limited to ${SEARCH_QUERY_MAX_TOKENS} search terms`;
   }
   if (input.startTime && input.endTime) {
     const start = new Date(input.startTime).getTime();

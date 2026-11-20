@@ -14,6 +14,7 @@ import type {
 } from "../types/domain.js";
 import { createChildLogger } from "../logger.js";
 import { patternSignatureSqlExpression } from "../services/query/pattern-normalizer.js";
+import { SEARCH_QUERY_MAX_TOKENS, searchQueryTokens } from "../constants/search.js";
 
 const log = createChildLogger("log-repository");
 const SEARCHABLE_COLUMNS = new Set(["level", "service", "host", "message"]);
@@ -503,15 +504,11 @@ export class LogRepository {
   }
 
   private buildSearchCondition(query: string, params: Record<string, string | number>): string | null {
-    const rawTokens = query
-      .split(/\s+/)
-      .map((token) =>
-        token
-          .toLowerCase()
-          .replace(/[^a-z0-9_-]/g, "")
-          .trim(),
-      )
-      .filter((token) => token.length > 1);
+    // searchQueryTokens dedupes tokens (one group per distinct token); the
+    // routes reject a query past SEARCH_QUERY_MAX_TOKENS with a 400, and the
+    // slice here keeps that bound for any caller that reached the repository
+    // without going through a route, so the condition can never be unbounded.
+    const rawTokens = searchQueryTokens(query).slice(0, SEARCH_QUERY_MAX_TOKENS);
 
     if (rawTokens.length === 0) {
       return null;

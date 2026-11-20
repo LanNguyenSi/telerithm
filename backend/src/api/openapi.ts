@@ -1,3 +1,10 @@
+import {
+  SEARCH_FILTER_FIELD_MAX_LENGTH,
+  SEARCH_FILTERS_MAX,
+  SEARCH_FILTER_VALUE_MAX_LENGTH,
+  SEARCH_QUERY_MAX_LENGTH,
+} from "../constants/search.js";
+
 export const openApiSpec = {
   openapi: "3.0.3",
   info: {
@@ -385,7 +392,7 @@ export const openApiSpec = {
         tags: ["Logs"],
         parameters: [
           { name: "teamId", in: "query", required: true, schema: { type: "string" } },
-          { name: "query", in: "query", schema: { type: "string" } },
+          { name: "query", in: "query", schema: { type: "string", maxLength: SEARCH_QUERY_MAX_LENGTH } },
           { name: "queryType", in: "query", schema: { type: "string", enum: ["sql", "natural"] } },
           { name: "limit", in: "query", schema: { type: "integer", default: 100 } },
           { name: "offset", in: "query", schema: { type: "integer", default: 0 } },
@@ -644,7 +651,7 @@ export const openApiSpec = {
           sourceId: { type: "string" },
           startTime: { type: "string", format: "date-time" },
           endTime: { type: "string", format: "date-time" },
-          query: { type: "string" },
+          query: { type: "string", maxLength: SEARCH_QUERY_MAX_LENGTH },
           queryType: { type: "string", enum: ["sql", "natural"], default: "sql" },
           limit: { type: "integer", default: 100, maximum: 500 },
           offset: { type: "integer", default: 0 },
@@ -680,9 +687,9 @@ export const openApiSpec = {
           sourceId: { type: "string" },
           startTime: { type: "string", format: "date-time" },
           endTime: { type: "string", format: "date-time" },
-          query: { type: "string" },
+          query: { type: "string", maxLength: SEARCH_QUERY_MAX_LENGTH },
           queryType: { type: "string", enum: ["sql", "natural"], default: "sql" },
-          filters: { type: "array" },
+          filters: { type: "array", maxItems: SEARCH_FILTERS_MAX },
           fields: {
             type: "array",
             items: {
@@ -725,9 +732,9 @@ export const openApiSpec = {
           sourceId: { type: "string" },
           startTime: { type: "string", format: "date-time" },
           endTime: { type: "string", format: "date-time" },
-          query: { type: "string" },
+          query: { type: "string", maxLength: SEARCH_QUERY_MAX_LENGTH },
           queryType: { type: "string", enum: ["sql", "natural"], default: "sql" },
-          filters: { type: "array" },
+          filters: { type: "array", maxItems: SEARCH_FILTERS_MAX },
           interval: { type: "string", enum: ["minute", "5m", "15m", "hour", "day"], default: "5m" },
         },
       },
@@ -756,9 +763,9 @@ export const openApiSpec = {
           sourceId: { type: "string" },
           startTime: { type: "string", format: "date-time" },
           endTime: { type: "string", format: "date-time" },
-          query: { type: "string" },
+          query: { type: "string", maxLength: SEARCH_QUERY_MAX_LENGTH },
           queryType: { type: "string", enum: ["sql", "natural"], default: "sql" },
-          filters: { type: "array" },
+          filters: { type: "array", maxItems: SEARCH_FILTERS_MAX },
           groupBy: {
             type: "string",
             enum: ["none", "service", "level", "service_level"],
@@ -795,14 +802,14 @@ export const openApiSpec = {
           startTime: { type: "string", format: "date-time" },
           endTime: { type: "string", format: "date-time" },
           relativeTime: { type: "string" },
-          text: { type: "string" },
+          text: { type: "string", maxLength: SEARCH_QUERY_MAX_LENGTH },
           sourceId: { type: "string" },
-          filters: { type: "array" },
+          filters: { type: "array", maxItems: SEARCH_FILTERS_MAX },
           columns: { type: "array", items: { type: "string" } },
           sortBy: { type: "string", enum: ["timestamp", "level", "service", "host"] },
           sortDirection: { type: "string", enum: ["asc", "desc"] },
-          facets: { type: "array" },
-          exclusions: { type: "array" },
+          facets: { type: "array", maxItems: SEARCH_FILTERS_MAX },
+          exclusions: { type: "array", maxItems: SEARCH_FILTERS_MAX },
           pageSize: { type: "integer" },
         },
       },
@@ -900,15 +907,20 @@ export const openApiSpec = {
       NaturalQueryRequest: {
         type: "object",
         required: ["teamId", "query"],
-        properties: { teamId: { type: "string" }, query: { type: "string", minLength: 3 } },
+        properties: {
+          teamId: { type: "string" },
+          query: { type: "string", minLength: 3, maxLength: SEARCH_QUERY_MAX_LENGTH },
+        },
       },
       LogFilter: {
         type: "object",
         required: ["field", "operator", "value"],
         properties: {
-          field: { type: "string" },
+          field: { type: "string", maxLength: SEARCH_FILTER_FIELD_MAX_LENGTH },
           operator: { type: "string", enum: ["eq", "neq", "gt", "lt", "contains"] },
-          value: { oneOf: [{ type: "string" }, { type: "number" }] },
+          value: {
+            oneOf: [{ type: "string", maxLength: SEARCH_FILTER_VALUE_MAX_LENGTH }, { type: "number" }],
+          },
         },
       },
       NaturalQueryPlan: {

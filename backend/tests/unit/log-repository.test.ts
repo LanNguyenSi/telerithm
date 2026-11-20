@@ -21,6 +21,7 @@ vi.mock("../../src/repositories/clickhouse.js", () => ({
 }));
 
 import { LogRepository } from "../../src/repositories/log-repository.js";
+import { SEARCH_QUERY_MAX_TOKENS } from "../../src/constants/search.js";
 
 describe("LogRepository search query building", () => {
   beforeEach(() => {
@@ -304,6 +305,59 @@ describe("LogRepository — search query term expansion", () => {
     const params = queryMock.mock.calls[0]?.[0].query_params;
     // 'processing' ends with 'ing' (length > 5) → 'process' added as variant
     expect(Object.values(params)).toContain("%process%");
+  });
+});
+
+describe("LogRepository: search token cap (defensive, non-route callers)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function tokenGroupIndices(params: Record<string, unknown>): number[] {
+    const indices = new Set<number>();
+    for (const key of Object.keys(params)) {
+      const match = /^search_(\d+)_\d+$/.exec(key);
+      if (match) indices.add(Number(match[1]));
+    }
+    return [...indices].sort((a, b) => a - b);
+  }
+
+  async function searchOnce(query: string): Promise<{ sql: string; params: Record<string, unknown> }> {
+    queryMock.mockResolvedValueOnce({ json: vi.fn().mockResolvedValue([{ total: "0" }]) });
+    queryMock.mockResolvedValueOnce({ json: vi.fn().mockResolvedValue([]) });
+    const repo = new LogRepository();
+    await repo.search({ teamId: "t1", queryType: "sql", query });
+    const call = queryMock.mock.calls[0]?.[0];
+    return { sql: call.query as string, params: call.query_params as Record<string, unknown> };
+  }
+
+  it("never builds more than the capped number of token groups, whatever the query", async () => {
+    // 300 distinct tokens: far past both the token cap and every route check.
+    const query = Array.from({ length: 300 }, (_, i) => `alpha${i}x`).join(" ");
+    const { sql, params } = await searchOnce(query);
+
+    const groups = tokenGroupIndices(params);
+    expect(groups).toHaveLength(SEARCH_QUERY_MAX_TOKENS);
+    expect(groups[0]).toBe(0);
+    expect(groups[groups.length - 1]).toBe(SEARCH_QUERY_MAX_TOKENS - 1);
+    expect(sql.match(/message ILIKE/g)).toHaveLength(SEARCH_QUERY_MAX_TOKENS);
+  });
+
+  it("keeps a query at the cap fully intact (no off-by-one truncation)", async () => {
+    const tokens = Array.from({ length: SEARCH_QUERY_MAX_TOKENS }, (_, i) => `alpha${i}x`);
+    const { params } = await searchOnce(tokens.join(" "));
+
+    const groups = tokenGroupIndices(params);
+    expect(groups).toHaveLength(SEARCH_QUERY_MAX_TOKENS);
+    expect(Object.values(params)).toContain(`%${tokens[SEARCH_QUERY_MAX_TOKENS - 1]}%`);
+  });
+
+  it("collapses repeated tokens into a single group", async () => {
+    const { sql, params } = await searchOnce("alpha alpha alpha alpha alpha");
+
+    expect(tokenGroupIndices(params)).toEqual([0]);
+    expect(sql.match(/message ILIKE/g)).toHaveLength(1);
+    expect(Object.values(params).filter((v) => v === "%alpha%")).toHaveLength(1);
   });
 });
 
