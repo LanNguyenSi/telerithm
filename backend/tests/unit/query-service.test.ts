@@ -459,6 +459,22 @@ describe("QueryService — validateGeneratedFilters (via natural search)", () =>
     expect(nlqFilterPrunedTotalIncMock).toHaveBeenCalledWith({ field: "level", reason: "unknown_value" });
   });
 
+  it("labels a pruned source_id filter with the normalized field name, not _unknown", async () => {
+    translateQueryMock.mockResolvedValue({
+      explanation: "test",
+      filtersApplied: [{ field: "source_id", operator: "eq", value: "   " }],
+      textTerms: [],
+      warnings: [],
+    });
+    searchMock.mockResolvedValueOnce(makeSearchResult({ total: 0 }));
+    const service = new QueryService();
+    await service.search({ teamId: "t1", queryType: "natural", query: "source errors" });
+    expect(nlqFilterPrunedTotalIncMock).toHaveBeenCalledWith({ field: "source_id", reason: "empty" });
+    expect(nlqFilterPrunedTotalIncMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ field: "_unknown" }),
+    );
+  });
+
   it("keeps unknown field filters (pass-through for custom fields)", async () => {
     translateQueryMock.mockResolvedValue({
       explanation: "test",
