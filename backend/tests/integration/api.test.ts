@@ -3122,8 +3122,12 @@ describe("API Routes", () => {
         expect(await counterSumForRoute(UNMATCHED_ROUTE)).toBeGreaterThanOrEqual(before + 9);
       });
 
-      const counterLabels = new Set((await httpRequestsTotal.get()).values.map((v) => String(v.labels.route)));
-      const histogramLabels = new Set((await httpRequestDuration.get()).values.map((v) => String(v.labels.route)));
+      const counterLabels = new Set(
+        (await httpRequestsTotal.get()).values.map((v) => String(v.labels.route)),
+      );
+      const histogramLabels = new Set(
+        (await httpRequestDuration.get()).values.map((v) => String(v.labels.route)),
+      );
       expect(counterLabels.has(UNMATCHED_ROUTE)).toBe(true);
       expect(histogramLabels.has(UNMATCHED_ROUTE)).toBe(true);
       expect([...counterLabels].filter((label) => label.includes(marker))).toEqual([]);
@@ -3173,7 +3177,9 @@ describe("API Routes", () => {
     // { fields, line } pairs. The token must appear in neither.
     function loggedAcceptEntries(): { fields: Record<string, unknown>; line: string }[] {
       return childLog.info.mock.calls
-        .filter((call) => typeof call[1] === "string" && (call[1] as string).includes("/accept"))
+        .filter(
+          (call) => typeof call[1] === "string" && (call[1] as string).toLowerCase().includes("/accept"),
+        )
         .map((call) => ({ fields: call[0] as Record<string, unknown>, line: call[1] as string }));
     }
 
@@ -3226,6 +3232,37 @@ describe("API Routes", () => {
       expectNoTokenLogged();
     });
 
+    it("redacts the path token in an upper-case path (express routes match case-insensitively)", async () => {
+      childLog.info.mockClear();
+      const res = await app.post(`/api/v1/INVITES/${TOKEN}/ACCEPT`);
+      expect(res.status).toBe(401);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/INVITES/REDACTED/ACCEPT 401");
+      expectNoTokenLogged();
+    });
+
+    it("does not redact a path that only starts with /accept (acceptx)", async () => {
+      childLog.info.mockClear();
+      const res = await app.post("/api/v1/invites/abc/acceptx");
+      expect(res.status).toBe(404);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/abc/acceptx 404");
+    });
+
+    it("does not redact across a slash: /invites/a/b/accept is logged verbatim", async () => {
+      childLog.info.mockClear();
+      const res = await app.post("/api/v1/invites/a/b/accept");
+      expect(res.status).toBe(404);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/a/b/accept 404");
+    });
+
     it("redacts the path token when it is URL-encoded", async () => {
       childLog.info.mockClear();
       // The raw request target keeps the percent-encodings (express does not
@@ -3244,7 +3281,9 @@ describe("API Routes", () => {
       childLog.info.mockClear();
       mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-9" }));
       mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeLogInvite({ email: "target@team-a.com" }));
-      mockedPrisma.user.findUnique.mockResolvedValueOnce(makeUser({ id: "user-9", email: "someone-else@x.com" }));
+      mockedPrisma.user.findUnique.mockResolvedValueOnce(
+        makeUser({ id: "user-9", email: "someone-else@x.com" }),
+      );
 
       const res = await app.post(`/api/v1/invites/${TOKEN}/accept`).set("Authorization", "Bearer sess_admin");
       expect(res.status).toBe(400);
