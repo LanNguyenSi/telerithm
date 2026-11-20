@@ -111,6 +111,9 @@ describe("sidebar avatar chip contrast", () => {
     expect(chipClasses).toContain("text-[#22d3ee]");
     expect(chipClasses).not.toContain("bg-signal");
     expect(chipClasses).not.toContain("text-signal");
+    // The sidebar is dark in both schemes, so the chip must not switch colour
+    // per scheme: any dark:/light: variant would bypass the fixed pair above.
+    expect(chipClasses).not.toMatch(/(^|\s)(dark|light):/);
   });
 
   it("the avatar initial reaches 4.5:1 on the chip over the sidebar surface", () => {
