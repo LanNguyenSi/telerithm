@@ -2269,6 +2269,8 @@ apiRouter.get(
 
     // The credentials were checked once above; the stream re-checks the session
     // and the team membership on every heartbeat and ends when either is gone.
+    // A user may hold config.maxStreamsPerUser streams at once (per process);
+    // the answer to one more is a 429 before any stream header is written.
     const unsubscribe = streamingService.subscribe(
       teamId,
       res,
@@ -2280,7 +2282,10 @@ apiRouter.get(
         query,
       },
       () => auth.recheck(teamId),
+      { userId, max: config.maxStreamsPerUser },
     );
-    req.on("close", unsubscribe);
+    if (unsubscribe === null) {
+      res.status(429).json({ error: "Too many open live tail streams" });
+    }
   }),
 );

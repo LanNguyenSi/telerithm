@@ -532,7 +532,7 @@ export const openApiSpec = {
       get: {
         summary: "Server-Sent Events log stream",
         description:
-          "Authenticates with the bearer in the Authorization header, or with a one-time ?ticket= from POST /stream/ticket (EventSource cannot set headers). The session token is not accepted as a query parameter. When both are sent, the header wins and the ticket is not consumed. A ticket opens the stream of the team it was issued for only; an unknown, expired, already used or other-team ticket answers 401 with the same body. The session and the membership of the caller in the team are re-checked on every 15-second heartbeat; the stream ends at the first heartbeat after the user stops being ACTIVE, is removed from the team or the session is gone.",
+          "Authenticates with the bearer in the Authorization header, or with a one-time ?ticket= from POST /stream/ticket (EventSource cannot set headers). The session token is not accepted as a query parameter. When both are sent, the header wins and the ticket is not consumed. A ticket opens the stream of the team it was issued for only; an unknown, expired, already used or other-team ticket answers 401 with the same body. The session and the membership of the caller in the team are re-checked on every 15-second heartbeat; the stream ends at the first heartbeat after the user stops being ACTIVE, is removed from the team or the session is gone. One user may hold at most MAX_STREAMS_PER_USER (default 5) open streams per backend process; the next request answers 429.",
         tags: ["Streaming"],
         security: [{ bearerAuth: [] }],
         parameters: [
@@ -554,6 +554,10 @@ export const openApiSpec = {
           200: { description: "SSE stream", content: { "text/event-stream": {} } },
           401: {
             description: "Missing or invalid bearer token, or an unknown, expired, used or other-team ticket",
+          },
+          429: {
+            description:
+              "The user already holds MAX_STREAMS_PER_USER (default 5) open streams on this backend process; body { error }, no stream is opened",
           },
         },
       },

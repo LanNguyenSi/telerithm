@@ -3087,6 +3087,278 @@ describe("API Routes", () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // Bounded route label for unmatched requests and invite-token path redaction
+  // (backend/src/app.ts access-log/metrics middleware).
+  // ---------------------------------------------------------------------------
+
+  describe("Route labels for unmatched and matched requests", () => {
+    async function counterSumForRoute(route: string): Promise<number> {
+      const { httpRequestsTotal } = await import("../../src/metrics/index.js");
+      const metric = await httpRequestsTotal.get();
+      return metric.values
+        .filter((v) => v.labels.route === route)
+        .reduce((sum, v) => sum + (v.value ?? 0), 0);
+    }
+
+    // N distinct random 404 paths (plus one unmatched non-404: the swagger
+    // static handler leaves req.route unset) must mint at most ONE new route
+    // label value, the constant; no raw path may ever become a label value.
+    it("labels every unmatched request _unmatched on both http metrics", async () => {
+      const { UNMATCHED_ROUTE } = await import("../../src/app.js");
+      const { httpRequestsTotal, httpRequestDuration } = await import("../../src/metrics/index.js");
+
+      const before = await counterSumForRoute(UNMATCHED_ROUTE);
+      const marker = `zzunmatched${Math.random().toString(36).slice(2, 10)}`;
+      for (let i = 0; i < 8; i++) {
+        const res = await app.get(`/${marker}-${i}`);
+        expect(res.status).toBe(404);
+      }
+      const docsRes = await app.get("/docs/").redirects(1);
+      expect(docsRes.status).toBe(200);
+
+      // All nine requests share the one constant, so the series grows by nine
+      // samples, not by nine distinct route values.
+      await vi.waitFor(async () => {
+        expect(await counterSumForRoute(UNMATCHED_ROUTE)).toBeGreaterThanOrEqual(before + 9);
+      });
+
+      const counterLabels = new Set(
+        (await httpRequestsTotal.get()).values.map((v) => String(v.labels.route)),
+      );
+      const histogramLabels = new Set(
+        (await httpRequestDuration.get()).values.map((v) => String(v.labels.route)),
+      );
+      expect(counterLabels.has(UNMATCHED_ROUTE)).toBe(true);
+      expect(histogramLabels.has(UNMATCHED_ROUTE)).toBe(true);
+      expect([...counterLabels].filter((label) => label.includes(marker))).toEqual([]);
+      expect([...histogramLabels].filter((label) => label.includes(marker))).toEqual([]);
+    });
+
+    it("keeps the router-relative pattern as the route label of a matched request", async () => {
+      const { UNMATCHED_ROUTE } = await import("../../src/app.js");
+      const { httpRequestsTotal } = await import("../../src/metrics/index.js");
+
+      const rawId = `zzmatched${Math.random().toString(36).slice(2, 10)}`;
+      const beforePattern = await counterSumForRoute("/issues/:id");
+      const beforeUnmatched = await counterSumForRoute(UNMATCHED_ROUTE);
+
+      const res = await app.get(`/api/v1/issues/${rawId}`);
+      expect(res.status).toBe(401);
+
+      await vi.waitFor(async () => {
+        expect(await counterSumForRoute("/issues/:id")).toBeGreaterThan(beforePattern);
+      });
+      expect(await counterSumForRoute(UNMATCHED_ROUTE)).toBe(beforeUnmatched);
+      const routeLabels = new Set((await httpRequestsTotal.get()).values.map((v) => v.labels.route));
+      expect(routeLabels.has(`/api/v1/issues/${rawId}`)).toBe(false);
+      expect(routeLabels.has(`/issues/${rawId}`)).toBe(false);
+    });
+  });
+
+  describe("POST /api/v1/invites/:token/accept - token redacted from the access log", () => {
+    const TOKEN = `invtoklogcheck${Math.random().toString(36).slice(2, 12)}`;
+
+    function makeLogInvite(overrides: Record<string, unknown> = {}) {
+      return {
+        id: "inv-logcheck-1",
+        teamId: "t1",
+        email: null,
+        token: TOKEN,
+        role: "MEMBER",
+        createdBy: "admin-1",
+        expiresAt: new Date("2099-01-01T00:00:00.000Z"),
+        usedAt: null,
+        createdAt: new Date("2026-03-23T00:00:00.000Z"),
+        ...overrides,
+      };
+    }
+
+    // Every access-log entry whose message carries the accept path, as
+    // { fields, line } pairs. The token must appear in neither.
+    function loggedAcceptEntries(): { fields: Record<string, unknown>; line: string }[] {
+      return childLog.info.mock.calls
+        .filter(
+          (call) => typeof call[1] === "string" && (call[1] as string).toLowerCase().includes("/accept"),
+        )
+        .map((call) => ({ fields: call[0] as Record<string, unknown>, line: call[1] as string }));
+    }
+
+    // The token is URL-safe (random base36), so any occurrence of "invtok" in
+    // a logged info call is this test's token reaching the log.
+    function expectNoTokenLogged() {
+      for (const call of childLog.info.mock.calls) {
+        expect(JSON.stringify(call)).not.toContain("invtok");
+      }
+    }
+
+    function expectRedactedAccessLine(expectedLine: string) {
+      const entries = loggedAcceptEntries();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].line).toBe(expectedLine);
+      expect(entries[0].fields.url).toBe(expectedLine.split(" ")[1]);
+    }
+
+    it("redacts the path token on the 401 answer (no auth), message and url field", async () => {
+      childLog.info.mockClear();
+      const res = await app.post(`/api/v1/invites/${TOKEN}/accept`);
+      expect(res.status).toBe(401);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/REDACTED/accept 401");
+      expectNoTokenLogged();
+    });
+
+    it("redacts the path token together with query redaction on a query-string variant", async () => {
+      childLog.info.mockClear();
+      const res = await app.post(`/api/v1/invites/${TOKEN}/accept?ticket=ticketsecretlogcheck`);
+      expect(res.status).toBe(401);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/REDACTED/accept?ticket=REDACTED 401");
+      expectNoTokenLogged();
+      expect(JSON.stringify(childLog.info.mock.calls)).not.toContain("ticketsecretlogcheck");
+    });
+
+    it("redacts the path token with a trailing slash", async () => {
+      childLog.info.mockClear();
+      const res = await app.post(`/api/v1/invites/${TOKEN}/accept/`);
+      expect(res.status).toBe(401);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/REDACTED/accept/ 401");
+      expectNoTokenLogged();
+    });
+
+    it("redacts the path token in an upper-case path (express routes match case-insensitively)", async () => {
+      childLog.info.mockClear();
+      const res = await app.post(`/api/v1/INVITES/${TOKEN}/ACCEPT`);
+      expect(res.status).toBe(401);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/INVITES/REDACTED/ACCEPT 401");
+      expectNoTokenLogged();
+    });
+
+    it("does not redact a path that only starts with /accept (acceptx)", async () => {
+      childLog.info.mockClear();
+      const res = await app.post("/api/v1/invites/abc/acceptx");
+      expect(res.status).toBe(404);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/abc/acceptx 404");
+    });
+
+    it("does not redact across a slash: /invites/a/b/accept is logged verbatim", async () => {
+      childLog.info.mockClear();
+      const res = await app.post("/api/v1/invites/a/b/accept");
+      expect(res.status).toBe(404);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/a/b/accept 404");
+    });
+
+    it("logs a query that only mentions /accept verbatim", async () => {
+      childLog.info.mockClear();
+      const res = await app.post("/api/v1/invites/abc?next=/accept");
+      expect(res.status).toBe(404);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/abc?next=/accept 404");
+    });
+
+    it("redacts every occurrence, also a second accept path in the query", async () => {
+      childLog.info.mockClear();
+      const res = await app.post(`/api/v1/invites/${TOKEN}/accept?r=/invites/${TOKEN}/accept`);
+      expect(res.status).toBe(401);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/REDACTED/accept?r=/invites/REDACTED/accept 401");
+      expectNoTokenLogged();
+    });
+
+    it("redacts the path token when it is URL-encoded", async () => {
+      childLog.info.mockClear();
+      // The raw request target keeps the percent-encodings (express does not
+      // re-encode req.originalUrl), so the segment reaching the logger is
+      // "inv%20tok%2Fcheck" and the redaction must still catch it.
+      const res = await app.post("/api/v1/invites/inv%20tok%2Fcheck/accept");
+      expect(res.status).toBe(401);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/REDACTED/accept 401");
+      expect(JSON.stringify(childLog.info.mock.calls)).not.toContain("inv%20tok%2Fcheck");
+    });
+
+    it("redacts the path token on the 400 answer (invite for a different email)", async () => {
+      childLog.info.mockClear();
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-9" }));
+      mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeLogInvite({ email: "target@team-a.com" }));
+      mockedPrisma.user.findUnique.mockResolvedValueOnce(
+        makeUser({ id: "user-9", email: "someone-else@x.com" }),
+      );
+
+      const res = await app.post(`/api/v1/invites/${TOKEN}/accept`).set("Authorization", "Bearer sess_admin");
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "Invite is for a different email" });
+
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/REDACTED/accept 400");
+      expectNoTokenLogged();
+    });
+
+    it("redacts the path token on the 400 answer (already a member)", async () => {
+      childLog.info.mockClear();
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-9" }));
+      mockedPrisma.teamInvite.findUnique.mockResolvedValueOnce(makeLogInvite());
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
+        id: "member-logcheck",
+        teamId: "t1",
+        userId: "user-9",
+        role: "MEMBER",
+        joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+      });
+
+      const res = await app.post(`/api/v1/invites/${TOKEN}/accept`).set("Authorization", "Bearer sess_admin");
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "Already a member of this team" });
+
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/REDACTED/accept 400");
+      expectNoTokenLogged();
+    });
+
+    it("leaves DELETE /invites/:id untouched: an id is not a token", async () => {
+      childLog.info.mockClear();
+      const res = await app.delete("/api/v1/invites/inv-logcheck-42");
+      expect(res.status).toBe(401);
+      await vi.waitFor(() => {
+        const entries = childLog.info.mock.calls.filter(
+          (call) => typeof call[1] === "string" && (call[1] as string).includes("/invites/"),
+        );
+        expect(entries).toHaveLength(1);
+      });
+      const entries = childLog.info.mock.calls.filter(
+        (call) => typeof call[1] === "string" && (call[1] as string).includes("/invites/"),
+      );
+      expect(entries[0][1]).toBe("DELETE /api/v1/invites/inv-logcheck-42 401");
+      expect((entries[0][0] as Record<string, unknown>).url).toBe("/api/v1/invites/inv-logcheck-42");
+    });
+  });
+
   describe("GET /docs", () => {
     it("serves Swagger UI", async () => {
       const res = await app.get("/docs/").redirects(1);
