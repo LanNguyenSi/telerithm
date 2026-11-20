@@ -19,6 +19,11 @@ describe("PaginationControls", () => {
     expect(screen.getByText(/Page 2 of 3/)).toBeInTheDocument();
   });
 
+  it("names the page size combobox through its wrapping label", () => {
+    render(<PaginationControls page={1} pageSize={50} total={150} onPageChange={() => {}} />);
+    expect(screen.getByRole("combobox", { name: /Rows:/ })).toBeInTheDocument();
+  });
+
   it("calls onPageChange when clicking previous", () => {
     const onPageChange = vi.fn();
     render(

@@ -243,6 +243,7 @@ export function IssueExplorer({ team }: { team: Team }) {
             />
             <Select
               name="status"
+              aria-label="Status"
               value={statusInput}
               onChange={setStatusInput}
               options={[...STATUS_OPTIONS]}
@@ -256,12 +257,14 @@ export function IssueExplorer({ team }: { team: Team }) {
             />
             <Select
               name="level"
+              aria-label="Level"
               value={levelInput}
               onChange={setLevelInput}
               options={[...LEVEL_OPTIONS]}
             />
             <Select
               name="sort"
+              aria-label="Sort"
               value={sortInput}
               onChange={setSortInput}
               options={[...SORT_OPTIONS]}
