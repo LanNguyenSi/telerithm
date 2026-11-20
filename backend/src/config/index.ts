@@ -196,6 +196,9 @@ const configSchema = z.object({
   // loadConfig clamps it to the ceiling and records a warning.
   maxPageSize: coercedIntSchema.min(50).default(SEARCH_LIMIT_CEILING),
   maxSyncRuntimeMs: coercedIntSchema.min(100).max(30_000).default(1500),
+  // Open live tail streams (GET /stream/logs) one user may hold at once, counted
+  // per backend process.
+  maxStreamsPerUser: coercedIntSchema.min(1).default(5),
   // Strict per-user limit on routes that trigger a real notification dispatch
   // (currently POST /subscriptions/:id/test). Default: 5 requests / 5 minutes.
   notificationTestRateLimitWindowMs: coercedIntSchema.positive().default(5 * 60_000),
@@ -253,6 +256,7 @@ function loadConfig(): Config {
     maxLookbackMs: process.env.MAX_LOOKBACK_MS,
     maxPageSize: process.env.MAX_PAGE_SIZE,
     maxSyncRuntimeMs: process.env.MAX_SYNC_RUNTIME_MS,
+    maxStreamsPerUser: process.env.MAX_STREAMS_PER_USER,
     notificationTestRateLimitWindowMs: process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS,
     notificationTestRateLimitMax: process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX,
     metricsToken: process.env.METRICS_TOKEN,
