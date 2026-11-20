@@ -5852,6 +5852,29 @@ describe("API Routes", () => {
   });
 
   describe("bounded search inputs", () => {
+    // Own app instance: the file-wide app's general limiter (200 requests a
+    // minute) is shared by every request in this file, and this block alone
+    // sends dozens, so it must not draw from the shared bucket.
+    let app: supertest.Agent;
+    let boundedServer: Server;
+
+    beforeAll(async () => {
+      const { createApp } = await import("../../src/app.js");
+      boundedServer = await new Promise<Server>((resolve, reject) => {
+        const s = createApp().listen(0);
+        s.once("listening", () => resolve(s));
+        s.once("error", reject);
+      });
+      app = supertest(boundedServer);
+    });
+
+    afterAll(async () => {
+      if (!boundedServer) return;
+      await new Promise<void>((resolve, reject) => {
+        boundedServer.close((err) => (err ? reject(err) : resolve()));
+      });
+    });
+
     // Values mirror the constants in backend/src/constants/search.ts spelled
     // out here so the pins are visible at the route; the unit file
     // tests/unit/search-input-limits.test.ts pins the constants themselves.
