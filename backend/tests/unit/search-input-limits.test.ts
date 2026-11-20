@@ -271,6 +271,17 @@ describe("saved-view definition limits", () => {
       expect(savedViewDefinitionSchema.safeParse({ ...full, filters: dropped }).success).toBe(true);
     });
 
+    it("uses the first matching entry even when it is empty and a later one has a value", () => {
+      const emptyFirst = [
+        { field: "level", operator: "eq", value: "" },
+        { field: "level", operator: "eq", value: "warn" },
+      ];
+      expect(
+        savedViewDefinitionSchema.safeParse({ filters: emptyFirst, facets: pairs(SEARCH_FILTERS_MAX) })
+          .success,
+      ).toBe(true);
+    });
+
     it("counts only the first matching entry of a form filter once", () => {
       const twice = [formFilters[0], { field: "level", operator: "eq", value: "warn" }];
       expect(

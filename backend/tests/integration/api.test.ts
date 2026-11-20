@@ -5759,6 +5759,18 @@ describe("API Routes", () => {
       expect(typeof over.body.error).toBe("string");
     });
 
+    it("GET /logs with queryType=natural is not refused by the token cap", async () => {
+      const searchSpy = vi
+        .spyOn(QueryService.prototype, "search")
+        .mockResolvedValue({ logs: [], total: 0 } as never);
+      authedMember();
+      const res = await app
+        .get(`/api/v1/logs?teamId=t1&queryType=natural&query=${encodeURIComponent(tokensOver)}`)
+        .set("Authorization", "Bearer sess_admin");
+      expect(res.status).toBe(200);
+      expect(searchSpy).toHaveBeenCalledTimes(1);
+    });
+
     it("POST /query/natural accepts the maximum query and rejects one character over", async () => {
       const explainSpy = vi
         .spyOn(QueryService.prototype, "explainNaturalQuery")
