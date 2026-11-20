@@ -98,7 +98,7 @@ export function LiveTail({ teamId }: { teamId: string }) {
           <h2 className="text-lg font-semibold text-ink">Live Tail</h2>
           <p className="text-xs text-muted">Dedicated stream mode, independent from historical search results.</p>
         </div>
-        <span className={connected ? "text-sm text-emerald-600 dark:text-emerald-400" : "text-sm text-muted"}>
+        <span className={connected ? "text-sm text-emerald-700 dark:text-emerald-400" : "text-sm text-muted"}>
           {running ? (connected ? "Connected" : "Waiting") : "Paused"}
         </span>
       </div>

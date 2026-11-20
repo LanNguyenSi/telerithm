@@ -41,7 +41,7 @@ export function RegisterForm({
         ) : (
           <form action={action} className="space-y-4">
             {state?.error && (
-              <p className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
+              <p role="alert" className="rounded-xl bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-900/20 dark:text-rose-300">
                 {state.error}
               </p>
             )}
