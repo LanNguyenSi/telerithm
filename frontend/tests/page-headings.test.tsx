@@ -241,3 +241,18 @@ describe("dashboard page headings", () => {
     assertPageHeading("Admin");
   });
 });
+
+describe("select comboboxes are named", () => {
+  it("names the Level combobox on the logs today page through its label", () => {
+    renderInLogAuth(<TodayScreen />);
+    const level = screen.getByRole("combobox", { name: "Level" });
+    expect(level).toHaveAttribute("id", "today-level");
+  });
+
+  it("names the Status, Level and Sort comboboxes on the issues page", () => {
+    render(<IssueExplorer team={team} />);
+    for (const name of ["Status", "Level", "Sort"]) {
+      expect(screen.getByRole("combobox", { name })).toBeInTheDocument();
+    }
+  });
+});

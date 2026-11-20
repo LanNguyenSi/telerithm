@@ -21,6 +21,8 @@ interface SelectProps {
   className?: string;
   buttonClassName?: string;
   listClassName?: string;
+  "aria-label"?: string;
+  "aria-labelledby"?: string;
 }
 
 export function Select({
@@ -34,10 +36,13 @@ export function Select({
   className,
   buttonClassName,
   listClassName,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledby,
 }: SelectProps) {
   const reactId = useId();
   const buttonId = id ?? `select-${reactId}`;
   const listboxId = `${buttonId}-listbox`;
+  const optionId = (index: number) => `${listboxId}-opt-${index}`;
   const containerRef = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const listboxRef = useRef<HTMLDivElement>(null);
@@ -113,7 +118,8 @@ export function Select({
       id={listboxId}
       ref={listboxRef}
       role="listbox"
-      aria-labelledby={buttonId}
+      aria-label={ariaLabel}
+      aria-labelledby={ariaLabelledby ?? (ariaLabel ? undefined : buttonId)}
       tabIndex={-1}
       style={dropdownStyle}
       className={clsx(
@@ -130,8 +136,10 @@ export function Select({
           return (
             <button
               key={option.value}
+              id={optionId(index)}
               type="button"
               role="option"
+              tabIndex={-1}
               aria-selected={isSelected}
               disabled={option.disabled}
               onMouseEnter={() => { if (!option.disabled) setFocusedIndex(index); }}
@@ -162,9 +170,13 @@ export function Select({
         id={buttonId}
         type="button"
         disabled={disabled}
+        role="combobox"
+        aria-label={ariaLabel}
+        aria-labelledby={ariaLabelledby}
         aria-haspopup="listbox"
-        aria-controls={listboxId}
+        aria-controls={isOpen ? listboxId : undefined}
         aria-expanded={isOpen}
+        aria-activedescendant={isOpen && focusedIndex >= 0 && options[focusedIndex] ? optionId(focusedIndex) : undefined}
         onClick={() => { if (!disabled) setIsOpen((open) => !open); }}
         onKeyDown={(event) => {
           if (disabled) return;
