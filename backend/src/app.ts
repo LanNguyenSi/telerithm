@@ -34,11 +34,13 @@ function redactTokenPath(url: string): string {
 }
 
 // Route label for requests that match no route: every 404 and the /docs static
-// handler have req.route undefined (the general limiter and cors answer before
-// this middleware, so 429s and CORS preflights are neither counted nor logged). Labelling those with the raw path would let any probe
-// path mint its own time series (unbounded cardinality), so they all share
-// this one constant. Matched routes keep the router-relative pattern
-// (req.route.path) for series continuity with existing dashboards.
+// handler have req.route undefined. The general limiter and cors answer before
+// this middleware, so their 429s and CORS preflights are neither counted nor
+// logged; route-level limiters answer later and keep their route label.
+// Labelling unmatched requests with the raw path would let any probe path mint
+// its own time series (unbounded cardinality), so they all share this one
+// constant. Matched routes keep the router-relative pattern (req.route.path)
+// for series continuity with existing dashboards.
 export const UNMATCHED_ROUTE = "_unmatched";
 
 export function createApp() {

@@ -3263,6 +3263,27 @@ describe("API Routes", () => {
       expectRedactedAccessLine("POST /api/v1/invites/a/b/accept 404");
     });
 
+    it("logs a query that only mentions /accept verbatim", async () => {
+      childLog.info.mockClear();
+      const res = await app.post("/api/v1/invites/abc?next=/accept");
+      expect(res.status).toBe(404);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/abc?next=/accept 404");
+    });
+
+    it("redacts every occurrence, also a second accept path in the query", async () => {
+      childLog.info.mockClear();
+      const res = await app.post(`/api/v1/invites/${TOKEN}/accept?r=/invites/${TOKEN}/accept`);
+      expect(res.status).toBe(401);
+      await vi.waitFor(() => {
+        expect(loggedAcceptEntries()).toHaveLength(1);
+      });
+      expectRedactedAccessLine("POST /api/v1/invites/REDACTED/accept?r=/invites/REDACTED/accept 401");
+      expectNoTokenLogged();
+    });
+
     it("redacts the path token when it is URL-encoded", async () => {
       childLog.info.mockClear();
       // The raw request target keeps the percent-encodings (express does not
