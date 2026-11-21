@@ -13,7 +13,7 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `GET`  | `/auth/settings`                  | Registration mode (no auth)       |
 | `GET`  | `/auth/me`                        | The caller as the database has them: `{ "user": { id, email, name, role, status } }` with `Cache-Control: no-store`. The frontend reads the instance role from here for its admin pages; a missing, expired or unknown token, or a user who is not `ACTIVE`, gets `401` |
 | `GET`, `POST` | `/teams`                   | Teams (list, create)              |
-| `POST`, `GET` | `/teams/:id/invites`       | Create and list team invites      |
+| `POST`, `GET` | `/teams/:id/invites`       | Create and list team invites. While `MULTI_TENANT=false` (the default) the create answers `400 {"error":"Invites are disabled in single-tenant mode"}` (see [configuration.md](configuration.md#tenancy-modes)) |
 | `POST` | `/invites/:token/accept`          | Accept an invite (logged-in user) |
 | `DELETE` | `/invites/:id`                  | Revoke an invite (OWNER, ADMIN). Any other caller, a non-member or a member without the manage role, gets the same 404 as for an unknown id |
 | `GET`, `POST` | `/sources`                 | Ingestion sources (list, create); the list carries a masked `keyHint` (for example `lf_****a7c1`) only for OWNER and ADMIN and never the full `apiKey`, the create response shows the full key once to the creator, with `Cache-Control: no-store` |

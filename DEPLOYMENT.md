@@ -34,7 +34,7 @@ nano .env.production
 **Required variables:**
 
 - `POSTGRES_PASSWORD`: Strong password for PostgreSQL
-- `ADMIN_EMAIL`: Email of the instance admin. With `REGISTRATION_MODE=approval` or `invite-only`, the account registered with this address is the only one that becomes active (and instance admin) without approval; without it, no account can be approved and nobody can log in. Addresses are not verified, so set your own address (not the `admin@example.com` placeholder from `.env.production.example`) and register that account right after the first start, before the instance is reachable by others.
+- `ADMIN_EMAIL`: Email of the instance admin. With `REGISTRATION_MODE=approval` or `invite-only`, the account registered with this address is the only one that becomes active (and instance admin) without approval; with the line empty, nobody becomes admin: no account can be approved and nobody can log in. `.env.production.example` ships the line empty (`ADMIN_EMAIL=`), so open the file and set your own address before the first start. Addresses are not verified, so register that account right after the first start, before the instance is reachable by others.
 
 **Optional:**
 
