@@ -45,12 +45,12 @@ Run the checks CI runs (`.github/workflows/ci.yml`) in each package you changed:
 
 CI also enforces coverage floors for the backend, frontend and SDK tests; `.github/workflows/ci.yml` has the numbers.
 
-The backend job also guards the Prisma migrations before type checking (the steps from "Check baseline.prisma matches the baseline migration" to "Baseline against a second migration" in `.github/workflows/ci.yml`). These need a running Postgres: point `DATABASE_URL` at a fresh, empty database, which the first `migrate.sh` below fills (CI uses its `postgres:15` service, `postgresql://telerithm:telerithm@localhost:5432/telerithm`). From `backend/`:
+The backend job also guards the Prisma migrations before type checking (the steps from "Check baseline.prisma matches the baseline migration" to "Baseline against a second migration" in `.github/workflows/ci.yml`). These need a running Postgres: point `DATABASE_URL` at a fresh, empty database, which the first `migrate.sh` below fills (CI uses its `postgres:15` service, `postgresql://telerithm:telerithm@localhost:5432/telerithm`). From `backend/`, in bash (the second-run check uses a here-string):
 
 ```bash
 # the frozen baseline schema must still render byte-for-byte into the baseline migration (CI writes the diff to $RUNNER_TEMP, any scratch path works)
-npx prisma migrate diff --from-empty --to-schema-datamodel prisma/baseline.prisma --script | sed '1,3d;$d' > baseline.sql
-cmp baseline.sql prisma/migrations/20261027132152_baseline/migration.sql || { echo "baseline.prisma no longer produces the baseline migration byte for byte"; exit 1; }
+npx prisma migrate diff --from-empty --to-schema-datamodel prisma/baseline.prisma --script | sed '1,3d;$d' > "${TMPDIR:-/tmp}/baseline.sql"
+cmp "${TMPDIR:-/tmp}/baseline.sql" prisma/migrations/20261027132152_baseline/migration.sql || { echo "baseline.prisma no longer produces the baseline migration byte for byte"; exit 1; }
 # apply the committed migrations to the empty database (the step the container entrypoint runs)
 sh scripts/migrate.sh
 # the applied schema must equal schema.prisma, so a schema change without a migration fails (exit 2)
