@@ -46,7 +46,7 @@ nano .env.production
 - Use `invite-only` to disable public signup entirely
 - Use `open` only for demos or trusted internal environments
 
-Only the variables referenced in the backend `environment:` block of `docker-compose.traefik.yml` reach the container: `POSTGRES_PASSWORD`, `TRUST_PROXY`, `LOG_LEVEL`, `REGISTRATION_MODE`, `ADMIN_EMAIL`, `OPENAI_API_KEY` and `OPENAI_MODEL`. `.env.production` is only used to fill in those references. To set any other backend variable from [docs/configuration.md](docs/configuration.md) (for example `MULTI_TENANT` or `WEBHOOK_HOST_ALLOWLIST`), add a line for it to that block.
+Only the variables referenced in the backend `environment:` block of `docker-compose.traefik.yml` reach the container: `POSTGRES_PASSWORD`, `TRUST_PROXY`, `LOG_LEVEL`, `REGISTRATION_MODE`, `ADMIN_EMAIL`, `OPENAI_API_KEY`, `OPENAI_MODEL` and `METRICS_TOKEN`. `.env.production` is only used to fill in those references. To set any other backend variable from [docs/configuration.md](docs/configuration.md) (for example `MULTI_TENANT` or `WEBHOOK_HOST_ALLOWLIST`), add a line for it to that block.
 
 ### 3. Configure Domain
 
@@ -85,17 +85,17 @@ The backend container applies the committed Prisma migrations (`backend/prisma/m
 
 ```bash
 # Wait for services to be healthy (30-60 seconds)
-docker compose -f docker-compose.traefik.yml ps
+docker compose -f docker-compose.traefik.yml --env-file .env.production ps
 
 # The migration step logs its decisions with the prefix "migrate:"
-docker compose -f docker-compose.traefik.yml logs backend | grep 'migrate:'
+docker compose -f docker-compose.traefik.yml --env-file .env.production logs backend | grep 'migrate:'
 ```
 
 ### 6. Verify Deployment
 
 ```bash
 # Check service health
-docker compose -f docker-compose.traefik.yml ps
+docker compose -f docker-compose.traefik.yml --env-file .env.production ps
 
 # Test endpoints
 curl https://yourdomain.example/api/v1/health
@@ -230,11 +230,11 @@ No pending migrations to apply.
 
 and `_prisma_migrations` holds one row for `20261027132152_baseline` with `applied_steps_count` 0 (recorded, not run). Every later start finds the history (`migrate: migration history found`) and only runs `prisma migrate deploy`. An installation on a release older than v0.4.0 has an older schema, so the comparison fails: deploy v0.4.0 first (the last release that applies the schema with `prisma db push`; its `schema.prisma` is the baseline), then this version. The comparison is with `baseline.prisma`, a frozen copy of the schema the baseline migration creates (CI keeps it equal to the migration's SQL), not with the current `schema.prisma`. A later release that adds a migration therefore still baselines a database from before migrations: the start records the baseline, then `prisma migrate deploy` applies the later migrations on top. `baseline.prisma` is part of the image (the Dockerfile copies `backend/prisma/` whole), and it is never edited for a schema change.
 
-**When the start stops because the schema differs.** The log lists the difference as the changes that would make the database match `baseline.prisma` (an extra column shows as `[-] Removed column`), followed by `migrate: the database schema differs from the baseline schema prisma/baseline.prisma` and the recovery hint. The comparison is with the baseline, not with the current `schema.prisma`, so a database that already has a later migration's change applied by hand differs too. Nothing was changed. A start with `prisma/baseline.prisma` missing stops the same way with `migrate: prisma/baseline.prisma is missing` (a broken image; rebuild it). Read it with `docker compose -f docker-compose.traefik.yml logs backend`. Under deploy-panel / agent-relay the relay's `compose up` step fails (`compose up -d` waits for the backend health check because the frontend depends on it being healthy: the step output ends in `dependency failed to start: container ... is unhealthy`, and it carries only a log excerpt of the services that were running at that moment, which can miss a backend between two restarts), and `rollback: true` redeploys the previous commit, whose entrypoint still runs `prisma db push` at start; that replaces the container and its log. To recover:
+**When the start stops because the schema differs.** The log lists the difference as the changes that would make the database match `baseline.prisma` (an extra column shows as `[-] Removed column`), followed by `migrate: the database schema differs from the baseline schema prisma/baseline.prisma` and the recovery hint. The comparison is with the baseline, not with the current `schema.prisma`, so a database that already has a later migration's change applied by hand differs too. Nothing was changed. A start with `prisma/baseline.prisma` missing stops the same way with `migrate: prisma/baseline.prisma is missing` (a broken image; rebuild it). Read it with `docker compose -f docker-compose.traefik.yml --env-file .env.production logs backend`. Under deploy-panel / agent-relay the relay's `compose up` step fails (`compose up -d` waits for the backend health check because the frontend depends on it being healthy: the step output ends in `dependency failed to start: container ... is unhealthy`, and it carries only a log excerpt of the services that were running at that moment, which can miss a backend between two restarts), and `rollback: true` redeploys the previous commit, whose entrypoint still runs `prisma db push` at start; that replaces the container and its log. To recover:
 
 1. Back up the database: `./scripts/backup.sh /backups/telerithm`.
 2. Get the difference again, as SQL, from the new release: on the server checkout at the new commit with its backend image built (after a relay rollback the checkout and the image are the previous release, so run `git pull --rebase origin master` and `docker compose -f docker-compose.traefik.yml --env-file .env.production build backend` first), run `docker compose -f docker-compose.traefik.yml --env-file .env.production run --rm --no-deps backend npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/baseline.prisma --script > fix.sql`. A one-off container is needed because the new backend container never stays up.
-3. Then either make the database match the baseline: review `fix.sql` (it can drop columns and their data) and apply it with `docker compose -f docker-compose.traefik.yml exec -T postgres psql -U telerithm -d telerithm -v ON_ERROR_STOP=1 < fix.sql`. Or, when the difference is deliberate and the code works with it (an extra index, an extra nullable column), record the baseline without the check: `docker compose -f docker-compose.traefik.yml --env-file .env.production run --rm --no-deps backend npx prisma migrate resolve --applied 20261027132152_baseline`.
+3. Then either make the database match the baseline: review `fix.sql` (it can drop columns and their data) and apply it with `docker compose -f docker-compose.traefik.yml --env-file .env.production exec -T postgres psql -U telerithm -d telerithm -v ON_ERROR_STOP=1 < fix.sql`. Or, when the difference is deliberate and the code works with it (an extra index, an extra nullable column), record the baseline without the check: `docker compose -f docker-compose.traefik.yml --env-file .env.production run --rm --no-deps backend npx prisma migrate resolve --applied 20261027132152_baseline`.
 4. Deploy again (`make deploy-backend`, or `docker compose -f docker-compose.traefik.yml --env-file .env.production up -d backend` when the checkout is already at the new commit).
 
 Do not repair it with `prisma db push`: it makes the database match the schema without recording a migration, and drops whatever the schema does not have.
@@ -243,7 +243,7 @@ Do not repair it with `prisma db push`: it makes the database match the schema w
 
 1. Back up the database (`./scripts/backup.sh /backups/telerithm`) and read the failed migration's SQL (`backend/prisma/migrations/<migration>/migration.sql`) against the database. The one-off container of the earlier recovery shows what is still missing: `docker compose -f docker-compose.traefik.yml --env-file .env.production run --rm --no-deps backend npx prisma migrate diff --from-schema-datasource prisma/schema.prisma --to-schema-datamodel prisma/schema.prisma --script > fix.sql`, from the image of the release whose migration failed. The file is the SQL that would make the database match `schema.prisma`; with the failed migration the last one, that is the part that did not persist (empty when the migration did apply completely).
 2. Nothing persisted (the diff lists the whole migration): fix the cause, then `npx prisma migrate resolve --rolled-back <migration>`; the next start runs the migration again. Measured: a plain migration whose second statement failed left no trace, and after fixing the SQL and `--rolled-back` the next start applied it.
-3. Part of it persisted: do not use `--rolled-back`, the next run would stop on the first statement that already took effect (`type "..." already exists`, measured: it loops on that error). Complete the migration by hand: review and edit `fix.sql` from step 1 (change a statement that cannot work on the existing rows; for a new `NOT NULL` column without a default in `schema.prisma`, add it as nullable, fill it with an `UPDATE`, then `SET NOT NULL`, or add it with a default and drop that default again in the same file with `ALTER COLUMN ... DROP DEFAULT`), apply it with `docker compose -f docker-compose.traefik.yml exec -T postgres psql -U telerithm -d telerithm -v ON_ERROR_STOP=1 < fix.sql`, then run the step 1 diff again and continue only when its output is empty (anything left means the database still differs from `schema.prisma`), and record the migration with `npx prisma migrate resolve --applied <migration>`. Run `--applied` from the new release's image: it needs the migration directory and stops with `P3017` in the previous release's image, which does not have it. `--rolled-back` can run from either image.
+3. Part of it persisted: do not use `--rolled-back`, the next run would stop on the first statement that already took effect (`type "..." already exists`, measured: it loops on that error). Complete the migration by hand: review and edit `fix.sql` from step 1 (change a statement that cannot work on the existing rows; for a new `NOT NULL` column without a default in `schema.prisma`, add it as nullable, fill it with an `UPDATE`, then `SET NOT NULL`, or add it with a default and drop that default again in the same file with `ALTER COLUMN ... DROP DEFAULT`), apply it with `docker compose -f docker-compose.traefik.yml --env-file .env.production exec -T postgres psql -U telerithm -d telerithm -v ON_ERROR_STOP=1 < fix.sql`, then run the step 1 diff again and continue only when its output is empty (anything left means the database still differs from `schema.prisma`), and record the migration with `npx prisma migrate resolve --applied <migration>`. Run `--applied` from the new release's image: it needs the migration directory and stops with `P3017` in the previous release's image, which does not have it. `--rolled-back` can run from either image.
 4. Deploy again. Measured with the migration Prisma generates for an enum removal plus a required column: after the hand completion with an empty re-check diff and `--applied`, the next start reported no pending migrations.
 
 A failed migration also stops the relay rollback: the previous release's `prisma migrate deploy` meets the same unfinished row and stops with `P3009`, so its container does not come up either until the row is resolved as above (resolve it as above; after a relay rollback the checkout and the image are the previous release, so pull and build the new commit first, as in the schema-difference recovery). To keep this recovery small, put an enum value removal in a migration of its own: if that migration fails, nothing else shares its transaction boundary, and the other changes live in a migration that rolls back as a whole.
@@ -263,17 +263,17 @@ It writes `prisma/migrations/<timestamp>_add_source_description/migration.sql`, 
 `backend/clickhouse/init.sql` runs only when the ClickHouse data directory is empty, that is on the first start of a new `chdata` volume. A deploy that changes the file does not change the running tables and does not report anything: the old schema stays in place. Apply the change by hand with an `ALTER TABLE` and keep `init.sql` in step so a fresh install gets the same schema. For example, to shorten the retention of the `logs` table to 14 days (the same statement as in [docs/architecture.md](docs/architecture.md), see the ClickHouse [ALTER TABLE reference](https://clickhouse.com/docs/sql-reference/statements/alter) for other changes):
 
 ```bash
-docker compose -f docker-compose.traefik.yml exec clickhouse \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec clickhouse \
   clickhouse-client --query "ALTER TABLE logs MODIFY TTL toDateTime(timestamp) + INTERVAL 14 DAY"
 ```
 
 ### ClickHouse configuration changes
 
-The files in `backend/clickhouse/config.d/` (`limits.xml`, `system-logs.xml`; `limits.xml` holds the server-wide memory ratio only) reach the running ClickHouse container on a deploy: the directory is bind-mounted over the container's `/etc/clickhouse-server/config.d`, so a file that `git pull` replaces is visible inside the container without recreating it. ClickHouse re-reads `config.d` on its own and applies server settings such as `max_server_memory_usage_to_ram_ratio` within seconds; the system log settings in `system-logs.xml` are read at server start, so after changing them restart ClickHouse once (`docker compose -f docker-compose.traefik.yml restart clickhouse`). A TTL change there only applies to newly created log tables, see [docs/okf/clickhouse-retention-and-memory-limits.md](docs/okf/clickhouse-retention-and-memory-limits.md).
+The files in `backend/clickhouse/config.d/` (`limits.xml`, `system-logs.xml`; `limits.xml` holds the server-wide memory ratio only) reach the running ClickHouse container on a deploy: the directory is bind-mounted over the container's `/etc/clickhouse-server/config.d`, so a file that `git pull` replaces is visible inside the container without recreating it. ClickHouse re-reads `config.d` on its own and applies server settings such as `max_server_memory_usage_to_ram_ratio` within seconds; the system log settings in `system-logs.xml` are read at server start, so after changing them restart ClickHouse once (`docker compose -f docker-compose.traefik.yml --env-file .env.production restart clickhouse`). A TTL change there only applies to newly created log tables, see [docs/okf/clickhouse-retention-and-memory-limits.md](docs/okf/clickhouse-retention-and-memory-limits.md).
 
-The directory replaces the image's own `config.d`, so it also holds `docker_related_config.xml`, a copy of the image's file that makes the server listen on all addresses; without it the backend cannot connect to ClickHouse. When you change the ClickHouse image tag, compare it with the new image's file, and check the new image's `users.d` and entrypoint too: the image's own `users.d` is empty (checked on 24.10.2.80 and 24.12.6.70), but the entrypoint may write a file there at start (see the `users.d` paragraph below). The tag is pinned to a minor (see [Base image versions](#base-image-versions)), so it only moves when you change it in the compose files: start the new tag once in a throwaway container with `config.d` and `users.d` mounted read-only before you do. A malformed XML file in the directory makes ClickHouse exit at start; a running server keeps its old config, so the error only shows at the next restart (host reboot, OOM, the next recreate) and the container then restarts in a loop. After a deploy that touches `config.d`, check `docker compose -f docker-compose.traefik.yml logs clickhouse` for config errors. To confirm a deploy took effect: `docker compose -f docker-compose.traefik.yml exec clickhouse ls -la /etc/clickhouse-server/config.d` lists the three files, and `exec clickhouse clickhouse-client --query "SELECT name, value FROM system.server_settings WHERE name = 'max_server_memory_usage_to_ram_ratio'"` shows the live value.
+The directory replaces the image's own `config.d`, so it also holds `docker_related_config.xml`, a copy of the image's file that makes the server listen on all addresses; without it the backend cannot connect to ClickHouse. When you change the ClickHouse image tag, compare it with the new image's file, and check the new image's `users.d` and entrypoint too: the image's own `users.d` is empty (checked on 24.10.2.80 and 24.12.6.70), but the entrypoint may write a file there at start (see the `users.d` paragraph below). The tag is pinned to a minor (see [Base image versions](#base-image-versions)), so it only moves when you change it in the compose files: start the new tag once in a throwaway container with `config.d` and `users.d` mounted read-only before you do. A malformed XML file in the directory makes ClickHouse exit at start; a running server keeps its old config, so the error only shows at the next restart (host reboot, OOM, the next recreate) and the container then restarts in a loop. After a deploy that touches `config.d`, check `docker compose -f docker-compose.traefik.yml --env-file .env.production logs clickhouse` for config errors. To confirm a deploy took effect: `docker compose -f docker-compose.traefik.yml --env-file .env.production exec clickhouse ls -la /etc/clickhouse-server/config.d` lists the three files, and `exec clickhouse clickhouse-client --query "SELECT name, value FROM system.server_settings WHERE name = 'max_server_memory_usage_to_ram_ratio'"` shows the live value.
 
-The per-query limits live in `backend/clickhouse/users.d/limits.xml`, not in `config.d`: ClickHouse reads settings profiles only from the users config (`users.xml` and `users.d`) and ignores a `<profiles>` block in `config.d`. The `default` profile there caps one query at 2 GiB (`max_memory_usage`), so a query that needs more fails with `MEMORY_LIMIT_EXCEEDED` (on 24.10 worded "Memory limit (for query) exceeded"; newer images word it differently, so match the code), and lets `GROUP BY` and `ORDER BY` spill to disk from 1 GiB (`max_bytes_before_external_group_by`, `max_bytes_before_external_sort`). The directory is mounted over `/etc/clickhouse-server/users.d` in both compose files, read-only, and a changed file is applied within seconds without a restart (new queries see it). To confirm a deploy took effect: `docker compose -f docker-compose.traefik.yml exec clickhouse clickhouse-client --query "SELECT name, value FROM system.settings WHERE name IN ('max_memory_usage', 'max_bytes_before_external_group_by', 'max_bytes_before_external_sort')"` shows `2147483648`, `1073741824` and `1073741824`; `0` means the profile is not applied.
+The per-query limits live in `backend/clickhouse/users.d/limits.xml`, not in `config.d`: ClickHouse reads settings profiles only from the users config (`users.xml` and `users.d`) and ignores a `<profiles>` block in `config.d`. The `default` profile there caps one query at 2 GiB (`max_memory_usage`), so a query that needs more fails with `MEMORY_LIMIT_EXCEEDED` (on 24.10 worded "Memory limit (for query) exceeded"; newer images word it differently, so match the code), and lets `GROUP BY` and `ORDER BY` spill to disk from 1 GiB (`max_bytes_before_external_group_by`, `max_bytes_before_external_sort`). The directory is mounted over `/etc/clickhouse-server/users.d` in both compose files, read-only, and a changed file is applied within seconds without a restart (new queries see it). To confirm a deploy took effect: `docker compose -f docker-compose.traefik.yml --env-file .env.production exec clickhouse clickhouse-client --query "SELECT name, value FROM system.settings WHERE name IN ('max_memory_usage', 'max_bytes_before_external_group_by', 'max_bytes_before_external_sort')"` shows `2147483648`, `1073741824` and `1073741824`; `0` means the profile is not applied.
 
 The `clickhouse` service sets `CLICKHOUSE_SKIP_USER_SETUP: "1"` and none of `CLICKHOUSE_USER` (other than `default`), `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_PASSWORD_FILE` and `CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT`; do not add any of the four. The image entrypoint can write `users.d/default-user.xml`, which fails on the read-only mount (`Read-only file system`) and the container exits at start. How often it writes depends on the image: on 24.10 (measured on 24.10.2.80, the current `:24`) only when one of the four variables is set; on newer images (measured on 24.12.6.70) on every start, even with none set, to make `default` reachable from localhost only, which would crash on the read-only mount, or break the backend's remote connection on a writable one. `CLICKHOUSE_SKIP_USER_SETUP=1` makes a newer entrypoint skip all of that (24.10 ignores the variable), so `default` stays reachable from the backend container as before. On a newer image the variable also makes the entrypoint ignore the four variables without an error, so they would silently do nothing; on 24.10 one of them stops the container at start. `scripts/clickhouse-config-guard.sh` (CI job "ClickHouse config") fails when a compose sets one of the four or drops the skip variable.
 
@@ -296,9 +296,9 @@ To give ClickHouse a user with a password, add files to `backend/clickhouse/user
    </clickhouse>
    ```
 
-   Get the hash without leaving the password in the shell history: `read -rs PW; printf '%s' "$PW" | sha256sum | cut -d' ' -f1` (only the first field is the hash). Check it: `docker compose -f docker-compose.traefik.yml exec clickhouse clickhouse-client --user telerithm --password "$PW" --query "SELECT getSetting('max_memory_usage')"` returns `2147483648`, so the `default` profile from `limits.xml` applies to the new user.
+   Get the hash without leaving the password in the shell history: `read -rs PW; printf '%s' "$PW" | sha256sum | cut -d' ' -f1` (only the first field is the hash). Check it: `docker compose -f docker-compose.traefik.yml --env-file .env.production exec clickhouse clickhouse-client --user telerithm --password "$PW" --query "SELECT getSetting('max_memory_usage')"` returns `2147483648`, so the `default` profile from `limits.xml` applies to the new user.
 
-2. Point the backend at the new user. `CLICKHOUSE_URL` is written into `docker-compose.traefik.yml` (`http://clickhouse:8123`); change it to `http://telerithm:<password>@clickhouse:8123`, with special characters in the password percent-encoded, and commit the edit on the server checkout as described for the domain edit above (the file now holds the password in clear text, so keep the server checkout private). Recreate the backend so it picks up the new value (`docker compose -f docker-compose.traefik.yml up -d backend`) and check `GET /api/v1/health`: unauthenticated it answers the status code (503 while ClickHouse is unreachable) but names no dependency, so read the per-dependency detail with the metrics token (see "Prometheus metrics"): `docker compose -f docker-compose.traefik.yml exec backend node -e "fetch('http://127.0.0.1:4000/api/v1/health',{headers:{authorization:'Bearer '+process.env.METRICS_TOKEN}}).then(r=>r.json()).then((b)=>console.log(b.status,JSON.stringify(b.checks)))"` must print `ok` with `clickhouse: "ok"`. The token has to be set in the backend's environment for that per-dependency detail: with `METRICS_TOKEN` unset the command prints `ok undefined` (no `checks` object is returned to an unauthenticated caller), and there a `status` of `ok` on its own is the signal that every dependency answered.
+2. Point the backend at the new user. `CLICKHOUSE_URL` is written into `docker-compose.traefik.yml` (`http://clickhouse:8123`); change it to `http://telerithm:<password>@clickhouse:8123`, with special characters in the password percent-encoded, and commit the edit on the server checkout as described for the domain edit above (the file now holds the password in clear text, so keep the server checkout private). Recreate the backend so it picks up the new value (`docker compose -f docker-compose.traefik.yml --env-file .env.production up -d backend`) and check `GET /api/v1/health`: unauthenticated it answers the status code (503 while ClickHouse is unreachable) but names no dependency, so read the per-dependency detail with the metrics token (see "Prometheus metrics"): `docker compose -f docker-compose.traefik.yml --env-file .env.production exec backend node -e "fetch('http://127.0.0.1:4000/api/v1/health',{headers:{authorization:'Bearer '+process.env.METRICS_TOKEN}}).then(r=>r.json()).then((b)=>console.log(b.status,JSON.stringify(b.checks)))"` must print `ok` with `clickhouse: "ok"`. The token has to be set in the backend's environment for that per-dependency detail: with `METRICS_TOKEN` unset the command prints `ok undefined` (no `checks` object is returned to an unauthenticated caller), and there a `status` of `ok` on its own is the signal that every dependency answered.
 
 3. Only then restrict `default` to connections from inside the container, in a second file such as `default-localhost.xml`:
 
@@ -315,7 +315,7 @@ To give ClickHouse a user with a password, add files to `backend/clickhouse/user
    </clickhouse>
    ```
 
-   The compose health check and the init script on an empty data directory both connect as `default` from inside the container, so they keep working; from other containers `default` now gets `AUTHENTICATION_FAILED`. Check `docker compose -f docker-compose.traefik.yml logs clickhouse` for config errors after each step.
+   The compose health check and the init script on an empty data directory both connect as `default` from inside the container, so they keep working; from other containers `default` now gets `AUTHENTICATION_FAILED`. Check `docker compose -f docker-compose.traefik.yml --env-file .env.production logs clickhouse` for config errors after each step.
 
 Do not remove `default` outright (`<default remove="remove"/>`): the health check and the init script would fail, so the container would turn unhealthy and a fresh volume would not initialise. The files were run on 24.10.2.80 and 24.12.6.70, on a fresh and on an initialised volume.
 
@@ -329,7 +329,7 @@ The first deploy after this layout (the compose mounts changed) recreates the Cl
 # 1. Change the role's password. Use a password that is safe inside a URL
 #    (letters and digits, for example the output of `openssl rand -hex 24`):
 #    docker-compose.traefik.yml inserts it unescaped into DATABASE_URL.
-docker compose -f docker-compose.traefik.yml exec postgres \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec postgres \
   psql -U telerithm -c "ALTER USER telerithm PASSWORD 'NEW_PASSWORD'"
 
 # 2. Set POSTGRES_PASSWORD=NEW_PASSWORD in .env.production.
@@ -340,7 +340,7 @@ docker compose -f docker-compose.traefik.yml --env-file .env.production \
 
 # 4. Check the logs for authentication errors and sign in to the web UI;
 #    do not rely on the health check alone.
-docker compose -f docker-compose.traefik.yml logs --tail=50 backend
+docker compose -f docker-compose.traefik.yml --env-file .env.production logs --tail=50 backend
 ```
 
 Connections that are already open keep working after step 1, so there is no outage between step 1 and step 3. Store the new password where your backups of `.env.production` live.
@@ -349,11 +349,11 @@ Connections that are already open keep working after step 1, so there is no outa
 
 ```bash
 # Service status
-docker compose -f docker-compose.traefik.yml ps
+docker compose -f docker-compose.traefik.yml --env-file .env.production ps
 
 # Logs (all or specific)
-docker compose -f docker-compose.traefik.yml logs -f
-docker compose -f docker-compose.traefik.yml logs -f backend
+docker compose -f docker-compose.traefik.yml --env-file .env.production logs -f
+docker compose -f docker-compose.traefik.yml --env-file .env.production logs -f backend
 
 # Resource usage
 docker stats
@@ -361,10 +361,10 @@ docker stats
 
 ### Frontend health
 
-The `frontend` service has a healthcheck, so `docker compose -f docker-compose.traefik.yml ps` shows `(healthy)` for it like for the backend. The probe asks `http://127.0.0.1:3000/` from inside the container without following the redirect and passes on any status below 400: the Next.js middleware answers `/` with a 307 to `/login` without calling the backend, so the probe says the frontend server answers, not that the backend is up (`/login` itself renders on the server with a call to the backend and answers 500 while the backend is unreachable, so it is not used as the probe). The image has no `curl` or `wget`, hence `node`. The address is `127.0.0.1`, not `localhost`: inside the container `localhost` resolves to `::1` first while Next listens on `0.0.0.0` only, so a `localhost` probe passes only through Node's network-family autoselection (measured: `node --no-network-family-autoselection` exits 1 for `localhost` and 0 for `127.0.0.1`).
+The `frontend` service has a healthcheck, so `docker compose -f docker-compose.traefik.yml --env-file .env.production ps` shows `(healthy)` for it like for the backend. The probe asks `http://127.0.0.1:3000/` from inside the container without following the redirect and passes on any status below 400: the Next.js middleware answers `/` with a 307 to `/login` without calling the backend, so the probe says the frontend server answers, not that the backend is up (`/login` itself renders on the server with a call to the backend and answers 500 while the backend is unreachable, so it is not used as the probe). The image has no `curl` or `wget`, hence `node`. The address is `127.0.0.1`, not `localhost`: inside the container `localhost` resolves to `::1` first while Next listens on `0.0.0.0` only, so a `localhost` probe passes only through Node's network-family autoselection (measured: `node --no-network-family-autoselection` exits 1 for `localhost` and 0 for `127.0.0.1`).
 
 - A container that is `starting` or `unhealthy` gets no traffic from Traefik: the docker provider (Traefik v2.11, `pkg/provider/docker/config.go`) skips a container whose health status is not `healthy` unless it has no healthcheck, and re-reads the routes on every `health_status` event. `demo.telerithm.cloud` answers 404 for the frontend routes (the `/api` routes belong to the backend, which has its own healthcheck) from a recreate of the frontend until its first probe succeeds. Docker Engine 25 and later probes every 5 s during the 30 s start period (measured on 29.5: healthy 5 s after the start); older engines probe first after the 30 s interval.
-- Compose never restarts an unhealthy container: `restart: unless-stopped` acts on exit only. `unhealthy` takes three failed probes after the start period (measured about 90 s from the start for a frontend that never answered). The site stays dark until a probe succeeds again, which is at most one interval after a frontend that recovers on its own, or until someone restarts a frontend that does not recover (`docker compose -f docker-compose.traefik.yml restart frontend`), so alert on it.
+- Compose never restarts an unhealthy container: `restart: unless-stopped` acts on exit only. `unhealthy` takes three failed probes after the start period (measured about 90 s from the start for a frontend that never answered). The site stays dark until a probe succeeds again, which is at most one interval after a frontend that recovers on its own, or until someone restarts a frontend that does not recover (`docker compose -f docker-compose.traefik.yml --env-file .env.production restart frontend`), so alert on it.
 - The relay's own deploy check hits `/api/v1/health` (the backend), so a frontend that never becomes healthy does not roll the deploy back. After a deploy check that `ps` lists the frontend as `healthy` and that the site answers.
 
 ### Prometheus metrics
@@ -372,7 +372,7 @@ The `frontend` service has a healthcheck, so `docker compose -f docker-compose.t
 The backend exposes a Prometheus scrape endpoint at `/metrics` (served at the app root, not under `/api/v1`). It is gated by the `METRICS_TOKEN` environment variable: unset or empty (the default) answers `404` (endpoint disabled), and a request without a matching `Authorization: Bearer <METRICS_TOKEN>` answers `401`. Both prod composes interpolate the variable into the backend as `${METRICS_TOKEN:-}`, so set it in `.env.production` (see `.env.production.example`) and recreate the backend before scraping. In this deployment the backend publishes no host port and Traefik routes only `/api` to it, so read the endpoint from inside the container; the token is already in the container's environment, so it never has to appear on the command line:
 
 ```bash
-docker compose -f docker-compose.traefik.yml exec backend \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec backend \
   node -e "fetch('http://localhost:4000/metrics',{headers:{authorization:'Bearer '+process.env.METRICS_TOKEN}}).then(r => r.text()).then(console.log)"
 ```
 
@@ -424,13 +424,13 @@ tar -C "$(dirname "$1")" -cz "$(basename "$1")" \
 
 Then run `BACKUP_OFFHOST_HOOK=/root/bin/telerithm-offsite.sh ./scripts/backup.sh /backups/telerithm` (in cron, put the variable in the crontab line or in the cron environment). The script does not run restores: test one against a scratch stack before relying on the backups.
 
-The commands below are the manual equivalents and the restore steps. The script's ClickHouse file is gzip-compressed Native, so check and decompress both script files first, and stop if a command fails: `gunzip -t` finds a truncated archive, which `gunzip -c` would still partly write (`gunzip -t postgres.sql.gz && gunzip -c postgres.sql.gz > backup.sql`, `gunzip -t clickhouse_logs.native.gz && gunzip -c clickhouse_logs.native.gz > logs_backup.native`).
+The commands below are the manual equivalents and the restore steps. The script's ClickHouse file is gzip-compressed Native, so check and decompress both script files first, and stop if a command fails: `gunzip -t` finds a truncated archive, which `gunzip -c` would still partly write (`gunzip -t postgres.sql.gz && gunzip -c postgres.sql.gz > backup.sql`, `gunzip -t clickhouse_logs.native.gz && gunzip -c clickhouse_logs.native.gz > logs_backup.native`). Every `exec` below whose output is redirected to a file uses `-T`: it turns off the pseudo-terminal Compose would otherwise allocate, whose line-ending conversion corrupts a redirected dump (`scripts/backup.sh` dumps the same way, `exec -T` at `scripts/backup.sh:142`).
 
 ### PostgreSQL
 
 ```bash
 # Backup
-docker compose -f docker-compose.traefik.yml exec postgres \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec -T postgres \
   pg_dump -U telerithm telerithm > backup_$(date +%Y%m%d).sql
 ```
 
@@ -439,24 +439,24 @@ Restore into an empty target, in this order, with the backend stopped from step 
 ```bash
 # 1. Check the dump and keep what is there now
 test -s backup.sql
-docker compose -f docker-compose.traefik.yml exec -T postgres \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec -T postgres \
   pg_dump -U telerithm telerithm > pre-restore.sql
 test -s pre-restore.sql
 
 # 2. Stop the backend (see the note below)
-docker compose -f docker-compose.traefik.yml stop backend
+docker compose -f docker-compose.traefik.yml --env-file .env.production stop backend
 
 # 3. Recreate the database empty
-docker compose -f docker-compose.traefik.yml exec -T postgres \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec -T postgres \
   psql -v ON_ERROR_STOP=1 -U telerithm -d postgres \
   -c 'DROP DATABASE telerithm' -c 'CREATE DATABASE telerithm OWNER telerithm'
 
 # 4. Restore
-docker compose -f docker-compose.traefik.yml exec -T postgres \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec -T postgres \
   psql -v ON_ERROR_STOP=1 --single-transaction -U telerithm telerithm < backup.sql
 
 # 5. Bring the backend back
-docker compose -f docker-compose.traefik.yml start backend
+docker compose -f docker-compose.traefik.yml --env-file .env.production start backend
 ```
 
 A truncated plain-text dump is not detected by any of this: it restores with exit 0 up to the cut, which is why the `gunzip -t` above matters and why you compare row counts afterwards. The order, the two `test -s` checks, the `< backup.sql` redirect on the restore and the two `psql` flags are what make a failed restore visible, and they only work if you stop at the first command that fails: bring the backend back only after step 4 exited 0. `test -s backup.sql` is what catches an empty or missing dump before anything is destroyed, and it has to be a check of its own: psql exits 0 on empty input (measured), and a pipe reports only its last command's status, so the form this section used before (a `cat` of the dump into psql) read as a green restore over an empty database whenever `backup.sql` was missing or empty; `< backup.sql` makes an unreadable dump fail step 4 instead. Step 1 also copies what is in the database now to `pre-restore.sql` before step 3 drops it, and `test -s pre-restore.sql` checks that copy, so a `pg_dump` that wrote nothing is caught while the live database is still there; if the restore then fails, repeat step 4 with `pre-restore.sql` to go back. A failed restore leaves the database empty (step 3 recreated it, step 4's transaction rolled back), so the backend stays stopped: `backend/scripts/migrate.sh` treats an empty database as new, applies the baseline migration and the server comes up blank and healthy, so nothing later reports the failure. The backend is stopped before step 3 because it applies the Prisma migrations at every start (see [Database migrations](#database-migrations)): a backend that comes up mid-restore migrates a half-restored database, and while it is up its own connection also makes step 3 fail at `DROP DATABASE`. The dump is a plain `pg_dump` of the whole `telerithm` database, so against a non-empty target its `CREATE` statements fail on the existing objects and its `COPY` statements fail on tables with a unique key and append duplicates on tables without one; each `COPY` is atomic, so a table gains all of its rows or none. Without the two flags psql prints those errors and still exits 0, so the operator reads a green command over a database that holds a mixture of old and new rows; `-v ON_ERROR_STOP=1` makes psql exit non-zero at the first error instead, and `--single-transaction` wraps the whole restore, so that error rolls back and leaves the empty database from step 3 rather than a partial one. A scratch test of a backup starts from empty volumes with the backend stopped, so it exercises this path and not the partial-apply one. `pre-restore.sql` is a full unencrypted copy of the database, so keep it private and delete it once the restored data is verified; git does not ignore it, so do not `git add -A` while it is there. It does not block a deploy: `require-clean-tree` in the Makefile lists tracked files only (`git status --porcelain --untracked-files=no`) and `.relay.yml` has no clean-tree check, so an untracked file in the checkout blocks neither `make deploy` nor a relay deploy.
@@ -467,13 +467,13 @@ Export the `logs` table in ClickHouse's Native format; this needs no server conf
 
 ```bash
 # Backup
-docker compose -f docker-compose.traefik.yml exec -T clickhouse \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec -T clickhouse \
   clickhouse-client --query "SELECT * FROM logs FORMAT Native" > logs_backup.native
 
 # Restore: empty the table first (see the note below)
-docker compose -f docker-compose.traefik.yml exec -T clickhouse \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec -T clickhouse \
   clickhouse-client --query "TRUNCATE TABLE logs"
-docker compose -f docker-compose.traefik.yml exec -T clickhouse \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec -T clickhouse \
   clickhouse-client --query "INSERT INTO logs FORMAT Native" < logs_backup.native
 ```
 
@@ -487,11 +487,11 @@ Log rows already expire after 30 days through the `logs` table TTL (`backend/cli
 
 ```bash
 # Delete logs older than 14 days
-docker compose -f docker-compose.traefik.yml exec clickhouse \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec clickhouse \
   clickhouse-client --query "ALTER TABLE logs DELETE WHERE timestamp < now() - INTERVAL 14 DAY"
 
 # PostgreSQL vacuum (monthly)
-docker compose -f docker-compose.traefik.yml exec postgres \
+docker compose -f docker-compose.traefik.yml --env-file .env.production exec postgres \
   vacuumdb -U telerithm -z telerithm
 ```
 
@@ -517,8 +517,8 @@ What each one leaves alone. `docker image prune -f` removes only dangling images
 
 | Problem                    | Solution                                                                 |
 | -------------------------- | ------------------------------------------------------------------------ |
-| Services won't start       | `docker compose logs` to check errors                                    |
+| Services won't start       | `docker compose -f docker-compose.traefik.yml --env-file .env.production logs` to check errors |
 | SSL certificate issues     | Check DNS propagation with `nslookup yourdomain`                         |
-| Database connection errors | Test with `docker compose exec postgres psql -U telerithm -c "SELECT 1"` |
+| Database connection errors | Test with `docker compose -f docker-compose.traefik.yml --env-file .env.production exec postgres psql -U telerithm -c "SELECT 1"` |
 | Memory issues (OOM)        | Check `docker stats`, adjust limits in compose file                      |
 | AI queries not working     | See [LOCAL_LLM.md](LOCAL_LLM.md) for setup                               |
