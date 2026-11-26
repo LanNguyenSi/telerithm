@@ -38,6 +38,8 @@ vi.mock("../../src/config/index.js", () => ({
     maxLookbackMs: 7 * 24 * 60 * 60 * 1000,
     maxPageSize: 500,
     maxSyncRuntimeMs: 1500,
+    asyncJobsMaxInflightPerTeam: 10,
+    asyncJobsMaxInflight: 100,
     // Short window + small limit so the rate-limit tests below don't need
     // multi-second waits; this is a module-level singleton (captured once
     // when router.ts is imported in beforeAll), so it applies for the

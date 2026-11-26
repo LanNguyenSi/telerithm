@@ -140,7 +140,7 @@ curl http://localhost:4000/api/v1/query/jobs/<requestId> \
   -H "Authorization: Bearer <token>"
 ```
 
-The response is `{ requestId, status, data, error }`. `status` is `pending`, `completed` or `failed`; once completed, the result is in `data`. Jobs live in the backend process memory and are lost on restart.
+The response is `{ requestId, status, data, error }`. `status` is `pending`, `completed` or `failed`; once completed, the result is in `data`. Jobs live in the backend process memory and are lost on restart. The number of facet, histogram and pattern queries in flight, pending jobs and plain requests still inside the sync budget, is capped per team and per process (`ASYNC_JOBS_MAX_INFLIGHT_PER_TEAM`, `ASYNC_JOBS_MAX_INFLIGHT`): a request beyond the cap starts no query and answers `429` with a `Retry-After` header, see [api.md](api.md#async-query-job-cap).
 
 ## Domain stop words
 

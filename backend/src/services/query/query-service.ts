@@ -42,6 +42,27 @@ type AsyncJobRecord = {
   error?: string;
 };
 
+// Thrown by startAsyncJob and reserveSyncSlot, before any query is started, when
+// the team or the process already has its configured number of jobs in flight.
+export class AsyncJobCapError extends Error {
+  constructor(
+    readonly limit: "team" | "process",
+    readonly max: number,
+  ) {
+    super(
+      limit === "team"
+        ? `Team already has ${max} async query jobs in flight`
+        : `Process already has ${max} async query jobs in flight`,
+    );
+    this.name = "AsyncJobCapError";
+  }
+}
+
+export type SyncSlot = {
+  release(): void;
+  convertToJob(running: Promise<unknown>): { requestId: string; partial: true; cached: false };
+};
+
 const ASYNC_TTL_MS = 5 * 60 * 1000;
 
 export class QueryService {
@@ -154,20 +175,63 @@ export class QueryService {
     return this.logRepo.getPatterns(query);
   }
 
+  // Starts a job unless the team or the process already has its configured
+  // number of jobs in flight; then it throws AsyncJobCapError without calling
+  // the producer, so the route can answer 429. When both limits are reached the
+  // team limit is the one reported.
   startAsyncJob<T>(
     teamId: string,
     producer: () => Promise<T>,
   ): { requestId: string; partial: true; cached: false } {
-    this.cleanupAsyncJobs();
-    const requestId = randomUUID();
-    const base = {
-      requestId,
-      teamId,
-      createdAt: Date.now(),
-    };
-    this.asyncJobs.set(requestId, { ...base, status: "pending" });
+    const reserved = this.reserveAsyncSlot(teamId);
+    // A producer that throws before returning a promise settles the job as
+    // failed too, otherwise its pending record would hold a slot until expiry.
+    let running: Promise<T>;
+    try {
+      running = producer();
+    } catch (error) {
+      running = Promise.reject(error);
+    }
+    return this.settleJobWith(reserved, running);
+  }
 
-    void producer()
+  // Takes a slot for a query that runs inside the sync budget, under the same
+  // limits as a job: it throws AsyncJobCapError, before any query is started,
+  // when the team or the process is at its limit. The count and the slot are
+  // taken in one synchronous step. The caller then calls exactly one of
+  // release (the query finished or failed in time) and convertToJob (it outlived
+  // the budget: the slot becomes the job, which adopts the running query).
+  reserveSyncSlot(teamId: string): SyncSlot {
+    const reserved = this.reserveAsyncSlot(teamId);
+    let used = false;
+    return {
+      release: () => {
+        if (used) return;
+        used = true;
+        this.asyncJobs.delete(reserved.requestId);
+      },
+      convertToJob: (running) => {
+        if (used) throw new Error("Sync slot already used");
+        used = true;
+        return this.settleJobWith(reserved, running);
+      },
+    };
+  }
+
+  private reserveAsyncSlot(teamId: string): { requestId: string; teamId: string; createdAt: number } {
+    this.cleanupAsyncJobs();
+    this.assertAsyncJobCap(teamId);
+    const reserved = { requestId: randomUUID(), teamId, createdAt: Date.now() };
+    this.asyncJobs.set(reserved.requestId, { ...reserved, status: "pending" });
+    return reserved;
+  }
+
+  private settleJobWith(
+    base: { requestId: string; teamId: string; createdAt: number },
+    running: Promise<unknown>,
+  ): { requestId: string; partial: true; cached: false } {
+    const { requestId } = base;
+    void running
       .then((data) => {
         this.asyncJobs.set(requestId, { ...base, status: "completed", createdAt: Date.now(), data });
       })
@@ -179,7 +243,6 @@ export class QueryService {
           error: error instanceof Error ? error.message : "Async job failed",
         });
       });
-
     return { requestId, partial: true, cached: false };
   }
 
@@ -231,6 +294,24 @@ export class QueryService {
 
     await cache.set(cacheKey, summary, DASHBOARD_CACHE_TTL);
     return summary;
+  }
+
+  // Inflight means a pending record: completed, failed and expired records do
+  // not count. Callers run cleanupAsyncJobs first so an expired record is gone.
+  private assertAsyncJobCap(teamId: string): void {
+    let team = 0;
+    let total = 0;
+    for (const job of this.asyncJobs.values()) {
+      if (job.status !== "pending") continue;
+      total += 1;
+      if (job.teamId === teamId) team += 1;
+    }
+    if (team >= config.asyncJobsMaxInflightPerTeam) {
+      throw new AsyncJobCapError("team", config.asyncJobsMaxInflightPerTeam);
+    }
+    if (total >= config.asyncJobsMaxInflight) {
+      throw new AsyncJobCapError("process", config.asyncJobsMaxInflight);
+    }
   }
 
   private cleanupAsyncJobs(): void {
