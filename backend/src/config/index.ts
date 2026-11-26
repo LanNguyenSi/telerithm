@@ -214,6 +214,10 @@ const configSchema = z.object({
   // Default: 20 requests / 60 seconds.
   naturalQueryRateLimitWindowMs: coercedIntSchema.positive().default(60_000),
   naturalQueryRateLimitMax: coercedIntSchema.positive().default(20),
+  // Alert rules one team may own (enabled or not, so PUT cannot dodge the cap
+  // by disabling first). POST /alerts/rules answers 409 at the cap; teams
+  // already above it keep their rules and cannot create until they delete.
+  alertRulesMaxPerTeam: coercedIntSchema.positive().default(100),
   // Static token for GET /metrics and the per-dependency detail of
   // GET /api/v1/health (Authorization: Bearer). Unset or empty: /metrics
   // answers 404 (disabled) and health answers without the checks object; an
@@ -274,6 +278,7 @@ function loadConfig(): Config {
     notificationTestRateLimitMax: process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX,
     naturalQueryRateLimitWindowMs: process.env.NATURAL_QUERY_RATE_LIMIT_WINDOW_MS,
     naturalQueryRateLimitMax: process.env.NATURAL_QUERY_RATE_LIMIT_MAX,
+    alertRulesMaxPerTeam: process.env.ALERT_RULES_MAX_PER_TEAM,
     metricsToken: process.env.METRICS_TOKEN,
     trustProxy: process.env.TRUST_PROXY,
   });

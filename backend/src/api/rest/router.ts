@@ -1238,9 +1238,16 @@ writeRoute(
 // The team of a new rule comes from the body; PUT and DELETE take it from the
 // stored rule (loadRuleTeamId above), and the service scopes the write by
 // {id, teamId} again. A VIEWER gets 403 from writeRoute before any handler runs.
+// At config.alertRulesMaxPerTeam rules for the team, createRule throws a
+// ConflictError and the route answers 409 naming the cap; below it, 201.
 writeRoute("post", "/alerts/rules", teamFromBody(createAlertRuleSchema), async ({ res, teamId, input }) => {
-  const rule = await alertService.createRule(teamId, input);
-  res.status(201).json({ rule });
+  try {
+    const rule = await alertService.createRule(teamId, input);
+    res.status(201).json({ rule });
+  } catch (error) {
+    if (handleServiceError(error, res)) return;
+    throw error;
+  }
 });
 
 writeRoute(
@@ -1690,6 +1697,39 @@ writeRoute("post", "/alerts/incidents/:id/reopen", incidentTeam, async ({ req, r
   }
 });
 
+// Opaque timeline cursor: base64url of "<incidentId>:<createdAt ISO>:<id>",
+// the incident plus the keyset of the last row of the page (the order is
+// createdAt then id, and that pair is unique). The incident id is part of the
+// cursor, so a cursor issued for another incident is refused with the same 400
+// as an undecodable one, before any query. A timestamp is accepted only when
+// it round-trips through toISOString exactly (the canonical UTC form the route
+// itself writes) and its UTC year is between 1970 and 9999: an extended-year
+// timestamp (e.g. -271821-04-20T00:00:00.000Z) parses and round-trips but
+// makes the database driver throw, so it must not reach a query.
+function decodeTimelineCursor(value: string, incidentId: string): { createdAt: Date; id: string } | null {
+  const decoded = Buffer.from(value, "base64url").toString("utf8");
+  const first = decoded.indexOf(":");
+  const last = decoded.lastIndexOf(":");
+  if (first <= 0 || last <= first) return null;
+  const cursorIncidentId = decoded.slice(0, first);
+  const timestamp = decoded.slice(first + 1, last);
+  const id = decoded.slice(last + 1);
+  if (id === "") return null;
+  if (cursorIncidentId !== incidentId) return null;
+  const createdAt = new Date(timestamp);
+  if (Number.isNaN(createdAt.getTime())) return null;
+  if (createdAt.toISOString() !== timestamp) return null;
+  const year = createdAt.getUTCFullYear();
+  if (year < 1970 || year > 9999) return null;
+  return { createdAt, id };
+}
+
+function encodeTimelineCursor(incidentId: string, createdAt: Date, id: string): string {
+  return Buffer.from(`${incidentId}:${createdAt.toISOString()}:${id}`, "utf8").toString("base64url");
+}
+
+const TIMELINE_DEFAULT_LIMIT = 100;
+
 apiRouter.get(
   "/alerts/incidents/:id/timeline",
   asyncHandler(async (req, res) => {
@@ -1697,8 +1737,39 @@ apiRouter.get(
     if (userId === null) return;
     const teamId = await requireIncidentTeam(String(req.params.id), userId, res);
     if (teamId === null) return;
-    const events = await alertService.getIncidentTimeline(String(req.params.id), teamId);
-    res.json({ events });
+    let limit = TIMELINE_DEFAULT_LIMIT;
+    if (req.query.limit !== undefined) {
+      const parsed = Number(req.query.limit);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        res.status(400).json({ error: "limit must be a positive integer" });
+        return;
+      }
+      // Same message shape as the search limit clamp (enforceSearchLimits).
+      if (parsed > config.maxPageSize) {
+        res.status(400).json({ error: `limit exceeds maximum of ${config.maxPageSize}` });
+        return;
+      }
+      limit = parsed;
+    }
+    let after: { createdAt: Date; id: string } | undefined;
+    if (req.query.cursor !== undefined) {
+      const decoded = decodeTimelineCursor(String(req.query.cursor), String(req.params.id));
+      if (decoded === null) {
+        res.status(400).json({ error: "Invalid cursor" });
+        return;
+      }
+      after = decoded;
+    }
+    const { events, hasMore } = await alertService.getIncidentTimeline(String(req.params.id), teamId, {
+      limit,
+      after,
+    });
+    const last = events[events.length - 1];
+    const nextCursor =
+      hasMore && last !== undefined
+        ? encodeTimelineCursor(String(req.params.id), last.createdAt, last.id)
+        : null;
+    res.json({ events, nextCursor });
   }),
 );
 

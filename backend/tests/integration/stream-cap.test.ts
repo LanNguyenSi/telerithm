@@ -67,6 +67,7 @@ vi.mock("../../src/config/index.js", () => ({
     notificationTestRateLimitMax: 3,
     naturalQueryRateLimitWindowMs: 60_000,
     naturalQueryRateLimitMax: 1000,
+    alertRulesMaxPerTeam: 100,
     maxStreamsPerUser: 3,
   },
 }));

@@ -66,7 +66,10 @@ vi.mock("../../src/logger.js", () => ({
   }),
 }));
 
-import { AlertEvaluationWorker } from "../../src/services/alert/alert-evaluation-worker.js";
+import {
+  ALERT_RULE_EVAL_BATCH_SIZE,
+  AlertEvaluationWorker,
+} from "../../src/services/alert/alert-evaluation-worker.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -835,5 +838,114 @@ describe("AlertEvaluationWorker - log count query parameters", () => {
     expect(new Date(`${to.replace(" ", "T")}Z`).getTime() - new Date(`${from.replace(" ", "T")}Z`).getTime()).toBe(
       5 * 60_000,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Batched rule loading
+// ---------------------------------------------------------------------------
+
+describe("AlertEvaluationWorker: batched rule loading", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Nothing triggers: counts stay below every rule's threshold.
+    mockMaintenanceWindowFindFirst.mockResolvedValue(null);
+    mockAlertIncidentFindFirst.mockResolvedValue(null);
+    stubClickhouseCount(0);
+  });
+
+  it("pins the batch size constant at 500", () => {
+    expect(ALERT_RULE_EVAL_BATCH_SIZE).toBe(500);
+  });
+
+  function batchOf(prefix: string, offset: number, n: number) {
+    return Array.from({ length: n }, (_, i) =>
+      makeRule({ id: `${prefix}-${String(offset + i).padStart(4, "0")}` }),
+    );
+  }
+
+  it("loads more than one batch and evaluates every rule exactly once per tick", async () => {
+    const first = batchOf("r", 0, ALERT_RULE_EVAL_BATCH_SIZE);
+    const second = batchOf("r", ALERT_RULE_EVAL_BATCH_SIZE, 3);
+    const all = [...first, ...second];
+    let calls = 0;
+    mockAlertRuleFindMany.mockImplementation(async (args: { where: { id?: { gt?: string } } }) => {
+      // Call bound: a page cursor that never advances would spin forever.
+      calls += 1;
+      if (calls > 10) throw new Error("findMany called too often: the page cursor is not advancing");
+      const after = args.where.id?.gt;
+      if (after === undefined) return first;
+      if (after === first[first.length - 1].id) return second;
+      return [];
+    });
+
+    await privateWorker(new AlertEvaluationWorker()).evaluate();
+
+    // Two pages: full, then short.
+    expect(mockAlertRuleFindMany).toHaveBeenCalledTimes(2);
+    // Every rule of every batch evaluated exactly once, each counted as ok.
+    expect(mockMetricsEvaluationsInc).toHaveBeenCalledTimes(all.length);
+    expect(mockMetricsEvaluationsInc).toHaveBeenCalledWith({ status: "ok" });
+    // The second page starts after the first page's last id, ordered, and
+    // both pages carry a constant take.
+    expect(mockAlertRuleFindMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        where: { enabled: true },
+        orderBy: { id: "asc" },
+        take: ALERT_RULE_EVAL_BATCH_SIZE,
+      }),
+    );
+    expect(mockAlertRuleFindMany).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: { enabled: true, id: { gt: first[first.length - 1].id } },
+        orderBy: { id: "asc" },
+        take: ALERT_RULE_EVAL_BATCH_SIZE,
+      }),
+    );
+  });
+
+  it("stops paging at a short batch, asking for the rule list only once below the batch size", async () => {
+    let calls = 0;
+    mockAlertRuleFindMany.mockImplementation(async () => {
+      // Call bound: a stop condition that never fires would spin forever.
+      calls += 1;
+      if (calls > 10) throw new Error("findMany called too often: paging did not stop at a short batch");
+      return batchOf("r", 0, ALERT_RULE_EVAL_BATCH_SIZE - 1);
+    });
+
+    await privateWorker(new AlertEvaluationWorker()).evaluate();
+
+    expect(mockAlertRuleFindMany).toHaveBeenCalledTimes(1);
+    expect(mockMetricsEvaluationsInc).toHaveBeenCalledTimes(ALERT_RULE_EVAL_BATCH_SIZE - 1);
+  });
+
+  it("keeps the per-rule error handling while paging: a failing rule does not stop the batch or the pages", async () => {
+    const first = batchOf("r", 0, ALERT_RULE_EVAL_BATCH_SIZE);
+    const second = batchOf("r", ALERT_RULE_EVAL_BATCH_SIZE, 1);
+    let calls = 0;
+    mockAlertRuleFindMany.mockImplementation(async (args: { where: { id?: { gt?: string } } }) => {
+      calls += 1;
+      if (calls > 10) throw new Error("findMany called too often: the page cursor is not advancing");
+      const after = args.where.id?.gt;
+      if (after === undefined) return first;
+      if (after === first[first.length - 1].id) return second;
+      return [];
+    });
+    // The 7th rule hits a failing lookup; the loop must keep going.
+    let reached = 0;
+    mockMaintenanceWindowFindFirst.mockImplementation(async () => {
+      reached += 1;
+      if (reached === 7) throw new Error("db hiccup");
+      return null;
+    });
+
+    await privateWorker(new AlertEvaluationWorker()).evaluate();
+
+    // Every rule of both batches reached the per-handler try/catch exactly once.
+    expect(mockMetricsEvaluationsInc).toHaveBeenCalledTimes(ALERT_RULE_EVAL_BATCH_SIZE + 1);
+    expect(mockMetricsEvaluationsInc).toHaveBeenCalledWith({ status: "error" });
+    expect(mockMetricsEvaluationsInc).toHaveBeenCalledWith({ status: "ok" });
   });
 });
