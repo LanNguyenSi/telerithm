@@ -171,6 +171,85 @@ const notificationTestLimiter = rateLimit({
   ),
 });
 
+// Per-user limit for the LLM-backed natural-language query routes:
+// POST /query/natural, POST /logs/search with queryType "natural" and
+// GET /logs?queryType=natural. All three can reach the model
+// (query-service.ts calls it only for queryType "natural"), so they share
+// ONE bucket per user: a single rateLimit instance keyed by perUserKey, so
+// rotating between the paths does not multiply the budget. SQL search
+// (queryType absent or "sql") never enters the bucket and is never limited
+// here. Configurable via env (NATURAL_QUERY_RATE_LIMIT_WINDOW_MS / _MAX);
+// see docs/api.md.
+const naturalQueryLimiter = rateLimit({
+  windowMs: config.naturalQueryRateLimitWindowMs,
+  limit: config.naturalQueryRateLimitMax,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: perUserKey,
+  handler: rateLimitHandler(
+    "Too many natural-language queries, try again later",
+    config.naturalQueryRateLimitWindowMs,
+  ),
+});
+
+// Route-level gate for naturalQueryLimiter, mounted in front of the handler
+// on each of the three routes. Those routes authenticate inside the handler
+// (inline requireAuth), so the gate resolves the caller itself before
+// counting: an unauthenticated or invalid request is passed through
+// UNCOUNTED (the handler's requireAuth answers the 401), so it never
+// creates a bucket, and a resolved caller gets req.userId set, so the
+// limiter keys by perUserKey exactly like notificationTestLimiter. A
+// request that is not a natural-language query is passed through before the
+// auth lookup too, so SQL search neither pays for the lookup nor consumes
+// the bucket. A counted caller whose request the handler later rejects (a
+// body that fails schema validation, say) has already consumed the slot:
+// rejecting over-limit natural requests before their schema check is
+// deliberate, so 400-spam cannot be free (documented in docs/api.md). The
+// handler resolves the caller a second time; the duplicate session lookup
+// is accepted rather than restructuring the handler bodies (the
+// notification-test route avoids it with requireAuthMiddleware because that
+// route has no other auth shape).
+function naturalQueryRateGate(isNatural: (req: Request) => boolean) {
+  return async function naturalQueryRateLimited(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    if (!isNatural(req)) {
+      next();
+      return;
+    }
+    try {
+      (req as Request & { userId?: string }).userId = await resolveUserId(req);
+    } catch {
+      next();
+      return;
+    }
+    naturalQueryLimiter(req, res, next);
+  };
+}
+
+// Always natural: POST /query/natural is a natural query by definition.
+const naturalQueryAlwaysGate = naturalQueryRateGate(() => true);
+
+// Counts POST /logs/search only when the raw body asks for queryType
+// "natural" (the schema has no transform on queryType, so the raw value
+// equals the parsed one; any other body reaches neither the auth lookup
+// nor the bucket).
+const naturalQueryBodyGate = naturalQueryRateGate((req) => {
+  const body: unknown = req.body;
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    !Array.isArray(body) &&
+    (body as { queryType?: unknown }).queryType === "natural"
+  );
+});
+
+// Counts GET /logs only with queryType=natural; a repeated or non-string
+// value is not "natural" and the schema refuses it before any LLM call.
+const naturalQueryQueryGate = naturalQueryRateGate((req) => req.query.queryType === "natural");
+
 function parseToken(header?: string): string {
   if (!header) {
     throw new Error("Missing authorization header");
@@ -735,6 +814,7 @@ apiRouter.post(
 
 apiRouter.post(
   "/logs/search",
+  naturalQueryBodyGate,
   asyncHandler(async (req, res) => {
     const userId = await requireAuth(req, res);
     if (userId === null) return;
@@ -756,6 +836,7 @@ apiRouter.post(
 
 apiRouter.get(
   "/logs",
+  naturalQueryQueryGate,
   asyncHandler(async (req, res) => {
     const userId = await requireAuth(req, res);
     if (userId === null) return;
@@ -1056,6 +1137,7 @@ apiRouter.get(
 
 apiRouter.post(
   "/query/natural",
+  naturalQueryAlwaysGate,
   asyncHandler(async (req, res) => {
     const userId = await requireAuth(req, res);
     if (userId === null) return;

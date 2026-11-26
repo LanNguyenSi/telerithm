@@ -49,6 +49,11 @@ vi.mock("../../src/config/index.js", () => ({
     // make 2 calls total with the "sess_admin" token, under this limit of 3.
     notificationTestRateLimitWindowMs: 200,
     notificationTestRateLimitMax: 3,
+    // Loose on purpose: the few natural-query requests this file makes as
+    // one user must never trip the natural-query limiter. The limiter's
+    // own behaviour is pinned in tests/integration/natural-query-limit.test.ts.
+    naturalQueryRateLimitWindowMs: 60_000,
+    naturalQueryRateLimitMax: 1000,
     // GET /metrics and the /health checks detail gate on this; unset means
     // "endpoint disabled / status-only body". Tests set it per case.
     metricsToken: undefined as string | undefined,
@@ -2774,9 +2779,13 @@ describe("API Routes", () => {
     });
   });
 
-  describe("POST /api/v1/query/natural", () => {
-    it("rejects missing query", async () => {
-      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+   describe("POST /api/v1/query/natural", () => {
+     it("rejects missing query", async () => {
+       // The natural-query rate gate resolves the session before counting,
+       // and the handler's requireAuth resolves it again: two lookups.
+       mockedPrisma.session.findUnique
+         .mockResolvedValueOnce(makeSession({ userId: "user-1" }))
+         .mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       const res = await app
         .post("/api/v1/query/natural")
         .set("Authorization", "Bearer sess_admin")
@@ -2784,8 +2793,11 @@ describe("API Routes", () => {
       expect(res.status).toBe(400);
     });
 
-    it("translates natural query", async () => {
-      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+     it("translates natural query", async () => {
+       // Two session lookups: the natural-query rate gate, then requireAuth.
+       mockedPrisma.session.findUnique
+         .mockResolvedValueOnce(makeSession({ userId: "user-1" }))
+         .mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
         id: "member-1",
         teamId: "t1",
@@ -5894,7 +5906,13 @@ describe("API Routes", () => {
     });
 
     function authedMember() {
-      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      // Two session values: on the natural-language paths the rate gate
+      // resolves the session before counting and requireAuth resolves it
+      // again; SQL-only requests here just leave the second value unused
+      // (drained by the beforeEach resetAllMocks).
+      mockedPrisma.session.findUnique
+        .mockResolvedValueOnce(makeSession({ userId: "user-1" }))
+        .mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
         id: "member-1",
         teamId: "t1",
@@ -6114,7 +6132,10 @@ describe("API Routes", () => {
 
     it("a ~9 MB natural query is rejected without reaching queryService.explainNaturalQuery", async () => {
       const explainSpy = vi.spyOn(QueryService.prototype, "explainNaturalQuery");
-      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      // Two session lookups: the natural-query rate gate, then requireAuth.
+      mockedPrisma.session.findUnique
+        .mockResolvedValueOnce(makeSession({ userId: "user-1" }))
+        .mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       const res = await app
         .post("/api/v1/query/natural")
         .set("Authorization", "Bearer sess_admin")

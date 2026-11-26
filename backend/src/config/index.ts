@@ -208,6 +208,12 @@ const configSchema = z.object({
   // (currently POST /subscriptions/:id/test). Default: 5 requests / 5 minutes.
   notificationTestRateLimitWindowMs: coercedIntSchema.positive().default(5 * 60_000),
   notificationTestRateLimitMax: coercedIntSchema.positive().default(5),
+  // Per-user limit for the LLM-backed natural-language query routes
+  // (POST /query/natural, plus POST /logs/search and GET /logs when
+  // queryType is "natural"); all three share one bucket per user.
+  // Default: 20 requests / 60 seconds.
+  naturalQueryRateLimitWindowMs: coercedIntSchema.positive().default(60_000),
+  naturalQueryRateLimitMax: coercedIntSchema.positive().default(20),
   // Static token for GET /metrics and the per-dependency detail of
   // GET /api/v1/health (Authorization: Bearer). Unset or empty: /metrics
   // answers 404 (disabled) and health answers without the checks object; an
@@ -266,6 +272,8 @@ function loadConfig(): Config {
     maxStreamsPerUser: process.env.MAX_STREAMS_PER_USER,
     notificationTestRateLimitWindowMs: process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS,
     notificationTestRateLimitMax: process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX,
+    naturalQueryRateLimitWindowMs: process.env.NATURAL_QUERY_RATE_LIMIT_WINDOW_MS,
+    naturalQueryRateLimitMax: process.env.NATURAL_QUERY_RATE_LIMIT_MAX,
     metricsToken: process.env.METRICS_TOKEN,
     trustProxy: process.env.TRUST_PROXY,
   });

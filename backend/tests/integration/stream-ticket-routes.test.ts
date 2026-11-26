@@ -62,6 +62,8 @@ vi.mock("../../src/config/index.js", () => ({
     asyncJobsMaxInflight: 100,
     notificationTestRateLimitWindowMs: 200,
     notificationTestRateLimitMax: 3,
+    naturalQueryRateLimitWindowMs: 60_000,
+    naturalQueryRateLimitMax: 1000,
   },
 }));
 

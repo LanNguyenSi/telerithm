@@ -143,6 +143,7 @@ Every request passes through a global limiter first, then (for a few route group
 | `POST /api/v1/auth/register`, `POST /api/v1/auth/login` | Client IP  | 15 minutes         | 20                | not configurable (hardcoded)                                       | `backend/src/api/rest/router.ts` |
 | `POST /api/v1/ingest/:sourceId`, `POST /api/v1/ingest/:sourceId/raw` | Client IP | 1 minute | 500 | not configurable (hardcoded)                                       | `backend/src/api/rest/router.ts` |
 | `POST /api/v1/subscriptions/:id/test`             | Caller (resolved user id; unauthenticated requests get 401 before the limiter runs, so they never consume a bucket) | 5 minutes | 5 | `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS`, `NOTIFICATION_TEST_RATE_LIMIT_MAX` | `backend/src/api/rest/router.ts` |
+| `POST /api/v1/query/natural`, and `POST /api/v1/logs/search` / `GET /api/v1/logs` when `queryType` is `natural` | Caller (resolved user id; the three paths share one bucket; unauthenticated requests get 401 and never create a bucket; `queryType` absent or `sql` is never counted) | 1 minute | 20 | `NATURAL_QUERY_RATE_LIMIT_WINDOW_MS`, `NATURAL_QUERY_RATE_LIMIT_MAX` | `backend/src/api/rest/router.ts` |
 | Everything else (search, facets, teams, alerts, dashboards, `GET /api/v1/health`, `GET /metrics`, `GET /docs`, `GET /openapi.json`, ...) | Client IP (global limiter only) | 1 minute | 200 | not configurable (hardcoded) | `backend/src/app.ts` |
 
 The global limiter (`app.use(rateLimit(...))` in `backend/src/app.ts`, mounted before routing) applies to every request the process handles, including `GET /metrics`, `GET /api/v1/health`, and `GET /openapi.json`: nothing is exempt from it. A route in one of the other rows sits behind both the global limiter and its own, stricter one; whichever trips first returns the 429.
@@ -154,7 +155,7 @@ Browser calls other than the live tail stream reach the backend through the fron
 A request over the limit gets `429 Too Many Requests` with:
 
 - A `Retry-After` header (integer seconds until the window resets).
-- A JSON body `{ "error": "<message>" }`. Only `POST /api/v1/subscriptions/:id/test` adds `"retryAfter": <integer seconds>`; on every other route, read the `Retry-After` header.
+- A JSON body `{ "error": "<message>" }`. Only `POST /api/v1/subscriptions/:id/test` and the natural-query routes (`POST /api/v1/query/natural` and the `queryType: "natural"` paths below) add `"retryAfter": <integer seconds>`; on every other route, read the `Retry-After` header.
 
 ### Why `/subscriptions/:id/test` gets its own limiter
 
@@ -167,9 +168,20 @@ A request over the limit gets `429 Too Many Requests` with:
 - **Strict by default** (5 requests / 5 minutes): this is a "verify the channel is wired up" action, not a normal write path.
 - **Configurable via env**, per the design constraint that a too-strict limit here should never require a code change to loosen: set `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS` (milliseconds) and `NOTIFICATION_TEST_RATE_LIMIT_MAX` (requests per window) in the backend environment. Defaults live in `backend/src/config/index.ts` and are documented in [configuration.md](configuration.md).
 
+### Why natural-language queries get their own limiter
+
+The three routes that can call the LLM share one per-user bucket: `POST /api/v1/query/natural`, and `POST /api/v1/logs/search` / `GET /api/v1/logs` when the request asks for `queryType: "natural"` (the query service only calls the model for that query type, and every model call is bounded by its own retries but not by a request budget). Translation is far more expensive per request than a SQL search, and the global IP-keyed limiter neither distinguishes the caller from the rest of their network nor caps this one expensive path, so a single authenticated user could run the shared model hard well within the global budget. The limiter is:
+
+- **One bucket per user across all three paths.** One `express-rate-limit` instance keyed by the resolved user id; rotating between the paths does not multiply the budget, and SQL search (absent or `"sql"` query type) never enters the bucket and is never limited by it.
+- **Counted only for authenticated callers.** The gate resolves the session before counting, so an unauthenticated or invalid request gets its usual `401` and never creates a bucket; the caller id, not the session or the IP, keys the bucket.
+- **Counted on arrival, before schema validation.** A request that asks for `queryType: "natural"` consumes a slot even if the handler then rejects its body with `400`; otherwise rejecting bodies would be a free warm-up of the exact route the limit protects.
+- **Configurable via env**: `NATURAL_QUERY_RATE_LIMIT_WINDOW_MS` (milliseconds, default `60000`) and `NATURAL_QUERY_RATE_LIMIT_MAX` (requests per window, default `20`). Defaults live in `backend/src/config/index.ts` and are documented in [configuration.md](configuration.md).
+
+Over the limit the routes answer `429 {"error": "Too many natural-language queries, try again later", "retryAfter": <seconds>}` with the `Retry-After` header, like the test-notification limiter. Pinned in `backend/tests/integration/natural-query-limit.test.ts`.
+
 ### Global, ingest, and auth limiters (pre-existing)
 
-The global, ingest, and auth limiters already existed before the per-user limiter above was added; this page documents their current, unchanged behavior rather than introducing them. All three are keyed by client IP (`express-rate-limit`'s default `keyGenerator`) and their limits are hardcoded, not env-configurable. Widening that to match the notification-test limiter's env-configurability is a reasonable follow-up but is out of scope here.
+The global, ingest, and auth limiters already existed before the per-user limiters above were added; this page documents their current, unchanged behavior rather than introducing them. All three are keyed by client IP (`express-rate-limit`'s default `keyGenerator`) and their limits are hardcoded, not env-configurable. Widening that to match the notification-test limiter's env-configurability is a reasonable follow-up but is out of scope here.
 
 ### Behind a reverse proxy (`TRUST_PROXY`)
 
