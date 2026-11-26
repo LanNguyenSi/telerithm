@@ -2,7 +2,12 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../../repositories/prisma.js";
 import { clickhouse } from "../../repositories/clickhouse.js";
 import { createChildLogger } from "../../logger.js";
-import { alertEvaluationsTotal, alertIncidentsCreatedTotal } from "../../metrics/index.js";
+import { config } from "../../config/index.js";
+import {
+  alertEvaluationsTotal,
+  alertIncidentsCreatedTotal,
+  alertEvalPassTicks,
+} from "../../metrics/index.js";
 import { NotificationDispatcher } from "../notification/notification-dispatcher.js";
 
 const log = createChildLogger("alert-eval");
@@ -15,9 +20,13 @@ function toClickHouseTimestamp(date: Date): string {
 }
 
 // Enabled rules are loaded in constant-size pages (keyset on id, ascending)
-// instead of one findMany, so one run cannot pull an unbounded rule list into
-// memory. Every enabled rule still gets evaluated once per run: the pages are
-// walked to the end before the run reports done.
+// instead of one findMany, so one tick cannot pull an unbounded rule list into
+// memory. A page never asks for more rows than the tick budget
+// (ALERT_EVAL_MAX_RULES_PER_TICK) still allows, so a tick also cannot evaluate
+// more rules than the budget: the pages of a tick stop at the budget, and a
+// keyset cursor kept on the worker continues the walk on the next tick. Every
+// enabled rule still gets evaluated exactly once per pass of
+// ceil(rules / budget) ticks; see evaluate().
 export const ALERT_RULE_EVAL_BATCH_SIZE = 500;
 
 export class AlertEvaluationWorker {
@@ -27,6 +36,16 @@ export class AlertEvaluationWorker {
   // Rules already reported as unsupported, so the warning is logged once per
   // process instead of on every evaluation loop.
   private readonly warnedUnsupported = new Set<string>();
+  // Keyset cursor of the rotation: the id of the last rule evaluated, kept
+  // across ticks, null after a page ended the rule list (so the next tick
+  // starts from the beginning again). Keyset on id, not an offset: a rule
+  // inserted or deleted between ticks cannot shift the cursor past or over a
+  // rule that still exists.
+  private cursorAfterId: string | null = null;
+  // Progress of the current pass, for the multi-tick warn and the gauge: the
+  // rules evaluated and the ticks used since the last pass ended.
+  private passRulesEvaluated = 0;
+  private passTicks = 0;
 
   constructor(private readonly intervalMs = 60_000) {}
 
@@ -46,25 +65,39 @@ export class AlertEvaluationWorker {
     }
   }
 
+  // Evaluates at most config.alertEvalMaxRulesPerTick rules, resuming from the
+  // cursor of the previous tick and wrapping to the start after the list ends:
+  // one pass covers every enabled rule exactly once in ceil(rules / budget)
+  // ticks, so no rule or team starves. A pass that needs several ticks is
+  // reported once, when it ends, by the warn below and the gauge.
   private async evaluate(): Promise<void> {
     if (this.running) return;
     this.running = true;
 
     try {
-      let ruleCount = 0;
-      let afterId: string | null = null;
+      const budget = config.alertEvalMaxRulesPerTick;
+      let evaluated = 0;
+      let afterId = this.cursorAfterId;
+      let reachedListEnd = false;
+      this.passTicks += 1;
+
       for (;;) {
-        // Keyset paging over id, ascending. The where clause is annotated:
-        // built as a bare ternary its inference runs through this loop's
-        // cursor assignment below and TS refuses to resolve the cycle.
+        const remaining = budget - evaluated;
+        // The budget cannot go below zero (pages take at most what is left),
+        // so this is the tick's stop condition, not a rule-list end.
+        if (remaining <= 0) break;
+        // Keyset paging over id, ascending, pages of at most the batch size
+        // and never more than the remaining budget. The where clause is
+        // annotated: built as a bare ternary its inference runs through this
+        // loop's cursor assignment below and TS refuses to resolve the cycle.
+        const take = Math.min(ALERT_RULE_EVAL_BATCH_SIZE, remaining);
         const where: Prisma.AlertRuleWhereInput = { enabled: true };
         if (afterId !== null) where.id = { gt: afterId };
         const rules = await prisma.alertRule.findMany({
           where,
           orderBy: { id: "asc" },
-          take: ALERT_RULE_EVAL_BATCH_SIZE,
+          take,
         });
-        ruleCount += rules.length;
 
         for (const rule of rules) {
           try {
@@ -76,11 +109,36 @@ export class AlertEvaluationWorker {
           }
         }
 
-        if (rules.length < ALERT_RULE_EVAL_BATCH_SIZE) break;
+        evaluated += rules.length;
+        this.passRulesEvaluated += rules.length;
+        if (rules.length < take) {
+          // A short page is the end of the rule list (a page cut by the budget
+          // is full by construction); the next tick wraps to the start.
+          reachedListEnd = true;
+          break;
+        }
         // Keyset cursor: the next page starts after this page's last id.
         afterId = rules[rules.length - 1].id;
+        this.cursorAfterId = afterId;
       }
-      log.debug({ ruleCount }, "Evaluating alert rules");
+
+      if (reachedListEnd) {
+        this.cursorAfterId = null;
+        alertEvalPassTicks.set(this.passTicks);
+        if (this.passTicks > 1) {
+          log.warn(
+            {
+              passTicks: this.passTicks,
+              rules: this.passRulesEvaluated,
+              maxRulesPerTick: budget,
+            },
+            "Alert rule pass spans several ticks: the last rule waits that many ticks between evaluations",
+          );
+        }
+        this.passRulesEvaluated = 0;
+        this.passTicks = 0;
+      }
+      log.debug({ evaluated, maxRulesPerTick: budget }, "Evaluating alert rules");
     } catch (err) {
       log.error({ err }, "Failed to load alert rules");
     } finally {

@@ -218,6 +218,11 @@ const configSchema = z.object({
   // by disabling first). POST /alerts/rules answers 409 at the cap; teams
   // already above it keep their rules and cannot create until they delete.
   alertRulesMaxPerTeam: coercedIntSchema.positive().default(100),
+  // Max alert rules the evaluation worker evaluates in one tick. A tick's work
+  // stays bounded whatever the number of accounts and teams; a keyset cursor
+  // kept across ticks rotates the rules so every enabled rule is evaluated once
+  // per pass of ceil(rules / budget) ticks (see alert-evaluation-worker.ts).
+  alertEvalMaxRulesPerTick: coercedIntSchema.positive().default(1000),
   // Static token for GET /metrics and the per-dependency detail of
   // GET /api/v1/health (Authorization: Bearer). Unset or empty: /metrics
   // answers 404 (disabled) and health answers without the checks object; an
@@ -279,6 +284,7 @@ function loadConfig(): Config {
     naturalQueryRateLimitWindowMs: process.env.NATURAL_QUERY_RATE_LIMIT_WINDOW_MS,
     naturalQueryRateLimitMax: process.env.NATURAL_QUERY_RATE_LIMIT_MAX,
     alertRulesMaxPerTeam: process.env.ALERT_RULES_MAX_PER_TEAM,
+    alertEvalMaxRulesPerTick: process.env.ALERT_EVAL_MAX_RULES_PER_TICK,
     metricsToken: process.env.METRICS_TOKEN,
     trustProxy: process.env.TRUST_PROXY,
   });

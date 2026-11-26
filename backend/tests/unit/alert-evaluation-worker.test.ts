@@ -13,8 +13,10 @@ const {
   mockClickhouseQuery,
   mockMetricsEvaluationsInc,
   mockMetricsIncidentsInc,
+  mockMetricsPassTicksSet,
   mockDispatch,
   mockLogWarn,
+  mockConfig,
 } = vi.hoisted(() => ({
   mockAlertRuleFindMany: vi.fn(),
   mockMaintenanceWindowFindFirst: vi.fn(),
@@ -23,9 +25,15 @@ const {
   mockClickhouseQuery: vi.fn(),
   mockMetricsEvaluationsInc: vi.fn(),
   mockMetricsIncidentsInc: vi.fn(),
+  mockMetricsPassTicksSet: vi.fn(),
   mockDispatch: vi.fn(),
   mockLogWarn: vi.fn(),
+  mockConfig: { alertEvalMaxRulesPerTick: 1000 },
 }));
+
+// The per-tick budget comes from config; the real module would validate env
+// vars at import time. Tests set mockConfig.alertEvalMaxRulesPerTick.
+vi.mock("../../src/config/index.js", () => ({ config: mockConfig }));
 
 vi.mock("../../src/repositories/prisma.js", () => ({
   prisma: {
@@ -47,6 +55,7 @@ vi.mock("../../src/repositories/clickhouse.js", () => ({
 vi.mock("../../src/metrics/index.js", () => ({
   alertEvaluationsTotal: { inc: mockMetricsEvaluationsInc },
   alertIncidentsCreatedTotal: { inc: mockMetricsIncidentsInc },
+  alertEvalPassTicks: { set: mockMetricsPassTicksSet },
 }));
 
 // Use class-form so vi.resetAllMocks() does not clear the constructor mock implementation
@@ -80,22 +89,27 @@ type WorkerPrivate = {
   evaluate(): Promise<void>;
   running: boolean;
   timer: ReturnType<typeof setInterval> | null;
+  cursorAfterId: string | null;
+  passRulesEvaluated: number;
+  passTicks: number;
 };
 
 function privateWorker(w: AlertEvaluationWorker) {
   return w as unknown as WorkerPrivate;
 }
 
-function makeRule(overrides: Partial<{
-  id: string;
-  teamId: string;
-  query: string;
-  condition: string;
-  threshold: number;
-  windowMinutes: number;
-  muteUntil: Date | null;
-  enabled: boolean;
-}> = {}) {
+function makeRule(
+  overrides: Partial<{
+    id: string;
+    teamId: string;
+    query: string;
+    condition: string;
+    threshold: number;
+    windowMinutes: number;
+    muteUntil: Date | null;
+    enabled: boolean;
+  }> = {},
+) {
   return {
     id: "rule-1",
     teamId: "team-1",
@@ -479,9 +493,7 @@ describe("AlertEvaluationWorker — CHANGES_BY condition", () => {
   });
 
   it("makes a SECOND clickhouse query for the previous window", async () => {
-    mockAlertRuleFindMany.mockResolvedValue([
-      makeRule({ condition: "CHANGES_BY", threshold: 5 }),
-    ]);
+    mockAlertRuleFindMany.mockResolvedValue([makeRule({ condition: "CHANGES_BY", threshold: 5 })]);
     stubClickhouseCounts(15, 5); // current=15, previous=5, delta=10 >= 5
 
     const worker = new AlertEvaluationWorker();
@@ -491,9 +503,7 @@ describe("AlertEvaluationWorker — CHANGES_BY condition", () => {
   });
 
   it("triggers when absolute delta >= threshold", async () => {
-    mockAlertRuleFindMany.mockResolvedValue([
-      makeRule({ condition: "CHANGES_BY", threshold: 5 }),
-    ]);
+    mockAlertRuleFindMany.mockResolvedValue([makeRule({ condition: "CHANGES_BY", threshold: 5 })]);
     stubClickhouseCounts(15, 5); // delta = |15 - 5| = 10 >= 5
 
     const worker = new AlertEvaluationWorker();
@@ -503,9 +513,7 @@ describe("AlertEvaluationWorker — CHANGES_BY condition", () => {
   });
 
   it("triggers when delta is a negative change (previous > current)", async () => {
-    mockAlertRuleFindMany.mockResolvedValue([
-      makeRule({ condition: "CHANGES_BY", threshold: 5 }),
-    ]);
+    mockAlertRuleFindMany.mockResolvedValue([makeRule({ condition: "CHANGES_BY", threshold: 5 })]);
     stubClickhouseCounts(3, 15); // delta = |3 - 15| = 12 >= 5
 
     const worker = new AlertEvaluationWorker();
@@ -515,9 +523,7 @@ describe("AlertEvaluationWorker — CHANGES_BY condition", () => {
   });
 
   it("does NOT trigger when absolute delta < threshold", async () => {
-    mockAlertRuleFindMany.mockResolvedValue([
-      makeRule({ condition: "CHANGES_BY", threshold: 10 }),
-    ]);
+    mockAlertRuleFindMany.mockResolvedValue([makeRule({ condition: "CHANGES_BY", threshold: 10 })]);
     stubClickhouseCounts(13, 10); // delta = |13 - 10| = 3 < 10
 
     const worker = new AlertEvaluationWorker();
@@ -527,9 +533,7 @@ describe("AlertEvaluationWorker — CHANGES_BY condition", () => {
   });
 
   it("triggers when delta exactly equals threshold", async () => {
-    mockAlertRuleFindMany.mockResolvedValue([
-      makeRule({ condition: "CHANGES_BY", threshold: 5 }),
-    ]);
+    mockAlertRuleFindMany.mockResolvedValue([makeRule({ condition: "CHANGES_BY", threshold: 5 })]);
     stubClickhouseCounts(15, 10); // delta = 5 >= 5
 
     const worker = new AlertEvaluationWorker();
@@ -799,7 +803,9 @@ describe("AlertEvaluationWorker - ANOMALY_DETECTED condition", () => {
     await privateWorker(worker).evaluate();
 
     expect(mockAlertIncidentCreate).toHaveBeenCalledOnce();
-    expect(mockAlertIncidentCreate).toHaveBeenCalledWith({ data: expect.objectContaining({ ruleId: "plain" }) });
+    expect(mockAlertIncidentCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ ruleId: "plain" }),
+    });
   });
 });
 
@@ -835,9 +841,9 @@ describe("AlertEvaluationWorker - log count query parameters", () => {
     // ClickHouse rejects "2026-10-14T04:44:41.318Z" for a DateTime64(3) parameter
     expect(from).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
     expect(to).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$/);
-    expect(new Date(`${to.replace(" ", "T")}Z`).getTime() - new Date(`${from.replace(" ", "T")}Z`).getTime()).toBe(
-      5 * 60_000,
-    );
+    expect(
+      new Date(`${to.replace(" ", "T")}Z`).getTime() - new Date(`${from.replace(" ", "T")}Z`).getTime(),
+    ).toBe(5 * 60_000);
   });
 });
 
@@ -921,6 +927,24 @@ describe("AlertEvaluationWorker: batched rule loading", () => {
     expect(mockMetricsEvaluationsInc).toHaveBeenCalledTimes(ALERT_RULE_EVAL_BATCH_SIZE - 1);
   });
 
+  it("never asks findMany for more rows than the batch size", async () => {
+    // Default budget (1000) above the page: every findMany take is the batch
+    // size itself; the budget must not raise it.
+    const first = batchOf("r", 0, ALERT_RULE_EVAL_BATCH_SIZE);
+    let calls = 0;
+    mockAlertRuleFindMany.mockImplementation(async () => {
+      calls += 1;
+      if (calls > 10) throw new Error("findMany called too often: the page cursor is not advancing");
+      return calls === 1 ? first : [];
+    });
+
+    await privateWorker(new AlertEvaluationWorker()).evaluate();
+
+    for (const call of mockAlertRuleFindMany.mock.calls) {
+      expect((call[0] as { take: number }).take).toBe(ALERT_RULE_EVAL_BATCH_SIZE);
+    }
+  });
+
   it("keeps the per-rule error handling while paging: a failing rule does not stop the batch or the pages", async () => {
     const first = batchOf("r", 0, ALERT_RULE_EVAL_BATCH_SIZE);
     const second = batchOf("r", ALERT_RULE_EVAL_BATCH_SIZE, 1);
@@ -947,5 +971,228 @@ describe("AlertEvaluationWorker: batched rule loading", () => {
     expect(mockMetricsEvaluationsInc).toHaveBeenCalledTimes(ALERT_RULE_EVAL_BATCH_SIZE + 1);
     expect(mockMetricsEvaluationsInc).toHaveBeenCalledWith({ status: "error" });
     expect(mockMetricsEvaluationsInc).toHaveBeenCalledWith({ status: "ok" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Per-tick rule budget and keyset rotation
+// ---------------------------------------------------------------------------
+
+describe("AlertEvaluationWorker: per-tick rule budget and rotation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockConfig.alertEvalMaxRulesPerTick = 1000;
+    // Nothing triggers: counts stay below every rule's threshold.
+    mockMaintenanceWindowFindFirst.mockResolvedValue(null);
+    mockAlertIncidentFindFirst.mockResolvedValue(null);
+    stubClickhouseCount(0);
+  });
+
+  // A mutable, id-sorted rule list with real keyset semantics: findMany
+  // returns the first `take` enabled rules with id > where.id.gt. Rules can
+  // be added to or spliced out of the backing array between ticks.
+  function stubRuleList(rules: Array<ReturnType<typeof makeRule>>) {
+    mockAlertRuleFindMany.mockImplementation(
+      async (args: { where: { id?: { gt?: string } }; take: number }) => {
+        const sorted = rules.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        const after = args.where.id?.gt;
+        const start = after === undefined ? sorted : sorted.filter((r) => r.id > after);
+        return start.slice(0, args.take);
+      },
+    );
+  }
+
+  // Every rule that reaches the evaluation gates runs the dedup lookup with
+  // its own id, so the call order records the evaluated rule ids.
+  function evaluatedIds(): string[] {
+    return mockAlertIncidentFindFirst.mock.calls.map(
+      (c) => (c[0] as { where: { ruleId: string } }).where.ruleId,
+    );
+  }
+
+  function idRules(ids: string[]) {
+    return ids.map((id) => makeRule({ id }));
+  }
+
+  it("budget above the rule count: one tick evaluates all rules and the cursor stays at the start", async () => {
+    mockConfig.alertEvalMaxRulesPerTick = 1000;
+    stubRuleList(idRules(["01", "02", "03"]));
+    const worker = new AlertEvaluationWorker();
+    const pw = privateWorker(worker);
+
+    await pw.evaluate();
+
+    expect(evaluatedIds()).toEqual(["01", "02", "03"]);
+    expect(mockAlertRuleFindMany).toHaveBeenCalledTimes(1);
+    expect(pw.cursorAfterId).toBeNull();
+    expect(pw.passTicks).toBe(0);
+    // A one-tick pass needs no multi-tick warn.
+    expect(mockLogWarn).not.toHaveBeenCalled();
+    expect(mockMetricsPassTicksSet).toHaveBeenCalledWith(1);
+  });
+
+  it("budget below the rule count: a tick stops at the budget and the next tick continues after the last evaluated id", async () => {
+    mockConfig.alertEvalMaxRulesPerTick = 2;
+    stubRuleList(idRules(["01", "02", "03", "04", "05"]));
+    const worker = new AlertEvaluationWorker();
+    const pw = privateWorker(worker);
+
+    await pw.evaluate();
+    expect(evaluatedIds()).toEqual(["01", "02"]);
+    expect(mockAlertRuleFindMany).toHaveBeenCalledTimes(1);
+    expect(pw.cursorAfterId).toBe("02");
+
+    await pw.evaluate();
+    expect(evaluatedIds()).toEqual(["01", "02", "03", "04"]);
+    // The second tick's only page starts after the first tick's last rule.
+    expect(mockAlertRuleFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { enabled: true, id: { gt: "02" } }, take: 2 }),
+    );
+    expect(pw.cursorAfterId).toBe("04");
+  });
+
+  it("two ticks cover all rules exactly once and the finished pass warns once with its length", async () => {
+    mockConfig.alertEvalMaxRulesPerTick = 2;
+    stubRuleList(idRules(["01", "02", "03"]));
+    const worker = new AlertEvaluationWorker();
+    const pw = privateWorker(worker);
+
+    await pw.evaluate();
+    await pw.evaluate();
+
+    expect([...new Set(evaluatedIds())].sort()).toEqual(["01", "02", "03"]);
+    expect(evaluatedIds()).toHaveLength(3);
+    // The pass ended on the second tick (a short page): one warn, pass length
+    // in ticks and the rule count.
+    expect(mockLogWarn).toHaveBeenCalledTimes(1);
+    expect(mockLogWarn).toHaveBeenCalledWith(
+      expect.objectContaining({ passTicks: 2, rules: 3, maxRulesPerTick: 2 }),
+      expect.stringContaining("several ticks"),
+    );
+    expect(mockMetricsPassTicksSet).toHaveBeenLastCalledWith(2);
+    expect(pw.cursorAfterId).toBeNull();
+    expect(pw.passTicks).toBe(0);
+  });
+
+  it("budget equal to the rule count: the first tick evaluates every rule exactly once", async () => {
+    mockConfig.alertEvalMaxRulesPerTick = 3;
+    stubRuleList(idRules(["01", "02", "03"]));
+    const worker = new AlertEvaluationWorker();
+    const pw = privateWorker(worker);
+
+    await pw.evaluate();
+
+    // A page cut exactly by the budget is full, so the list end is not known
+    // yet: all three rules were evaluated in this one tick and the cursor
+    // waits at the last id; the next tick probes, finds nothing, and ends the
+    // pass without re-evaluating anything.
+    expect(evaluatedIds()).toEqual(["01", "02", "03"]);
+    expect(pw.cursorAfterId).toBe("03");
+
+    await pw.evaluate();
+    expect(evaluatedIds()).toEqual(["01", "02", "03"]);
+    expect(pw.cursorAfterId).toBeNull();
+  });
+
+  it("wrap-around: after a pass ends, the next tick starts again from the beginning of the list", async () => {
+    mockConfig.alertEvalMaxRulesPerTick = 1;
+    stubRuleList(idRules(["01", "02"]));
+    const worker = new AlertEvaluationWorker();
+    const pw = privateWorker(worker);
+
+    await pw.evaluate(); // 01
+    await pw.evaluate(); // 02
+    await pw.evaluate(); // probe: list end, pass over
+    expect(evaluatedIds()).toEqual(["01", "02"]);
+    expect(pw.cursorAfterId).toBeNull();
+
+    await pw.evaluate(); // wraps to 01
+    expect(mockAlertRuleFindMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({ where: { enabled: true } }),
+    );
+    expect(mockAlertRuleFindMany.mock.calls.at(-1)?.[0]).not.toHaveProperty("where.id");
+    expect(evaluatedIds()).toEqual(["01", "02", "01"]);
+  });
+
+  it("a page never exceeds the remaining budget when the budget is smaller than a page", async () => {
+    mockConfig.alertEvalMaxRulesPerTick = 700;
+    const many = idRules(Array.from({ length: 1200 }, (_, i) => `r-${String(i).padStart(4, "0")}`));
+    stubRuleList(many);
+    const worker = new AlertEvaluationWorker();
+    const pw = privateWorker(worker);
+
+    await pw.evaluate();
+
+    // First page: the batch size. Second page: only the 200 rules left.
+    expect(mockAlertRuleFindMany.mock.calls.map((c) => (c[0] as { take: number }).take)).toEqual([500, 200]);
+    expect(mockMetricsEvaluationsInc).toHaveBeenCalledTimes(700);
+    expect(pw.cursorAfterId).toBe("r-0699");
+  });
+
+  it("rules deleted between ticks do not make the cursor skip or repeat a surviving rule", async () => {
+    mockConfig.alertEvalMaxRulesPerTick = 2;
+    const rules = idRules(["01", "02", "03", "04", "05"]);
+    stubRuleList(rules);
+    const worker = new AlertEvaluationWorker();
+    const pw = privateWorker(worker);
+
+    await pw.evaluate(); // 01, 02
+    // "03" sits between the cursor and the rest: an offset-based page would
+    // shift and skip "04"; the keyset cursor sees every rule after "02".
+    rules.splice(2, 1);
+
+    await pw.evaluate();
+    await pw.evaluate();
+
+    expect(evaluatedIds()).toEqual(["01", "02", "04", "05"]);
+    expect(new Set(evaluatedIds()).size).toBe(4);
+    expect(mockMetricsPassTicksSet).toHaveBeenLastCalledWith(3);
+  });
+
+  it("rules added between ticks get their turn exactly once, before and after the cursor", async () => {
+    mockConfig.alertEvalMaxRulesPerTick = 1;
+    const rules = idRules(["b", "d"]);
+    stubRuleList(rules);
+    const worker = new AlertEvaluationWorker();
+    const pw = privateWorker(worker);
+
+    await pw.evaluate(); // b
+    rules.push(makeRule({ id: "c" })); // added after the cursor: joins the running pass
+    await pw.evaluate(); // c
+    await pw.evaluate(); // d
+    await pw.evaluate(); // probe: pass over
+    expect(evaluatedIds()).toEqual(["b", "c", "d"]);
+    expect(mockMetricsPassTicksSet).toHaveBeenLastCalledWith(4);
+
+    rules.unshift(makeRule({ id: "a" })); // added before the start: next pass
+    await pw.evaluate(); // wraps from the beginning: a
+    expect(evaluatedIds()).toEqual(["b", "c", "d", "a"]);
+  });
+
+  it("budget changes take effect on the next tick", async () => {
+    stubRuleList(idRules(["01", "02", "03", "04"]));
+    const worker = new AlertEvaluationWorker();
+    const pw = privateWorker(worker);
+
+    mockConfig.alertEvalMaxRulesPerTick = 2;
+    await pw.evaluate();
+    expect(evaluatedIds()).toEqual(["01", "02"]);
+
+    mockConfig.alertEvalMaxRulesPerTick = 1;
+    await pw.evaluate();
+    expect(evaluatedIds()).toEqual(["01", "02", "03"]);
+    expect(mockAlertRuleFindMany).toHaveBeenLastCalledWith(expect.objectContaining({ take: 1 }));
+  });
+
+  it("a tick that only probes the list end evaluates no rule", async () => {
+    mockConfig.alertEvalMaxRulesPerTick = 1;
+    stubRuleList(idRules(["01"]));
+    const pw = privateWorker(new AlertEvaluationWorker());
+
+    await pw.evaluate(); // 01
+    mockAlertIncidentFindFirst.mockClear();
+    await pw.evaluate(); // probe, pass over
+    expect(mockAlertIncidentFindFirst).not.toHaveBeenCalled();
+    expect(mockMetricsPassTicksSet).toHaveBeenLastCalledWith(2);
   });
 });
