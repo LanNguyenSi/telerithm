@@ -5,7 +5,7 @@ import { IngestionService, IngestBatchTooLargeError } from "../../ingestion/inge
 import { LogRepository } from "../../repositories/log-repository.js";
 import { AlertService } from "../../services/alert/alert-service.js";
 import { DashboardService } from "../../services/dashboard/dashboard-service.js";
-import { QueryService, AsyncJobCapError } from "../../services/query/query-service.js";
+import { QueryService, AsyncJobCapError, type SyncSlot } from "../../services/query/query-service.js";
 import { LogViewService } from "../../services/log-view/log-view-service.js";
 import { StreamingService } from "../../services/streaming/streaming-service.js";
 import { IssueService } from "../../services/issue/issue-service.js";
@@ -277,10 +277,12 @@ function answerAsyncJobStart<T>(res: Response, teamId: string, producer: () => P
   }
 }
 
-// Shared by the facets, histogram and patterns routes. An explicit async
-// request and a query that runs past the sync budget both start a job and so
-// both answer 429 at the cap; the second one hands over the query that is
-// already running.
+// Shared by the facets, histogram and patterns routes. Every query counts
+// against the job cap from the moment it starts: an explicit async request
+// starts a job, a plain request takes a slot first and keeps it while it runs
+// inside the sync budget. At the cap the request answers 429 before any query
+// runs. A query that outlives the budget turns its slot into the job, which
+// adopts the query already running.
 async function answerSyncOrAsync<T extends object>(
   res: Response,
   teamId: string,
@@ -291,11 +293,27 @@ async function answerSyncOrAsync<T extends object>(
     answerAsyncJobStart(res, teamId, producer);
     return;
   }
-  const outcome = await runWithSyncBudget(producer);
-  if (!outcome.done) {
-    answerAsyncJobStart(res, teamId, () => outcome.running);
+  let slot: SyncSlot;
+  try {
+    slot = queryService.reserveSyncSlot(teamId);
+  } catch (error) {
+    if (!(error instanceof AsyncJobCapError)) throw error;
+    refuseAsyncJob(res, error);
     return;
   }
+  let outcome: SyncBudgetOutcome<T>;
+  try {
+    outcome = await runWithSyncBudget(producer);
+  } catch (error) {
+    slot.release();
+    throw error;
+  }
+  if (!outcome.done) {
+    const start = slot.convertToJob(outcome.running);
+    res.status(202).json({ ...start, status: "pending" });
+    return;
+  }
+  slot.release();
   res.json({ requestId: randomUUID(), partial: false, cached: false, ...outcome.value });
 }
 

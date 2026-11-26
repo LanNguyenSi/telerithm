@@ -201,7 +201,7 @@ describe("async query job cap on the facets, histogram and patterns routes", () 
       expect(repo[method]).toHaveBeenCalledTimes(2);
     });
 
-    it("answers 429 on the sync-timeout fallback at the cap, like the explicit async path", async () => {
+    it("answers 429 up front for a plain request at the cap, before any query starts", async () => {
       caps.asyncJobsMaxInflightPerTeam = 1;
       caps.maxSyncRuntimeMs = 20;
       repo[method].mockImplementation(holdQuery);
@@ -213,11 +213,74 @@ describe("async query job cap on the facets, histogram and patterns routes", () 
       expect(refused.status).toBe(429);
       expect(refused.body.retryAfter).toBe(5);
       expect(refused.headers["retry-after"]).toBe("5");
+      expect(repo[method]).toHaveBeenCalledTimes(1);
 
-      // The refused request's query keeps running; failing later must not
-      // surface as an unhandled rejection.
-      for (const d of open.splice(0)) d.reject(new Error("late failure"));
+      // The job that adopted the first query fails later: that must not surface
+      // as an unhandled rejection, and the job reports it.
+      open.splice(0)[0]!.reject(new Error("late failure"));
       await new Promise((resolve) => setTimeout(resolve, 5));
+      const polled = await app
+        .get(`/api/v1/query/jobs/${first.body.requestId}`)
+        .set("Authorization", "Bearer sess_a");
+      expect(polled.body).toMatchObject({ status: "failed", error: "late failure" });
+    });
+
+    it("starts at most the cap's number of queries when plain requests arrive in parallel", async () => {
+      caps.asyncJobsMaxInflightPerTeam = 2;
+      caps.maxSyncRuntimeMs = 50;
+      repo[method].mockImplementation(holdQuery);
+
+      const responses = await Promise.all(Array.from({ length: 6 }, () => post(path, body)));
+
+      const statuses = responses.map((res) => res.status).sort();
+      expect(statuses).toEqual([202, 202, 429, 429, 429, 429]);
+      expect(repo[method]).toHaveBeenCalledTimes(2);
+    });
+
+    it("counts a plain query that is still inside the sync budget against the cap, and frees the slot when it finishes", async () => {
+      caps.asyncJobsMaxInflightPerTeam = 1;
+      caps.maxSyncRuntimeMs = 1000;
+      repo[method].mockImplementation(holdQuery);
+
+      const plain = post(path, body).then((res) => res);
+      await vi.waitFor(() => expect(repo[method]).toHaveBeenCalledTimes(1));
+      const whileRunning = await post(path, { ...body, async: true });
+      expect(repo[method]).toHaveBeenCalledTimes(1);
+      open.splice(0)[0]!.resolve({ marker: "inline" });
+      const finished = await plain;
+      repo[method].mockResolvedValue({ marker: "after" });
+      const after = await post(path, { ...body, async: true });
+
+      expect(whileRunning.status).toBe(429);
+      expect(finished.status).toBe(200);
+      expect(finished.body.marker).toBe("inline");
+      expect(after.status).toBe(202);
+    });
+
+    it("gives the slot back when the plain query fails, whether the producer rejects or throws", async () => {
+      caps.asyncJobsMaxInflightPerTeam = 1;
+
+      repo[method].mockRejectedValueOnce(new Error("clickhouse down"));
+      expect((await post(path, body)).status).toBe(500);
+      repo[method].mockImplementationOnce(() => {
+        throw new Error("sync boom");
+      });
+      expect((await post(path, body)).status).toBe(500);
+      repo[method].mockResolvedValue({ marker: "inline" });
+
+      expect((await post(path, body)).status).toBe(200);
+    });
+
+    it("uses one slot per request that falls back to a job", async () => {
+      caps.asyncJobsMaxInflightPerTeam = 2;
+      caps.maxSyncRuntimeMs = 20;
+      repo[method].mockImplementation(holdQuery);
+
+      expect((await post(path, body)).status).toBe(202);
+      expect((await post(path, body)).status).toBe(202);
+
+      expect((await post(path, body)).status).toBe(429);
+      expect(repo[method]).toHaveBeenCalledTimes(2);
     });
 
     it("adopts the running query on the fallback: one query per request, and the job serves its result", async () => {
@@ -240,15 +303,17 @@ describe("async query job cap on the facets, histogram and patterns routes", () 
       expect(polled.body.data).toEqual({ marker: "from-the-sync-query" });
     });
 
-    it("keeps answering 200 inline for a query inside the sync budget, whatever the cap", async () => {
+    it("answers 200 inline for plain requests inside the sync budget, one after the other at a cap of 1", async () => {
       caps.asyncJobsMaxInflightPerTeam = 1;
       caps.asyncJobsMaxInflight = 1;
       repo[method].mockResolvedValue({ marker: "inline" });
 
-      const res = await post(path, body);
+      const first = await post(path, body);
+      const second = await post(path, body);
 
-      expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({ partial: false, cached: false, marker: "inline" });
+      expect(first.status).toBe(200);
+      expect(first.body).toMatchObject({ partial: false, cached: false, marker: "inline" });
+      expect(second.status).toBe(200);
     });
 
     it("frees the slot when the query of a pending job completes", async () => {

@@ -794,6 +794,155 @@ describe("QueryService async job cap", () => {
   });
 });
 
+describe("QueryService sync slots", () => {
+  const caps = config as { asyncJobsMaxInflightPerTeam: number; asyncJobsMaxInflight: number };
+
+  function refused(fn: () => unknown): AsyncJobCapError {
+    try {
+      fn();
+    } catch (error) {
+      expect(error).toBeInstanceOf(AsyncJobCapError);
+      return error as AsyncJobCapError;
+    }
+    throw new Error("expected the reservation to be refused");
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    caps.asyncJobsMaxInflightPerTeam = 10;
+    caps.asyncJobsMaxInflight = 100;
+  });
+
+  afterEach(() => {
+    caps.asyncJobsMaxInflightPerTeam = 10;
+    caps.asyncJobsMaxInflight = 100;
+    vi.useRealTimers();
+  });
+
+  it("counts a reserved slot against the team limit and refuses the next reservation and job", () => {
+    caps.asyncJobsMaxInflightPerTeam = 2;
+    const service = new QueryService();
+    service.reserveSyncSlot("t1");
+    service.reserveSyncSlot("t1");
+
+    const error = refused(() => service.reserveSyncSlot("t1"));
+
+    expect(error.limit).toBe("team");
+    expect(error.max).toBe(2);
+    const producer = vi.fn(() => new Promise<never>(() => {}));
+    refused(() => service.startAsyncJob("t1", producer));
+    expect(producer).not.toHaveBeenCalled();
+  });
+
+  it("counts a reserved slot against the process limit and leaves another team's own limit alone", () => {
+    caps.asyncJobsMaxInflight = 2;
+    const service = new QueryService();
+    service.reserveSyncSlot("t1");
+    service.reserveSyncSlot("t2");
+
+    expect(refused(() => service.reserveSyncSlot("t3")).limit).toBe("process");
+  });
+
+  it("counts a job against a later reservation of the same team", () => {
+    caps.asyncJobsMaxInflightPerTeam = 1;
+    const service = new QueryService();
+    service.startAsyncJob("t1", () => new Promise(() => {}));
+
+    refused(() => service.reserveSyncSlot("t1"));
+    expect(() => service.reserveSyncSlot("t2")).not.toThrow();
+  });
+
+  it("frees the slot on release", () => {
+    caps.asyncJobsMaxInflightPerTeam = 1;
+    const service = new QueryService();
+    const slot = service.reserveSyncSlot("t1");
+    refused(() => service.reserveSyncSlot("t1"));
+
+    slot.release();
+
+    expect(() => service.reserveSyncSlot("t1")).not.toThrow();
+  });
+
+  it("release twice frees one slot only", () => {
+    caps.asyncJobsMaxInflightPerTeam = 2;
+    const service = new QueryService();
+    const first = service.reserveSyncSlot("t1");
+    service.reserveSyncSlot("t1");
+
+    first.release();
+    first.release();
+    service.reserveSyncSlot("t1");
+
+    refused(() => service.reserveSyncSlot("t1"));
+  });
+
+  it("converts the slot into one pending job that adopts the running query, with no second slot", async () => {
+    caps.asyncJobsMaxInflightPerTeam = 2;
+    const service = new QueryService();
+    let finish!: (value: unknown) => void;
+    const running = new Promise((resolve) => {
+      finish = resolve;
+    });
+    const slot = service.reserveSyncSlot("t1");
+
+    const job = slot.convertToJob(running);
+
+    expect(service.getAsyncJob(job.requestId)).toMatchObject({ status: "pending", teamId: "t1" });
+    // One slot in use, so one more fits and the next one does not.
+    service.reserveSyncSlot("t1");
+    refused(() => service.reserveSyncSlot("t1"));
+    finish({ marker: "adopted" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(service.getAsyncJob(job.requestId)).toMatchObject({
+      status: "completed",
+      data: { marker: "adopted" },
+    });
+  });
+
+  it("settles a converted job as failed when the adopted query rejects, and frees its slot", async () => {
+    caps.asyncJobsMaxInflightPerTeam = 1;
+    const service = new QueryService();
+    const slot = service.reserveSyncSlot("t1");
+    const job = slot.convertToJob(Promise.reject(new Error("late failure")));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(service.getAsyncJob(job.requestId)).toMatchObject({ status: "failed", error: "late failure" });
+    expect(() => service.reserveSyncSlot("t1")).not.toThrow();
+  });
+
+  it("keeps the converted job when release is called afterwards", () => {
+    caps.asyncJobsMaxInflightPerTeam = 1;
+    const service = new QueryService();
+    const slot = service.reserveSyncSlot("t1");
+    const job = slot.convertToJob(new Promise(() => {}));
+
+    slot.release();
+
+    expect(service.getAsyncJob(job.requestId)).toMatchObject({ status: "pending" });
+    refused(() => service.reserveSyncSlot("t1"));
+  });
+
+  it("refuses to convert a slot that was released", () => {
+    const service = new QueryService();
+    const slot = service.reserveSyncSlot("t1");
+    slot.release();
+
+    expect(() => slot.convertToJob(new Promise(() => {}))).toThrow("Sync slot already used");
+  });
+
+  it("frees a reserved slot that is never released once it expires", () => {
+    vi.useFakeTimers();
+    caps.asyncJobsMaxInflightPerTeam = 1;
+    const service = new QueryService();
+    service.reserveSyncSlot("t1");
+    refused(() => service.reserveSyncSlot("t1"));
+
+    vi.advanceTimersByTime(5 * 60 * 1000 + 1);
+
+    expect(() => service.reserveSyncSlot("t1")).not.toThrow();
+  });
+});
+
 describe("QueryService — delegate methods", () => {
   beforeEach(() => {
     vi.clearAllMocks();
