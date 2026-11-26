@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const translateQueryMock = vi.fn();
 const searchMock = vi.fn();
@@ -11,6 +11,8 @@ const { nlqFilterPrunedTotalIncMock, nlqRelaxedFallbackUsedTotalIncMock } = vi.h
 vi.mock("../../src/config/index.js", () => ({
   config: {
     maxSyncRuntimeMs: 1500,
+    asyncJobsMaxInflightPerTeam: 10,
+    asyncJobsMaxInflight: 100,
   },
 }));
 
@@ -51,7 +53,8 @@ vi.mock("../../src/metrics/index.js", () => ({
   nlqRelaxedFallbackUsedTotal: { inc: nlqRelaxedFallbackUsedTotalIncMock },
 }));
 
-import { QueryService } from "../../src/services/query/query-service.js";
+import { config } from "../../src/config/index.js";
+import { AsyncJobCapError, QueryService } from "../../src/services/query/query-service.js";
 
 function makeSearchResult(overrides: Record<string, unknown> = {}) {
   return {
@@ -601,6 +604,193 @@ describe("QueryService — async jobs", () => {
   it("getMaxSyncRuntimeMs returns config value", () => {
     const service = new QueryService();
     expect(service.getMaxSyncRuntimeMs()).toBe(1500);
+  });
+});
+
+type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (error: Error) => void };
+
+function deferred<T = unknown>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+// Lets the .then/.catch of a settled producer rewrite its job record.
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe("QueryService async job cap", () => {
+  const caps = config as { asyncJobsMaxInflightPerTeam: number; asyncJobsMaxInflight: number };
+
+  function setCaps(perTeam: number, process: number) {
+    caps.asyncJobsMaxInflightPerTeam = perTeam;
+    caps.asyncJobsMaxInflight = process;
+  }
+
+  // A producer that never settles unless the test settles it; calls are spied.
+  function pending() {
+    const d = deferred();
+    const producer = vi.fn(() => d.promise);
+    return { d, producer };
+  }
+
+  function refusal(fn: () => unknown): AsyncJobCapError {
+    try {
+      fn();
+    } catch (error) {
+      expect(error).toBeInstanceOf(AsyncJobCapError);
+      return error as AsyncJobCapError;
+    }
+    throw new Error("expected startAsyncJob to refuse");
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setCaps(10, 100);
+  });
+
+  afterEach(() => {
+    setCaps(10, 100);
+    vi.useRealTimers();
+  });
+
+  it("starts jobs up to the per-team limit and refuses the next one without calling its producer", () => {
+    setCaps(2, 100);
+    const service = new QueryService();
+    const first = pending();
+    const second = pending();
+    const third = pending();
+    service.startAsyncJob("t1", first.producer);
+    service.startAsyncJob("t1", second.producer);
+
+    const error = refusal(() => service.startAsyncJob("t1", third.producer));
+
+    expect(error.limit).toBe("team");
+    expect(error.max).toBe(2);
+    expect(first.producer).toHaveBeenCalledTimes(1);
+    expect(second.producer).toHaveBeenCalledTimes(1);
+    expect(third.producer).not.toHaveBeenCalled();
+  });
+
+  it("applies the process limit alone when no team is at its own limit", () => {
+    setCaps(10, 3);
+    const service = new QueryService();
+    service.startAsyncJob("t1", pending().producer);
+    service.startAsyncJob("t2", pending().producer);
+    service.startAsyncJob("t3", pending().producer);
+    const refused = pending();
+
+    const error = refusal(() => service.startAsyncJob("t4", refused.producer));
+
+    expect(error.limit).toBe("process");
+    expect(error.max).toBe(3);
+    expect(refused.producer).not.toHaveBeenCalled();
+  });
+
+  it("reports the team limit when both limits are reached", () => {
+    setCaps(2, 2);
+    const service = new QueryService();
+    service.startAsyncJob("t1", pending().producer);
+    service.startAsyncJob("t1", pending().producer);
+
+    expect(refusal(() => service.startAsyncJob("t1", pending().producer)).limit).toBe("team");
+    // A team with no job of its own is refused by the process limit.
+    expect(refusal(() => service.startAsyncJob("t2", pending().producer)).limit).toBe("process");
+  });
+
+  it("does not let one team's full cap block another team", () => {
+    setCaps(2, 100);
+    const service = new QueryService();
+    service.startAsyncJob("t1", pending().producer);
+    service.startAsyncJob("t1", pending().producer);
+    refusal(() => service.startAsyncJob("t1", pending().producer));
+    const other = pending();
+
+    const started = service.startAsyncJob("t2", other.producer);
+
+    expect(started.requestId).toBeTruthy();
+    expect(other.producer).toHaveBeenCalledTimes(1);
+  });
+
+  it("frees a slot when a job completes", async () => {
+    setCaps(2, 100);
+    const service = new QueryService();
+    const first = pending();
+    service.startAsyncJob("t1", first.producer);
+    service.startAsyncJob("t1", pending().producer);
+    refusal(() => service.startAsyncJob("t1", pending().producer));
+
+    first.d.resolve({ ok: true });
+    await settle();
+
+    expect(() => service.startAsyncJob("t1", pending().producer)).not.toThrow();
+    refusal(() => service.startAsyncJob("t1", pending().producer));
+  });
+
+  it("frees a slot when a job fails", async () => {
+    setCaps(2, 100);
+    const service = new QueryService();
+    const first = pending();
+    service.startAsyncJob("t1", first.producer);
+    service.startAsyncJob("t1", pending().producer);
+    refusal(() => service.startAsyncJob("t1", pending().producer));
+
+    first.d.reject(new Error("boom"));
+    await settle();
+
+    expect(() => service.startAsyncJob("t1", pending().producer)).not.toThrow();
+  });
+
+  it("frees the slot of a job that never settles once it expires", () => {
+    vi.useFakeTimers();
+    setCaps(2, 100);
+    const service = new QueryService();
+    service.startAsyncJob("t1", pending().producer);
+    service.startAsyncJob("t1", pending().producer);
+    refusal(() => service.startAsyncJob("t1", pending().producer));
+
+    vi.advanceTimersByTime(4 * 60 * 1000);
+    refusal(() => service.startAsyncJob("t1", pending().producer));
+
+    vi.advanceTimersByTime(60 * 1000 + 1);
+    expect(() => service.startAsyncJob("t1", pending().producer)).not.toThrow();
+  });
+
+  it("does not count completed or failed jobs as in flight", async () => {
+    setCaps(2, 2);
+    const service = new QueryService();
+    service.startAsyncJob("t1", () => Promise.resolve("done"));
+    service.startAsyncJob("t1", () => Promise.reject(new Error("boom")));
+    await settle();
+
+    // Both limits are 2 and two records of t1 exist, both settled.
+    expect(() => service.startAsyncJob("t1", pending().producer)).not.toThrow();
+    expect(() => service.startAsyncJob("t2", pending().producer)).not.toThrow();
+  });
+
+  it("settles a job whose producer throws before returning a promise and frees its slot", async () => {
+    setCaps(1, 100);
+    const service = new QueryService();
+    const { requestId } = service.startAsyncJob("t1", () => {
+      throw new Error("sync boom");
+    });
+    await settle();
+
+    expect(service.getAsyncJob(requestId)).toMatchObject({ status: "failed", error: "sync boom" });
+    expect(() => service.startAsyncJob("t1", pending().producer)).not.toThrow();
+  });
+
+  it("names the limit in the refusal message", () => {
+    setCaps(1, 100);
+    const service = new QueryService();
+    service.startAsyncJob("t1", pending().producer);
+
+    expect(refusal(() => service.startAsyncJob("t1", pending().producer)).message).toBe(
+      "Team already has 1 async query jobs in flight",
+    );
   });
 });
 

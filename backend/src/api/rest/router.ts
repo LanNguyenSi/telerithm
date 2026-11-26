@@ -5,7 +5,7 @@ import { IngestionService, IngestBatchTooLargeError } from "../../ingestion/inge
 import { LogRepository } from "../../repositories/log-repository.js";
 import { AlertService } from "../../services/alert/alert-service.js";
 import { DashboardService } from "../../services/dashboard/dashboard-service.js";
-import { QueryService } from "../../services/query/query-service.js";
+import { QueryService, AsyncJobCapError } from "../../services/query/query-service.js";
 import { LogViewService } from "../../services/log-view/log-view-service.js";
 import { StreamingService } from "../../services/streaming/streaming-service.js";
 import { IssueService } from "../../services/issue/issue-service.js";
@@ -239,11 +239,64 @@ function enforceSearchLimits(input: {
 }
 
 const SYNC_TIMEOUT = Symbol("sync-timeout");
-async function runWithSyncBudget<T>(producer: () => Promise<T>): Promise<T | typeof SYNC_TIMEOUT> {
+type SyncBudgetOutcome<T> = { done: true; value: T } | { done: false; running: Promise<T> };
+// A query that outlives the budget keeps running: the outcome hands that same
+// promise back so a job can adopt it instead of starting a second query.
+async function runWithSyncBudget<T>(producer: () => Promise<T>): Promise<SyncBudgetOutcome<T>> {
+  const running = producer();
   const timeout = new Promise<typeof SYNC_TIMEOUT>((resolve) => {
     setTimeout(() => resolve(SYNC_TIMEOUT), config.maxSyncRuntimeMs);
   });
-  return Promise.race([producer(), timeout]);
+  const first = await Promise.race([running, timeout]);
+  return first === SYNC_TIMEOUT ? { done: false, running } : { done: true, value: first };
+}
+
+// Seconds a client refused by the async job cap is told to wait before it
+// retries: the Retry-After header and the body's retryAfter. A fixed small
+// value, because the router cannot tell when a pending job of the team settles.
+const ASYNC_JOB_RETRY_AFTER_SECONDS = 5;
+
+function refuseAsyncJob(res: Response, refusal: AsyncJobCapError): void {
+  res.setHeader("Retry-After", String(ASYNC_JOB_RETRY_AFTER_SECONDS));
+  res.status(429).json({
+    error:
+      refusal.limit === "team"
+        ? "Too many query jobs in flight for this team, try again shortly"
+        : "The server is busy with query jobs, try again shortly",
+    retryAfter: ASYNC_JOB_RETRY_AFTER_SECONDS,
+  });
+}
+
+function answerAsyncJobStart<T>(res: Response, teamId: string, producer: () => Promise<T>): void {
+  try {
+    const start = queryService.startAsyncJob(teamId, producer);
+    res.status(202).json({ ...start, status: "pending" });
+  } catch (error) {
+    if (!(error instanceof AsyncJobCapError)) throw error;
+    refuseAsyncJob(res, error);
+  }
+}
+
+// Shared by the facets, histogram and patterns routes. An explicit async
+// request and a query that runs past the sync budget both start a job and so
+// both answer 429 at the cap; the second one hands over the query that is
+// already running.
+async function answerSyncOrAsync<T extends object>(
+  res: Response,
+  teamId: string,
+  asyncRequested: boolean,
+  producer: () => Promise<T>,
+): Promise<void> {
+  if (asyncRequested) {
+    answerAsyncJobStart(res, teamId, producer);
+    return;
+  }
+  const outcome = await runWithSyncBudget(producer);
+  if (!outcome.done) {
+    answerAsyncJobStart(res, teamId, () => outcome.running);
+    return;
+  }
+  res.json({ requestId: randomUUID(), partial: false, cached: false, ...outcome.value });
 }
 
 // 2.5 — API-Key authentication middleware for ingest endpoints
@@ -748,23 +801,9 @@ apiRouter.post(
       res.status(400).json({ error: limitError });
       return;
     }
-    if (parsed.data.async) {
-      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
-        queryService.getFacets({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const syncResult = await runWithSyncBudget(() => queryService.getFacets(parsed.data));
-    if (syncResult === SYNC_TIMEOUT) {
-      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
-        queryService.getFacets({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const result = syncResult;
-    res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
+    await answerSyncOrAsync(res, parsed.data.teamId, parsed.data.async, () =>
+      queryService.getFacets({ ...parsed.data, async: undefined }),
+    );
   }),
 );
 
@@ -784,23 +823,9 @@ apiRouter.post(
       res.status(400).json({ error: limitError });
       return;
     }
-    if (parsed.data.async) {
-      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
-        queryService.getHistogram({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const syncResult = await runWithSyncBudget(() => queryService.getHistogram(parsed.data));
-    if (syncResult === SYNC_TIMEOUT) {
-      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
-        queryService.getHistogram({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const result = syncResult;
-    res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
+    await answerSyncOrAsync(res, parsed.data.teamId, parsed.data.async, () =>
+      queryService.getHistogram({ ...parsed.data, async: undefined }),
+    );
   }),
 );
 
@@ -820,23 +845,9 @@ apiRouter.post(
       res.status(400).json({ error: limitError });
       return;
     }
-    if (parsed.data.async) {
-      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
-        queryService.getPatterns({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const syncResult = await runWithSyncBudget(() => queryService.getPatterns(parsed.data));
-    if (syncResult === SYNC_TIMEOUT) {
-      const asyncStart = queryService.startAsyncJob(parsed.data.teamId, () =>
-        queryService.getPatterns({ ...parsed.data, async: undefined }),
-      );
-      res.status(202).json({ ...asyncStart, status: "pending" });
-      return;
-    }
-    const result = syncResult;
-    res.json({ requestId: randomUUID(), partial: false, cached: false, ...result });
+    await answerSyncOrAsync(res, parsed.data.teamId, parsed.data.async, () =>
+      queryService.getPatterns({ ...parsed.data, async: undefined }),
+    );
   }),
 );
 

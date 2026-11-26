@@ -42,6 +42,22 @@ type AsyncJobRecord = {
   error?: string;
 };
 
+// Thrown by startAsyncJob, before the producer is called, when the team or the
+// process already has its configured number of jobs in flight.
+export class AsyncJobCapError extends Error {
+  constructor(
+    readonly limit: "team" | "process",
+    readonly max: number,
+  ) {
+    super(
+      limit === "team"
+        ? `Team already has ${max} async query jobs in flight`
+        : `Process already has ${max} async query jobs in flight`,
+    );
+    this.name = "AsyncJobCapError";
+  }
+}
+
 const ASYNC_TTL_MS = 5 * 60 * 1000;
 
 export class QueryService {
@@ -154,11 +170,16 @@ export class QueryService {
     return this.logRepo.getPatterns(query);
   }
 
+  // Starts a job unless the team or the process already has its configured
+  // number of jobs in flight; then it throws AsyncJobCapError without calling
+  // the producer, so the route can answer 429. When both limits are reached the
+  // team limit is the one reported.
   startAsyncJob<T>(
     teamId: string,
     producer: () => Promise<T>,
   ): { requestId: string; partial: true; cached: false } {
     this.cleanupAsyncJobs();
+    this.assertAsyncJobCap(teamId);
     const requestId = randomUUID();
     const base = {
       requestId,
@@ -167,7 +188,15 @@ export class QueryService {
     };
     this.asyncJobs.set(requestId, { ...base, status: "pending" });
 
-    void producer()
+    // A producer that throws before returning a promise settles the job as
+    // failed too, otherwise its pending record would hold a slot until expiry.
+    let running: Promise<T>;
+    try {
+      running = producer();
+    } catch (error) {
+      running = Promise.reject(error);
+    }
+    void running
       .then((data) => {
         this.asyncJobs.set(requestId, { ...base, status: "completed", createdAt: Date.now(), data });
       })
@@ -231,6 +260,24 @@ export class QueryService {
 
     await cache.set(cacheKey, summary, DASHBOARD_CACHE_TTL);
     return summary;
+  }
+
+  // Inflight means a pending record: completed, failed and expired records do
+  // not count. Callers run cleanupAsyncJobs first so an expired record is gone.
+  private assertAsyncJobCap(teamId: string): void {
+    let team = 0;
+    let total = 0;
+    for (const job of this.asyncJobs.values()) {
+      if (job.status !== "pending") continue;
+      total += 1;
+      if (job.teamId === teamId) team += 1;
+    }
+    if (team >= config.asyncJobsMaxInflightPerTeam) {
+      throw new AsyncJobCapError("team", config.asyncJobsMaxInflightPerTeam);
+    }
+    if (total >= config.asyncJobsMaxInflight) {
+      throw new AsyncJobCapError("process", config.asyncJobsMaxInflight);
+    }
   }
 
   private cleanupAsyncJobs(): void {

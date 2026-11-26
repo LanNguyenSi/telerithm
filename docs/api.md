@@ -25,8 +25,8 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `POST` | `/logs/search`                    | Search logs (also `GET /logs`)    |
 | `GET`  | `/logs/:id`                       | One log entry                     |
 | `POST` | `/logs/context`                   | Surrounding log lines             |
-| `POST` | `/logs/facets`, `/logs/histogram`, `/logs/patterns` | Faceted search, timelines, pattern clustering |
-| `GET`  | `/query/jobs/:id`                 | Result of an async facet, histogram or pattern job |
+| `POST` | `/logs/facets`, `/logs/histogram`, `/logs/patterns` | Faceted search, timelines, pattern clustering. A request that sets `"async": true`, or that runs past `MAX_SYNC_RUNTIME_MS`, starts an async job and answers `202`, or `429` at the job cap (see Async query job cap below) |
+| `GET`  | `/query/jobs/:id`                 | Result of an async facet, histogram or pattern job. Only starting a job is capped; polling is not |
 | `GET`, `POST`, `PUT`, `DELETE` | `/logs/views`, `/logs/views/:id` | Saved views (list, create, update, delete); update and delete of a teammate's private view get the same 404 as an unknown id |
 | `POST` | `/logs/views/:id/duplicate`       | Duplicate a saved view; a teammate's private view gets the same 404 as an unknown id |
 | `POST` | `/query/natural`                  | Translate NL to query plan        |
@@ -100,6 +100,12 @@ Clients that can set headers (curl, a server-side consumer) keep sending `Author
 ### Live tail stream cap
 
 One user may hold at most `MAX_STREAMS_PER_USER` open `/stream/logs` streams at once (default 5; see [configuration.md](configuration.md)), whether they were opened with the header or with a ticket and whichever team they follow. The next request answers `429 {"error":"Too many open live tail streams"}` as JSON, with no stream headers, and opens nothing. The check comes after the credentials and the team membership, so a request that answers `401` or `403` does not count. A stream gives its slot back when the client disconnects, when the connection fails and when the server ends it at a failed heartbeat check; a client that leaves while the server is still checking its credentials never takes one. The counter is per backend process and in memory: with several backend replicas the effective cap per user is `MAX_STREAMS_PER_USER` times the number of replicas, and a restart resets it. The frontend does not show the `429` separately: like any stream error it closes the source and reconnects with a backoff of 1 to 30 seconds.
+
+### Async query job cap
+
+`POST /logs/facets`, `/logs/histogram` and `/logs/patterns` start an async job when the request sets `"async": true` and when a synchronous query outlives `MAX_SYNC_RUNTIME_MS`. A job counts as in flight while it is `pending`; completed, failed and expired jobs (a job record expires 5 minutes after it was created or last settled) do not count. One team may have at most `ASYNC_JOBS_MAX_INFLIGHT_PER_TEAM` jobs in flight (default 10) and the backend process at most `ASYNC_JOBS_MAX_INFLIGHT` (default 100); see [configuration.md](configuration.md). A request that would start a job beyond either limit starts nothing and answers `429` with `{ "error": "...", "retryAfter": 5 }`, the same body shape as the other `429` answers, and a `Retry-After: 5` header (a fixed 5 seconds; the server does not predict when a pending job settles). The team message is `Too many query jobs in flight for this team, try again shortly` and the process message is `The server is busy with query jobs, try again shortly`; when both limits are reached the team message wins. The three routes share one count per team, and one team's jobs never count against another team's limit, only against the process limit.
+
+A request that runs past the sync budget below the cap turns into a job that adopts the query already running: that query is not run a second time. At the cap the request answers `429`, and the query that outlived the budget still runs to its end in the backend, its result discarded. A request that finishes inside the sync budget answers `200` with the result whatever the cap, because it starts no job. A search screen load can start up to 3 jobs (facets, histogram, patterns), so a per-team value below 3 can fail a single screen load; the frontend shows a `429` through its ordinary error state. The counters are per backend process and in memory: with several replicas the effective limits are the values times the replicas, and a restart resets them. Callers that race can overshoot the per-team limit by at most the number of requests in flight at the same moment, because the count is taken before the job is created.
 
 ### Subscription channels
 

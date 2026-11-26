@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { deleteAlertRule, updateAlertRule } from "@/lib/api/client";
+import { deleteAlertRule, getLogFacets, updateAlertRule } from "@/lib/api/client";
 
 function failWith(status: number, body: unknown) {
   vi.stubGlobal(
@@ -40,5 +40,15 @@ describe("request() error messages", () => {
   it("falls back to the status line when the error object has no messages", async () => {
     failWith(400, { error: { formErrors: [], fieldErrors: {} } });
     await expect(deleteAlertRule("r1", "tok")).rejects.toThrow("API request failed: 400");
+  });
+
+  it("shows the query job cap's 429 message when facets are refused", async () => {
+    failWith(429, {
+      error: "Too many query jobs in flight for this team, try again shortly",
+      retryAfter: 5,
+    });
+    await expect(getLogFacets("t1", "tok")).rejects.toThrow(
+      "Too many query jobs in flight for this team, try again shortly",
+    );
   });
 });

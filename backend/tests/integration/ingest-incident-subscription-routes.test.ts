@@ -45,6 +45,8 @@ vi.mock("../../src/config/index.js", () => ({
     maxLookbackMs: 7 * 24 * 60 * 60 * 1000,
     maxPageSize: 500,
     maxSyncRuntimeMs: 1500,
+    asyncJobsMaxInflightPerTeam: 10,
+    asyncJobsMaxInflight: 100,
     notificationTestRateLimitWindowMs: 200,
     notificationTestRateLimitMax: 3,
   },

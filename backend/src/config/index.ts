@@ -196,6 +196,11 @@ const configSchema = z.object({
   // loadConfig clamps it to the ceiling and records a warning.
   maxPageSize: coercedIntSchema.min(50).default(SEARCH_LIMIT_CEILING),
   maxSyncRuntimeMs: coercedIntSchema.min(100).max(30_000).default(1500),
+  // Async query jobs (facets, histogram and patterns) still pending: one team
+  // and the whole backend process may hold this many at once, counted per
+  // process. At either limit a request that would start a job answers 429.
+  asyncJobsMaxInflightPerTeam: coercedIntSchema.min(1).default(10),
+  asyncJobsMaxInflight: coercedIntSchema.min(1).default(100),
   // Open live tail streams (GET /stream/logs) one user may hold at once, counted
   // per backend process.
   maxStreamsPerUser: coercedIntSchema.min(1).default(5),
@@ -256,6 +261,8 @@ function loadConfig(): Config {
     maxLookbackMs: process.env.MAX_LOOKBACK_MS,
     maxPageSize: process.env.MAX_PAGE_SIZE,
     maxSyncRuntimeMs: process.env.MAX_SYNC_RUNTIME_MS,
+    asyncJobsMaxInflightPerTeam: process.env.ASYNC_JOBS_MAX_INFLIGHT_PER_TEAM,
+    asyncJobsMaxInflight: process.env.ASYNC_JOBS_MAX_INFLIGHT,
     maxStreamsPerUser: process.env.MAX_STREAMS_PER_USER,
     notificationTestRateLimitWindowMs: process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS,
     notificationTestRateLimitMax: process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX,
