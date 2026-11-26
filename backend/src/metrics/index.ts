@@ -51,6 +51,15 @@ export const alertIncidentsCreatedTotal = new Counter({
   registers: [registry],
 });
 
+// Ticks the most recent full pass over the enabled alert rules took. With the
+// per-tick budget in place a pass spans ceil(rules / ALERT_EVAL_MAX_RULES_PER_TICK)
+// ticks; a value above 1 makes the evaluation lag of the last pass visible.
+export const alertEvalPassTicks = new Gauge({
+  name: "telerithm_alert_eval_pass_ticks",
+  help: "Ticks the last full pass over the enabled alert rules took",
+  registers: [registry],
+});
+
 export const nlqFilterPrunedTotal = new Counter({
   name: "telerithm_nlq_filter_pruned_total",
   help: "Total number of AI-generated NLQ filters dropped after facet validation",
