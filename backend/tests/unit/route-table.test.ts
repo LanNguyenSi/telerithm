@@ -68,6 +68,8 @@ const mockConfig = vi.hoisted(() => ({
   asyncJobsMaxInflight: 100,
   notificationTestRateLimitWindowMs: 200,
   notificationTestRateLimitMax: 3,
+  naturalQueryRateLimitWindowMs: 60_000,
+  naturalQueryRateLimitMax: 20,
   metricsToken: undefined as string | undefined,
   trustProxy: undefined as number | undefined,
 }));
@@ -357,6 +359,29 @@ describe("the runtime route table of createApp()", () => {
   it("neither the app nor the API router carries a param callback", () => {
     expect(paramNamesOf((realApp as unknown as { _router: unknown })._router)).toEqual([]);
     expect(paramNamesOf(realApiRouter)).toEqual([]);
+  });
+
+  // The natural-query limiter is mounted as route-level middleware (the
+  // route stack, not a router-level layer), so the known-list comparison
+  // above cannot see it. Pin its placement directly: the gate must be the
+  // first handler of the three natural-language routes, and absent from
+  // the SQL-only neighbours, or a search path could silently stop
+  // consuming (or, the other way, SQL search start consuming) the bucket.
+  it("the natural-query gate fronts exactly the three routes that can reach the LLM", () => {
+    const entries: RouteEntry[] = [];
+    collectRoutes(stackOf(realApp), [], entries);
+    const stacks = new Map(
+      entries.map((e) => [`${e.method} ${e.path}`, e.handlers.map((layer) => layer.handle.toString())]),
+    );
+    // A fragment of the gate closure (naturalQueryRateGate in router.ts),
+    // named like the existing anonymous-layer pins.
+    const pin = "naturalQueryLimiter(req, res, next)";
+    for (const key of ["post /query/natural", "post /logs/search", "get /logs"]) {
+      expect(stacks.get(key)?.[0], `${key} first handler`).toContain(pin);
+    }
+    for (const key of ["post /logs/context", "post /logs/facets", "get /logs/:id", "get /health"]) {
+      expect(stacks.get(key)?.join("") ?? "", key).not.toContain(pin);
+    }
   });
 
   it("every anonymous layer of the app is pinned by a source fragment", () => {
