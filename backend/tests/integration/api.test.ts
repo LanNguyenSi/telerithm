@@ -4269,13 +4269,19 @@ describe("API Routes", () => {
       expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
     });
 
-    it.each([["-271821-04-20T00:00:00.000Z"], ["+275760-09-13T00:00:00.000Z"]])(
-      "a cursor with the extended-year timestamp %s answers 400 before any query",
+    it.each([
+      ["-271821-04-20T00:00:00.000Z"],
+      ["+275760-09-13T00:00:00.000Z"],
+      ["+010000-01-01T00:00:00.000Z"],
+      ["1969-12-31T23:59:59.999Z"],
+    ])(
+      "a cursor with the out-of-range timestamp %s answers 400 before any query",
       async (timestamp) => {
         openTimeline();
 
-        // These parse and round-trip but make the database driver throw, so
-        // the year range refuses them before the query.
+        // These parse and round-trip, but the year range (1970 to 9999)
+        // refuses them before the query: extended years make the database
+        // driver throw, and the two edge rows pin both bounds exactly.
         const res = await get(`?cursor=${rawCursor("inc-1", timestamp, "x")}`);
 
         expect(res.status).toBe(400);
