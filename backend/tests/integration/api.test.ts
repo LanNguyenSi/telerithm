@@ -2779,13 +2779,13 @@ describe("API Routes", () => {
     });
   });
 
-   describe("POST /api/v1/query/natural", () => {
-     it("rejects missing query", async () => {
-       // The natural-query rate gate resolves the session before counting,
-       // and the handler's requireAuth resolves it again: two lookups.
-       mockedPrisma.session.findUnique
-         .mockResolvedValueOnce(makeSession({ userId: "user-1" }))
-         .mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+  describe("POST /api/v1/query/natural", () => {
+    it("rejects missing query", async () => {
+      // The natural-query rate gate resolves the session before counting,
+      // and the handler's requireAuth resolves it again: two lookups.
+      mockedPrisma.session.findUnique
+        .mockResolvedValueOnce(makeSession({ userId: "user-1" }))
+        .mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       const res = await app
         .post("/api/v1/query/natural")
         .set("Authorization", "Bearer sess_admin")
@@ -2793,11 +2793,11 @@ describe("API Routes", () => {
       expect(res.status).toBe(400);
     });
 
-     it("translates natural query", async () => {
-       // Two session lookups: the natural-query rate gate, then requireAuth.
-       mockedPrisma.session.findUnique
-         .mockResolvedValueOnce(makeSession({ userId: "user-1" }))
-         .mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+    it("translates natural query", async () => {
+      // Two session lookups: the natural-query rate gate, then requireAuth.
+      mockedPrisma.session.findUnique
+        .mockResolvedValueOnce(makeSession({ userId: "user-1" }))
+        .mockResolvedValueOnce(makeSession({ userId: "user-1" }));
       mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({
         id: "member-1",
         teamId: "t1",

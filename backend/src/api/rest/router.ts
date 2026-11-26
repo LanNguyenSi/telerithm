@@ -146,11 +146,11 @@ async function requireAuthMiddleware(req: Request, res: Response, next: NextFunc
 
 // Keys the limiter per authenticated user, not per session token: two
 // sessions of the same user (e.g. two logged-in devices) intentionally
-// share one budget. requireAuthMiddleware always runs before this limiter
-// and rejects unauthenticated/invalid callers with 401, so req.userId is
-// already set by the time this runs; the IP fallback is defensive only; in
-// practice it is unreachable as long as the limiter stays mounted behind
-// requireAuthMiddleware.
+// share one budget. The caller is resolved first, ahead of the limiter, by
+// requireAuthMiddleware (notificationTestLimiter) or naturalQueryRateGate
+// (naturalQueryLimiter); both settle an invalid caller before counting, so
+// req.userId is set by the time this runs. The IP fallback is defensive
+// only, unreachable while every mount keeps its resolver in front.
 function perUserKey(req: Request): string {
   const userId = (req as Request & { userId?: string }).userId;
   return userId ? `user:${userId}` : ipKeyGenerator(req.ip ?? "unknown");

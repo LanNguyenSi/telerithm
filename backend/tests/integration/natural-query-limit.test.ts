@@ -114,6 +114,9 @@ const TOKENS: Record<string, string> = {
   "tok-user-a": "nq-user-a",
   "tok-user-b": "nq-user-b",
   "tok-two-ips": "nq-user-two-ips",
+  // Two sessions (tokens) of ONE user id: they must share one bucket.
+  "tok-device-a": "nq-user-two-devices",
+  "tok-device-b": "nq-user-two-devices",
   "tok-reset": "nq-user-reset",
   "tok-unauth-probe": "nq-user-unauth-probe",
   "tok-invalid": "nq-user-invalid",
@@ -157,6 +160,11 @@ function searchSql(token: string) {
     queryType: "sql",
     query: "checkout",
   });
+}
+// POST /logs/search with the queryType key absent: the handler defaults it to
+// "sql", so the body gate must pass the request through uncounted too.
+function searchUnset(token: string) {
+  return authed(app.post("/api/v1/logs/search"), token).send({ teamId: "t-probe", query: "checkout" });
 }
 function getUnset(token: string) {
   return authed(app.get("/api/v1/logs?teamId=t-probe&query=checkout"), token);
@@ -220,11 +228,13 @@ describe("natural-query rate limit", () => {
   });
 
   it("SQL search is never counted and never limited: past the max it still reaches the handler, and the natural budget is untouched", async () => {
-    // 3x the natural max on both SQL search paths, queryType "sql" or
-    // absent (GET /logs defaults to "sql"): every request reaches the
-    // handler instead of the limiter.
+    // 3x the natural max on every SQL shape: queryType "sql", queryType
+    // absent on POST /logs/search (the schema defaults it to "sql"), and
+    // GET /logs without queryType. Every request reaches the handler
+    // instead of the limiter.
     for (let i = 0; i < MAX * 3; i++) {
       expect((await searchSql("tok-sql")).status).toBe(403);
+      expect((await searchUnset("tok-sql")).status).toBe(403);
       expect((await getUnset("tok-sql")).status).toBe(403);
     }
     // Not one slot of the natural budget was consumed by the SQL traffic.
@@ -257,6 +267,25 @@ describe("natural-query rate limit", () => {
     expect((await explainNatural("tok-user-a")).status).toBe(429);
     expect((await explainNatural("tok-user-b")).status).toBe(403);
     expect((await searchNatural("tok-user-b")).status).toBe(403);
+  });
+
+  it("one user with two sessions (tokens) shares one bucket: the max+1th request across both answers 429", async () => {
+    // The limiter keys on the resolved user id, not on the presented token or
+    // session: keying on the Authorization header would hand each of these
+    // tokens its own budget, so one user could multiply the budget simply by
+    // opening more sessions. Interleaved, so no single token ever uses more
+    // than ceil(MAX/2) slots on its own; the 6th request of either token is
+    // rejected only because the shared per-user bucket is already full.
+    for (let i = 0; i < MAX; i++) {
+      const token = i % 2 === 0 ? "tok-device-a" : "tok-device-b";
+      expect((await explainNatural(token)).status).toBe(403);
+    }
+    // The 6th request ran out of budget: no membership lookup behind it.
+    expect(mockedPrisma.teamMember.findUnique).toHaveBeenCalledTimes(MAX);
+    expect((await explainNatural("tok-device-a")).status).toBe(429);
+    expect((await searchNatural("tok-device-b")).status).toBe(429);
+    // A third session of the same user is born blocked.
+    expect((await getNatural("tok-device-a")).status).toBe(429);
   });
 
   it("one user from two IPs shares one bucket", async () => {
