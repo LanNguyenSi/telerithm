@@ -441,6 +441,7 @@ export const openApiSpec = {
           201: { description: "Created rule" },
           400: { description: "Invalid body" },
           403: { description: "Not a member, or read-only role" },
+          409: { description: "Per-team rule cap reached (ALERT_RULES_MAX_PER_TEAM)" },
         },
       },
     },

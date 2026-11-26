@@ -4080,7 +4080,7 @@ describe("API Routes", () => {
   // same pattern as the per-route auth audit below.
   // ---------------------------------------------------------------------------
 
-  describe("incident timeline — pagination", () => {
+  describe("incident timeline: pagination", () => {
     let timelineServer: Server;
     let timelineApp: supertest.Agent;
 
@@ -4127,8 +4127,14 @@ describe("API Routes", () => {
       };
     }
 
-    function encodeCursor(createdAt: Date, id: string): string {
-      return Buffer.from(`${createdAt.toISOString()}:${id}`, "utf8").toString("base64url");
+    // The route's cursor shape: base64url of "<incidentId>:<createdAt ISO>:<id>".
+    function encodeCursor(incidentId: string, createdAt: Date, id: string): string {
+      return Buffer.from(`${incidentId}:${createdAt.toISOString()}:${id}`, "utf8").toString("base64url");
+    }
+
+    // A cursor from raw parts, for the shapes the route must refuse.
+    function rawCursor(incidentId: string, timestamp: string, id: string): string {
+      return Buffer.from(`${incidentId}:${timestamp}:${id}`, "utf8").toString("base64url");
     }
 
     function timelineCursorWhere(createdAt: Date, id: string) {
@@ -4172,13 +4178,41 @@ describe("API Routes", () => {
       // The service is asked for limit + 1 rows so it can tell a last page.
       expect(mockedPrisma.incidentEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 3 }));
       expect(res.body.events.map((e: { id: string }) => e.id)).toEqual(["ev-1", "ev-2"]);
-      expect(res.body.nextCursor).toBe(encodeCursor(rows[1].createdAt, "ev-2"));
+      expect(res.body.nextCursor).toBe(encodeCursor("inc-1", rows[1].createdAt, "ev-2"));
+    });
+
+    it("an exactly-full request (limit rows returned) ends with nextCursor null", async () => {
+      openTimeline();
+      // Exactly limit rows back (the +1 probe row absent): the last page.
+      const rows = [
+        timelineEvent("ev-1", "2026-01-01T00:00:00.000Z"),
+        timelineEvent("ev-2", "2026-01-02T00:00:00.000Z"),
+      ];
+      mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce(rows);
+
+      const res = await get("?limit=2");
+
+      expect(res.status).toBe(200);
+      expect(res.body.events).toHaveLength(2);
+      expect(res.body.nextCursor).toBeNull();
+    });
+
+    it("a limit equal to MAX_PAGE_SIZE answers 200 and asks for one more row", async () => {
+      openTimeline();
+      mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce([]);
+
+      const res = await get(`?limit=${mockedConfig.maxPageSize}`);
+
+      expect(res.status).toBe(200);
+      expect(mockedPrisma.incidentEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: mockedConfig.maxPageSize + 1 }),
+      );
     });
 
     it("a cursor resumes after its row and the short page ends with nextCursor null", async () => {
       openTimeline();
       mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce([timelineEvent("ev-3", "2026-01-03T00:00:00.000Z")]);
-      const cursor = encodeCursor(new Date("2026-01-02T00:00:00.000Z"), "ev-2");
+      const cursor = encodeCursor("inc-1", new Date("2026-01-02T00:00:00.000Z"), "ev-2");
 
       const res = await get(`?limit=2&cursor=${cursor}`);
 
@@ -4190,21 +4224,65 @@ describe("API Routes", () => {
       expect(res.body.nextCursor).toBeNull();
     });
 
-    it("a well-formed cursor from another incident stays scoped to this incident", async () => {
+    it("a well-formed cursor from another incident answers 400 before any query", async () => {
       openTimeline();
-      mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce([]);
-      const foreign = encodeCursor(new Date("2026-05-05T00:00:00.000Z"), "ev-of-other-incident");
+      const foreign = encodeCursor("inc-2", new Date("2026-05-05T00:00:00.000Z"), "ev-of-other-incident");
 
       const res = await get(`?cursor=${foreign}`);
 
-      expect(res.status).toBe(200);
-      // The keyset position is applied INSIDE the incident and team scope, so
-      // another incident's cursor can only yield an empty page here.
-      expect(mockedPrisma.incidentEvent.findMany).toHaveBeenCalledWith(
-        timelineCursorWhere(new Date("2026-05-05T00:00:00.000Z"), "ev-of-other-incident"),
-      );
-      expect(res.body).toEqual({ events: [], nextCursor: null });
+      expect(res.status).toBe(400);
+      // The incident id is part of the cursor, so a foreign one is refused
+      // with the same body as an undecodable cursor, before any query.
+      expect(res.body).toEqual({ error: "Invalid cursor" });
+      expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
     });
+
+    it("a cursor whose timestamp does not parse answers 400 before any query", async () => {
+      openTimeline();
+
+      const res = await get(`?cursor=${rawCursor("inc-1", "x", "ev-1")}`);
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "Invalid cursor" });
+      expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
+    });
+
+    it("a cursor with an empty event id answers 400 before any query", async () => {
+      openTimeline();
+
+      const res = await get(`?cursor=${rawCursor("inc-1", "2026-01-01T00:00:00.000Z", "")}`);
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "Invalid cursor" });
+      expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
+    });
+
+    it("a cursor whose timestamp is not the exact round-tripping ISO form answers 400", async () => {
+      openTimeline();
+
+      // Parses fine but does not round-trip: the route writes .000Z
+      // milliseconds, and a non-canonical timestamp is not accepted back.
+      const res = await get(`?cursor=${rawCursor("inc-1", "2026-01-01T00:00:00Z", "ev-1")}`);
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "Invalid cursor" });
+      expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each([["-271821-04-20T00:00:00.000Z"], ["+275760-09-13T00:00:00.000Z"]])(
+      "a cursor with the extended-year timestamp %s answers 400 before any query",
+      async (timestamp) => {
+        openTimeline();
+
+        // These parse and round-trip but make the database driver throw, so
+        // the year range refuses them before the query.
+        const res = await get(`?cursor=${rawCursor("inc-1", timestamp, "x")}`);
+
+        expect(res.status).toBe(400);
+        expect(res.body).toEqual({ error: "Invalid cursor" });
+        expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
+      },
+    );
 
     it("an undecodable cursor answers 400 before any query", async () => {
       openTimeline();

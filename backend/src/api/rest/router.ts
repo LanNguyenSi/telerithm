@@ -1697,25 +1697,35 @@ writeRoute("post", "/alerts/incidents/:id/reopen", incidentTeam, async ({ req, r
   }
 });
 
-// Opaque timeline cursor: base64url of "<createdAt ISO>:<id>", the keyset of
-// the last row of the page (the order is createdAt then id, and that pair is
-// unique). A cursor that does not decode or does not split into a parseable
-// timestamp and a non-empty id is refused with 400 before any query; a
-// well-formed cursor from another incident is just a keyset position: the
-// service query stays scoped to the requested incident, so it can only yield
-// an empty or partial page of that incident's events, never another's.
-function decodeTimelineCursor(value: string): { createdAt: Date; id: string } | null {
+// Opaque timeline cursor: base64url of "<incidentId>:<createdAt ISO>:<id>",
+// the incident plus the keyset of the last row of the page (the order is
+// createdAt then id, and that pair is unique). The incident id is part of the
+// cursor, so a cursor issued for another incident is refused with the same 400
+// as an undecodable one, before any query. A timestamp is accepted only when
+// it round-trips through toISOString exactly (the canonical UTC form the route
+// itself writes) and its UTC year is between 1970 and 9999: an extended-year
+// timestamp (e.g. -271821-04-20T00:00:00.000Z) parses and round-trips but
+// makes the database driver throw, so it must not reach a query.
+function decodeTimelineCursor(value: string, incidentId: string): { createdAt: Date; id: string } | null {
   const decoded = Buffer.from(value, "base64url").toString("utf8");
-  const sep = decoded.lastIndexOf(":");
-  if (sep <= 0) return null;
-  const id = decoded.slice(sep + 1);
-  const createdAt = new Date(decoded.slice(0, sep));
-  if (id === "" || Number.isNaN(createdAt.getTime())) return null;
+  const first = decoded.indexOf(":");
+  const last = decoded.lastIndexOf(":");
+  if (first <= 0 || last <= first) return null;
+  const cursorIncidentId = decoded.slice(0, first);
+  const timestamp = decoded.slice(first + 1, last);
+  const id = decoded.slice(last + 1);
+  if (id === "") return null;
+  if (cursorIncidentId !== incidentId) return null;
+  const createdAt = new Date(timestamp);
+  if (Number.isNaN(createdAt.getTime())) return null;
+  if (createdAt.toISOString() !== timestamp) return null;
+  const year = createdAt.getUTCFullYear();
+  if (year < 1970 || year > 9999) return null;
   return { createdAt, id };
 }
 
-function encodeTimelineCursor(createdAt: Date, id: string): string {
-  return Buffer.from(`${createdAt.toISOString()}:${id}`, "utf8").toString("base64url");
+function encodeTimelineCursor(incidentId: string, createdAt: Date, id: string): string {
+  return Buffer.from(`${incidentId}:${createdAt.toISOString()}:${id}`, "utf8").toString("base64url");
 }
 
 const TIMELINE_DEFAULT_LIMIT = 100;
@@ -1743,7 +1753,7 @@ apiRouter.get(
     }
     let after: { createdAt: Date; id: string } | undefined;
     if (req.query.cursor !== undefined) {
-      const decoded = decodeTimelineCursor(String(req.query.cursor));
+      const decoded = decodeTimelineCursor(String(req.query.cursor), String(req.params.id));
       if (decoded === null) {
         res.status(400).json({ error: "Invalid cursor" });
         return;
@@ -1755,7 +1765,10 @@ apiRouter.get(
       after,
     });
     const last = events[events.length - 1];
-    const nextCursor = hasMore && last !== undefined ? encodeTimelineCursor(last.createdAt, last.id) : null;
+    const nextCursor =
+      hasMore && last !== undefined
+        ? encodeTimelineCursor(String(req.params.id), last.createdAt, last.id)
+        : null;
     res.json({ events, nextCursor });
   }),
 );

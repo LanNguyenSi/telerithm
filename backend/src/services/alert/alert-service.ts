@@ -248,9 +248,10 @@ export class AlertService {
   // Keyset page over the timeline, ordered by (createdAt, id) ascending, both
   // unique together. `limit` rows are asked for plus one, so `hasMore` is
   // known without a count query; the extra row is dropped from the result.
-  // `after` is the last row of the previous page (decoded by the route). The
-  // where clause keeps the incident and team scope, so a cursor from another
-  // incident can only filter this one's events, never leak another team's.
+  // `after` is the last row of the previous page (decoded by the route, which
+  // also refuses a cursor issued for another incident). The where clause keeps
+  // the incident and team scope anyway, so the keyset can only ever filter
+  // this incident's events, never another team's.
   async getIncidentTimeline(
     incidentId: string,
     teamId: string,

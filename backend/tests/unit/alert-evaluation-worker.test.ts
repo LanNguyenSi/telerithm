@@ -845,13 +845,17 @@ describe("AlertEvaluationWorker - log count query parameters", () => {
 // Batched rule loading
 // ---------------------------------------------------------------------------
 
-describe("AlertEvaluationWorker — batched rule loading", () => {
+describe("AlertEvaluationWorker: batched rule loading", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Nothing triggers: counts stay below every rule's threshold.
     mockMaintenanceWindowFindFirst.mockResolvedValue(null);
     mockAlertIncidentFindFirst.mockResolvedValue(null);
     stubClickhouseCount(0);
+  });
+
+  it("pins the batch size constant at 500", () => {
+    expect(ALERT_RULE_EVAL_BATCH_SIZE).toBe(500);
   });
 
   function batchOf(prefix: string, offset: number, n: number) {
@@ -903,7 +907,13 @@ describe("AlertEvaluationWorker — batched rule loading", () => {
   });
 
   it("stops paging at a short batch, asking for the rule list only once below the batch size", async () => {
-    mockAlertRuleFindMany.mockResolvedValue(batchOf("r", 0, ALERT_RULE_EVAL_BATCH_SIZE - 1));
+    let calls = 0;
+    mockAlertRuleFindMany.mockImplementation(async () => {
+      // Call bound: a stop condition that never fires would spin forever.
+      calls += 1;
+      if (calls > 10) throw new Error("findMany called too often: paging did not stop at a short batch");
+      return batchOf("r", 0, ALERT_RULE_EVAL_BATCH_SIZE - 1);
+    });
 
     await privateWorker(new AlertEvaluationWorker()).evaluate();
 
