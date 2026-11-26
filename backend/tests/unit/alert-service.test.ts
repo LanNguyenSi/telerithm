@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockAlertRuleFindMany,
+  mockAlertRuleCount,
   mockAlertRuleCreate,
   mockAlertRuleUpdate,
   mockAlertRuleDelete,
@@ -17,8 +18,10 @@ const {
   mockIncidentEventCreate,
   mockIncidentEventFindMany,
   mockTransaction,
+  mockConfig,
 } = vi.hoisted(() => ({
   mockAlertRuleFindMany: vi.fn(),
+  mockAlertRuleCount: vi.fn(),
   mockAlertRuleCreate: vi.fn(),
   mockAlertRuleUpdate: vi.fn(),
   mockAlertRuleDelete: vi.fn(),
@@ -29,12 +32,18 @@ const {
   mockIncidentEventCreate: vi.fn(),
   mockIncidentEventFindMany: vi.fn(),
   mockTransaction: vi.fn(),
+  // Mutable so a test can prove createRule reads the cap from config instead
+  // of hard-coding it; the default is the config default of 100.
+  mockConfig: { alertRulesMaxPerTeam: 100 },
 }));
+
+vi.mock("../../src/config/index.js", () => ({ config: mockConfig }));
 
 vi.mock("../../src/repositories/prisma.js", () => ({
   prisma: {
     alertRule: {
       findMany: mockAlertRuleFindMany,
+      count: mockAlertRuleCount,
       create: mockAlertRuleCreate,
       update: mockAlertRuleUpdate,
       delete: mockAlertRuleDelete,
@@ -194,6 +203,10 @@ describe("AlertService rule create, update and delete", () => {
     vi.resetAllMocks();
     // The array form of $transaction runs the already-started operations.
     mockTransaction.mockImplementation((ops: Promise<unknown>[]) => Promise.all(ops));
+    // The team has no rules unless a test says otherwise; the cap itself is
+    // the config mock's value (100 by default).
+    mockAlertRuleCount.mockResolvedValue(0);
+    mockConfig.alertRulesMaxPerTeam = 100;
     service = new AlertService();
   });
 
@@ -223,6 +236,113 @@ describe("AlertService rule create, update and delete", () => {
       },
     });
     expect(rule).toMatchObject({ id: "rule-1", condition: "LESS_THAN", windowMinutes: 15, queryType: "sql" });
+  });
+
+  it("createRule counts every rule of the team, enabled or not", async () => {
+    // The where clause carries no enabled filter: disabling rules first is not
+    // a way to dodge the per-team cap.
+    mockAlertRuleCount.mockResolvedValue(0);
+    mockAlertRuleCreate.mockResolvedValue(makePrismaRule());
+
+    await service.createRule(TEAM_ID, {
+      teamId: "ignored-body-team",
+      name: "High Error Rate",
+      query: "error",
+      condition: "GREATER_THAN",
+      threshold: 10,
+      windowMinutes: 5,
+      enabled: true,
+    });
+
+    expect(mockAlertRuleCount).toHaveBeenCalledWith({ where: { teamId: TEAM_ID } });
+  });
+
+  it("createRule accepts one rule below the cap", async () => {
+    mockConfig.alertRulesMaxPerTeam = 3;
+    mockAlertRuleCount.mockResolvedValue(2);
+    mockAlertRuleCreate.mockResolvedValue(makePrismaRule());
+
+    await expect(
+      service.createRule(TEAM_ID, {
+        teamId: "ignored-body-team",
+        name: "r",
+        query: "error",
+        condition: "GREATER_THAN",
+        threshold: 1,
+        windowMinutes: 5,
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({ id: "rule-1" });
+  });
+
+  it("createRule refuses at the cap with a ConflictError naming it, and writes nothing", async () => {
+    mockConfig.alertRulesMaxPerTeam = 3;
+    mockAlertRuleCount.mockResolvedValue(3);
+
+    const result = service.createRule(TEAM_ID, {
+      teamId: "ignored-body-team",
+      name: "r",
+      query: "error",
+      condition: "GREATER_THAN",
+      threshold: 1,
+      windowMinutes: 5,
+      enabled: true,
+    });
+
+    await expect(result).rejects.toBeInstanceOf(ConflictError);
+    await expect(result).rejects.toThrow("per-team limit is 3");
+    expect(mockAlertRuleCreate).not.toHaveBeenCalled();
+  });
+
+  it("createRule refuses above the cap too", async () => {
+    mockConfig.alertRulesMaxPerTeam = 3;
+    mockAlertRuleCount.mockResolvedValue(4);
+
+    await expect(
+      service.createRule(TEAM_ID, {
+        teamId: "ignored-body-team",
+        name: "r",
+        query: "error",
+        condition: "GREATER_THAN",
+        threshold: 1,
+        windowMinutes: 5,
+        enabled: true,
+      }),
+    ).rejects.toBeInstanceOf(ConflictError);
+    expect(mockAlertRuleCreate).not.toHaveBeenCalled();
+  });
+
+  it("createRule reads the cap from config, not a hard-coded number", async () => {
+    // A cap of 2 is far below any hard-coded default: at 2 existing rules the
+    // create must refuse and at 1 it must pass.
+    mockConfig.alertRulesMaxPerTeam = 2;
+    mockAlertRuleCount.mockResolvedValue(2);
+
+    await expect(
+      service.createRule(TEAM_ID, {
+        teamId: "ignored-body-team",
+        name: "r",
+        query: "error",
+        condition: "GREATER_THAN",
+        threshold: 1,
+        windowMinutes: 5,
+        enabled: true,
+      }),
+    ).rejects.toBeInstanceOf(ConflictError);
+
+    mockAlertRuleCount.mockResolvedValue(1);
+    mockAlertRuleCreate.mockResolvedValue(makePrismaRule());
+    await expect(
+      service.createRule(TEAM_ID, {
+        teamId: "ignored-body-team",
+        name: "r",
+        query: "error",
+        condition: "GREATER_THAN",
+        threshold: 1,
+        windowMinutes: 5,
+        enabled: true,
+      }),
+    ).resolves.toMatchObject({ id: "rule-1" });
   });
 
   it("updateRule scopes the write by id and teamId", async () => {
@@ -593,7 +713,7 @@ describe("AlertService.getIncidentTimeline", () => {
   it("calls prisma.incidentEvent.findMany with incidentId filter", async () => {
     mockIncidentEventFindMany.mockResolvedValue([]);
 
-    await service.getIncidentTimeline("inc-1", TEAM_ID);
+    await service.getIncidentTimeline("inc-1", TEAM_ID, { limit: 100 });
 
     expect(mockIncidentEventFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -602,20 +722,50 @@ describe("AlertService.getIncidentTimeline", () => {
     );
   });
 
-  it("orders events ascending by createdAt", async () => {
+  it("orders events ascending by createdAt then id", async () => {
     mockIncidentEventFindMany.mockResolvedValue([]);
 
-    await service.getIncidentTimeline("inc-1", TEAM_ID);
+    await service.getIncidentTimeline("inc-1", TEAM_ID, { limit: 100 });
 
     expect(mockIncidentEventFindMany).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: { createdAt: "asc" } }),
+      expect.objectContaining({ orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
+    );
+  });
+
+  it("asks for one row past the limit, so a full page knows whether more follows", async () => {
+    mockIncidentEventFindMany.mockResolvedValue([]);
+
+    await service.getIncidentTimeline("inc-1", TEAM_ID, { limit: 10 });
+
+    expect(mockIncidentEventFindMany).toHaveBeenCalledWith(expect.objectContaining({ take: 11 }));
+  });
+
+  it("applies the keyset where clause when a cursor row is given", async () => {
+    mockIncidentEventFindMany.mockResolvedValue([]);
+    const after = { createdAt: new Date("2024-02-01T00:00:00.000Z"), id: "ev-5" };
+
+    await service.getIncidentTimeline("inc-1", TEAM_ID, { limit: 10, after });
+
+    // The incident and team scope stay next to the keyset condition, so a
+    // cursor from another incident can only filter this incident's events.
+    expect(mockIncidentEventFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          incidentId: "inc-1",
+          incident: { rule: { teamId: TEAM_ID } },
+          OR: [
+            { createdAt: { gt: after.createdAt } },
+            { AND: [{ createdAt: after.createdAt }, { id: { gt: "ev-5" } }] },
+          ],
+        },
+      }),
     );
   });
 
   it("includes user details in the query", async () => {
     mockIncidentEventFindMany.mockResolvedValue([]);
 
-    await service.getIncidentTimeline("inc-1", TEAM_ID);
+    await service.getIncidentTimeline("inc-1", TEAM_ID, { limit: 100 });
 
     expect(mockIncidentEventFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -624,23 +774,35 @@ describe("AlertService.getIncidentTimeline", () => {
     );
   });
 
-  it("returns the raw prisma result", async () => {
-    const events = [
-      { id: "ev-1", incidentId: "inc-1", action: "ACKNOWLEDGED", user: { id: "u1", name: "A", email: "a@b.com" } },
-    ];
-    mockIncidentEventFindMany.mockResolvedValue(events);
+  it("drops the probe row and reports hasMore when one row past the limit comes back", async () => {
+    const rows = [{ id: "ev-1" }, { id: "ev-2" }, { id: "ev-3" }];
+    mockIncidentEventFindMany.mockResolvedValue(rows);
 
-    const result = await service.getIncidentTimeline("inc-1", TEAM_ID);
+    const { events, hasMore } = await service.getIncidentTimeline("inc-1", TEAM_ID, { limit: 2 });
 
-    expect(result).toEqual(events);
+    expect(events).toEqual([{ id: "ev-1" }, { id: "ev-2" }]);
+    expect(hasMore).toBe(true);
   });
 
-  it("returns empty array when there are no events", async () => {
+  it("returns the whole page with hasMore false when the probe row is absent", async () => {
+    const rows = [
+      { id: "ev-1", incidentId: "inc-1", action: "ACKNOWLEDGED", user: { id: "u1", name: "A", email: "a@b.com" } },
+    ];
+    mockIncidentEventFindMany.mockResolvedValue(rows);
+
+    const { events, hasMore } = await service.getIncidentTimeline("inc-1", TEAM_ID, { limit: 2 });
+
+    expect(events).toEqual(rows);
+    expect(hasMore).toBe(false);
+  });
+
+  it("returns an empty page when there are no events", async () => {
     mockIncidentEventFindMany.mockResolvedValue([]);
 
-    const result = await service.getIncidentTimeline("inc-1", TEAM_ID);
+    const { events, hasMore } = await service.getIncidentTimeline("inc-1", TEAM_ID, { limit: 100 });
 
-    expect(result).toEqual([]);
+    expect(events).toEqual([]);
+    expect(hasMore).toBe(false);
   });
 });
 

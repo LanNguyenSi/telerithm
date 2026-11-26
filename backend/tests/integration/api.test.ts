@@ -54,6 +54,9 @@ vi.mock("../../src/config/index.js", () => ({
     // own behaviour is pinned in tests/integration/natural-query-limit.test.ts.
     naturalQueryRateLimitWindowMs: 60_000,
     naturalQueryRateLimitMax: 1000,
+    // Per-team cap on POST /alerts/rules (config.alertRulesMaxPerTeam); the
+    // cap tests below lower it. Default mirrors the config default of 100.
+    alertRulesMaxPerTeam: 100,
     // GET /metrics and the /health checks detail gate on this; unset means
     // "endpoint disabled / status-only body". Tests set it per case.
     metricsToken: undefined as string | undefined,
@@ -116,6 +119,7 @@ vi.mock("../../src/repositories/prisma.js", () => {
     alertRule: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
+      count: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
       delete: vi.fn(),
@@ -257,6 +261,7 @@ const mockedPrisma = prisma as typeof prisma & {
   alertRule: {
     findMany: ReturnType<typeof vi.fn>;
     findUnique: ReturnType<typeof vi.fn>;
+    count: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     delete: ReturnType<typeof vi.fn>;
@@ -399,6 +404,7 @@ beforeEach(() => {
   mockedConfig.maxLookbackMs = 7 * 24 * 60 * 60 * 1000;
   mockedConfig.maxSyncRuntimeMs = 1500;
   mockedConfig.metricsToken = undefined;
+  mockedConfig.alertRulesMaxPerTeam = 100;
 
   mockedClickhouse.ping.mockResolvedValue({ success: true });
 
@@ -457,6 +463,7 @@ beforeEach(() => {
   mockedPrisma.logView.updateMany.mockResolvedValue({ count: 0 });
   mockedPrisma.alertRule.findMany.mockResolvedValue([]);
   mockedPrisma.alertRule.findUnique.mockResolvedValue(null);
+  mockedPrisma.alertRule.count.mockResolvedValue(0);
   mockedPrisma.maintenanceWindow.findUnique.mockResolvedValue(null);
   mockedPrisma.maintenanceWindow.findFirst.mockResolvedValue(null);
   mockedPrisma.alertIncident.findMany.mockResolvedValue([]);
@@ -4064,6 +4071,186 @@ describe("API Routes", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Incident timeline - pagination (limit, cursor, nextCursor, VIEWER read)
+  //
+  // This block needs a dozen more shared-app requests than the file made
+  // before, and the general per-IP limiter (200 a minute) was already nearly
+  // spent by the tests ahead of it: a later test on the shared app then
+  // answers 429. So it gets its own app instance with a fresh limiter, the
+  // same pattern as the per-route auth audit below.
+  // ---------------------------------------------------------------------------
+
+  describe("incident timeline — pagination", () => {
+    let timelineServer: Server;
+    let timelineApp: supertest.Agent;
+
+    beforeAll(async () => {
+      const { createApp } = await import("../../src/app.js");
+      timelineServer = await new Promise<Server>((resolve, reject) => {
+        const s = createApp().listen(0);
+        s.once("listening", () => resolve(s));
+        s.once("error", reject);
+      });
+      timelineApp = supertest(timelineServer);
+    });
+
+    afterAll(async () => {
+      await new Promise<void>((resolve) => timelineServer.close(() => resolve()));
+    });
+
+    const MEMBERSHIP = {
+      id: "member-1",
+      teamId: "t1",
+      userId: "user-1",
+      role: "MEMBER",
+      joinedAt: new Date("2026-03-23T00:00:00.000Z"),
+    };
+
+    // Auth for one timeline request: live session, incident of team t1, and
+    // membership of the session's user in t1.
+    function openTimeline(role = "MEMBER") {
+      mockedPrisma.session.findUnique.mockResolvedValueOnce(makeSession({ userId: "user-1" }));
+      mockedPrisma.alertIncident.findUnique.mockResolvedValueOnce({ rule: { teamId: "t1" } });
+      mockedPrisma.teamMember.findUnique.mockResolvedValueOnce({ ...MEMBERSHIP, role });
+    }
+
+    const get = (qs: string) =>
+      timelineApp.get(`/api/v1/alerts/incidents/inc-1/timeline${qs}`).set("Authorization", "Bearer sess_admin");
+
+    function timelineEvent(id: string, createdAt: string) {
+      return {
+        id,
+        incidentId: "inc-1",
+        action: "ACKNOWLEDGED",
+        createdAt: new Date(createdAt),
+        user: { id: "user-1", name: "Test User", email: "user@test.com" },
+      };
+    }
+
+    function encodeCursor(createdAt: Date, id: string): string {
+      return Buffer.from(`${createdAt.toISOString()}:${id}`, "utf8").toString("base64url");
+    }
+
+    function timelineCursorWhere(createdAt: Date, id: string) {
+      return expect.objectContaining({
+        where: {
+          incidentId: "inc-1",
+          incident: { rule: { teamId: "t1" } },
+          OR: [
+            { createdAt: { gt: createdAt } },
+            { AND: [{ createdAt }, { id: { gt: id } }] },
+          ],
+        },
+      });
+    }
+
+    it("no limit asks for the default page size plus the probe row", async () => {
+      openTimeline();
+      mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce([]);
+
+      const res = await get("");
+
+      expect(res.status).toBe(200);
+      expect(mockedPrisma.incidentEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ take: 101, orderBy: [{ createdAt: "asc" }, { id: "asc" }] }),
+      );
+      expect(res.body).toEqual({ events: [], nextCursor: null });
+    });
+
+    it("a full page returns limit events and a nextCursor over the last returned row", async () => {
+      openTimeline();
+      const rows = [
+        timelineEvent("ev-1", "2026-01-01T00:00:00.000Z"),
+        timelineEvent("ev-2", "2026-01-02T00:00:00.000Z"),
+        timelineEvent("ev-3", "2026-01-03T00:00:00.000Z"),
+      ];
+      mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce(rows);
+
+      const res = await get("?limit=2");
+
+      expect(res.status).toBe(200);
+      // The service is asked for limit + 1 rows so it can tell a last page.
+      expect(mockedPrisma.incidentEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 3 }));
+      expect(res.body.events.map((e: { id: string }) => e.id)).toEqual(["ev-1", "ev-2"]);
+      expect(res.body.nextCursor).toBe(encodeCursor(rows[1].createdAt, "ev-2"));
+    });
+
+    it("a cursor resumes after its row and the short page ends with nextCursor null", async () => {
+      openTimeline();
+      mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce([timelineEvent("ev-3", "2026-01-03T00:00:00.000Z")]);
+      const cursor = encodeCursor(new Date("2026-01-02T00:00:00.000Z"), "ev-2");
+
+      const res = await get(`?limit=2&cursor=${cursor}`);
+
+      expect(res.status).toBe(200);
+      expect(mockedPrisma.incidentEvent.findMany).toHaveBeenCalledWith(
+        timelineCursorWhere(new Date("2026-01-02T00:00:00.000Z"), "ev-2"),
+      );
+      expect(res.body.events.map((e: { id: string }) => e.id)).toEqual(["ev-3"]);
+      expect(res.body.nextCursor).toBeNull();
+    });
+
+    it("a well-formed cursor from another incident stays scoped to this incident", async () => {
+      openTimeline();
+      mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce([]);
+      const foreign = encodeCursor(new Date("2026-05-05T00:00:00.000Z"), "ev-of-other-incident");
+
+      const res = await get(`?cursor=${foreign}`);
+
+      expect(res.status).toBe(200);
+      // The keyset position is applied INSIDE the incident and team scope, so
+      // another incident's cursor can only yield an empty page here.
+      expect(mockedPrisma.incidentEvent.findMany).toHaveBeenCalledWith(
+        timelineCursorWhere(new Date("2026-05-05T00:00:00.000Z"), "ev-of-other-incident"),
+      );
+      expect(res.body).toEqual({ events: [], nextCursor: null });
+    });
+
+    it("an undecodable cursor answers 400 before any query", async () => {
+      openTimeline();
+
+      const res = await get("?cursor=not-a-cursor");
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "Invalid cursor" });
+      expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
+    });
+
+    it("a limit above MAX_PAGE_SIZE answers 400 with the search limit message", async () => {
+      openTimeline();
+
+      const res = await get("?limit=501");
+
+      expect(res.status).toBe(400);
+      expect(res.body).toEqual({ error: "limit exceeds maximum of 500" });
+      expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each([["0"], ["-1"], ["1.5"], ["abc"], [""]])(
+      "limit=%s answers 400 before any query",
+      async (raw) => {
+        openTimeline();
+
+        const res = await get(`?limit=${raw}`);
+
+        expect(res.status).toBe(400);
+        expect(res.body).toEqual({ error: "limit must be a positive integer" });
+        expect(mockedPrisma.incidentEvent.findMany).not.toHaveBeenCalled();
+      },
+    );
+
+    it("a VIEWER member of the incident's team still reads it", async () => {
+      openTimeline("VIEWER");
+      mockedPrisma.incidentEvent.findMany.mockResolvedValueOnce([timelineEvent("ev-1", "2026-01-01T00:00:00.000Z")]);
+
+      const res = await get("");
+
+      expect(res.status).toBe(200);
+      expect(res.body.events).toHaveLength(1);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Alert rules — mute/unmute authz scoping (task d290bcbc)
   // ---------------------------------------------------------------------------
 
@@ -4588,6 +4775,38 @@ describe("API Routes", () => {
         expect(mockedPrisma.alertRule.create).toHaveBeenCalledWith({
           data: expect.objectContaining({ teamId: "t1", query: "timeout", enabled: true }),
         });
+      });
+
+      it("POST answers 409 at the per-team cap, naming the cap, and writes nothing", async () => {
+        asMember("ADMIN");
+        mockedConfig.alertRulesMaxPerTeam = 3;
+        mockedPrisma.alertRule.count.mockResolvedValueOnce(3);
+
+        const res = await authed(writeApp.post("/api/v1/alerts/rules")).send({
+          teamId: "t1",
+          ...validRuleBody,
+        });
+
+        expect(res.status).toBe(409);
+        expect(res.body).toEqual({
+          error: "Team already has 3 alert rules and the per-team limit is 3; delete a rule first",
+        });
+        expect(mockedPrisma.alertRule.create).not.toHaveBeenCalled();
+      });
+
+      it("POST answers 201 one rule below the cap", async () => {
+        asMember("ADMIN");
+        mockedConfig.alertRulesMaxPerTeam = 3;
+        mockedPrisma.alertRule.count.mockResolvedValueOnce(2);
+        mockedPrisma.alertRule.create.mockResolvedValueOnce(makeRuleRow());
+
+        const res = await authed(writeApp.post("/api/v1/alerts/rules")).send({
+          teamId: "t1",
+          ...validRuleBody,
+        });
+
+        expect(res.status).toBe(201);
+        expect(mockedPrisma.alertRule.create).toHaveBeenCalled();
       });
 
       it.each([

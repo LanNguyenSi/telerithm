@@ -3,6 +3,7 @@ import type { z } from "zod";
 import type { createAlertRuleSchema, updateAlertRuleSchema } from "../../validation/schemas.js";
 import { prisma } from "../../repositories/prisma.js";
 import { createChildLogger } from "../../logger.js";
+import { config } from "../../config/index.js";
 import { ConflictError, NotFoundError } from "../../errors.js";
 
 const log = createChildLogger("alert-service");
@@ -51,7 +52,18 @@ export class AlertService {
     return rules.map(toAlertRule);
   }
 
+  // Count-then-create, so two concurrent creates can overshoot the cap by at
+  // most the requests in flight (the count and the insert are not one
+  // transaction). The count carries no enabled filter: a disabled rule still
+  // occupies the team's quota, so disabling rules first cannot dodge the cap.
   async createRule(teamId: string, input: CreateAlertRuleInput): Promise<AlertRule> {
+    const cap = config.alertRulesMaxPerTeam;
+    const existing = await prisma.alertRule.count({ where: { teamId } });
+    if (existing >= cap) {
+      throw new ConflictError(
+        `Team already has ${existing} alert rules and the per-team limit is ${cap}; delete a rule first`,
+      );
+    }
     const rule = await prisma.alertRule.create({
       data: {
         teamId,
@@ -233,11 +245,35 @@ export class AlertService {
     return incident;
   }
 
-  async getIncidentTimeline(incidentId: string, teamId: string) {
-    return prisma.incidentEvent.findMany({
-      where: { incidentId, incident: { rule: { teamId } } },
+  // Keyset page over the timeline, ordered by (createdAt, id) ascending, both
+  // unique together. `limit` rows are asked for plus one, so `hasMore` is
+  // known without a count query; the extra row is dropped from the result.
+  // `after` is the last row of the previous page (decoded by the route). The
+  // where clause keeps the incident and team scope, so a cursor from another
+  // incident can only filter this one's events, never leak another team's.
+  async getIncidentTimeline(
+    incidentId: string,
+    teamId: string,
+    options: { limit: number; after?: { createdAt: Date; id: string } },
+  ) {
+    const events = await prisma.incidentEvent.findMany({
+      where: {
+        incidentId,
+        incident: { rule: { teamId } },
+        ...(options.after
+          ? {
+              OR: [
+                { createdAt: { gt: options.after.createdAt } },
+                { AND: [{ createdAt: options.after.createdAt }, { id: { gt: options.after.id } }] },
+              ],
+            }
+          : {}),
+      },
       include: { user: { select: { id: true, name: true, email: true } } },
-      orderBy: { createdAt: "asc" },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      take: options.limit + 1,
     });
+    const hasMore = events.length > options.limit;
+    return { events: hasMore ? events.slice(0, options.limit) : events, hasMore };
   }
 }

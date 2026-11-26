@@ -1238,9 +1238,16 @@ writeRoute(
 // The team of a new rule comes from the body; PUT and DELETE take it from the
 // stored rule (loadRuleTeamId above), and the service scopes the write by
 // {id, teamId} again. A VIEWER gets 403 from writeRoute before any handler runs.
+// At config.alertRulesMaxPerTeam rules for the team, createRule throws a
+// ConflictError and the route answers 409 naming the cap; below it, 201.
 writeRoute("post", "/alerts/rules", teamFromBody(createAlertRuleSchema), async ({ res, teamId, input }) => {
-  const rule = await alertService.createRule(teamId, input);
-  res.status(201).json({ rule });
+  try {
+    const rule = await alertService.createRule(teamId, input);
+    res.status(201).json({ rule });
+  } catch (error) {
+    if (handleServiceError(error, res)) return;
+    throw error;
+  }
 });
 
 writeRoute(
@@ -1690,6 +1697,29 @@ writeRoute("post", "/alerts/incidents/:id/reopen", incidentTeam, async ({ req, r
   }
 });
 
+// Opaque timeline cursor: base64url of "<createdAt ISO>:<id>", the keyset of
+// the last row of the page (the order is createdAt then id, and that pair is
+// unique). A cursor that does not decode or does not split into a parseable
+// timestamp and a non-empty id is refused with 400 before any query; a
+// well-formed cursor from another incident is just a keyset position: the
+// service query stays scoped to the requested incident, so it can only yield
+// an empty or partial page of that incident's events, never another's.
+function decodeTimelineCursor(value: string): { createdAt: Date; id: string } | null {
+  const decoded = Buffer.from(value, "base64url").toString("utf8");
+  const sep = decoded.lastIndexOf(":");
+  if (sep <= 0) return null;
+  const id = decoded.slice(sep + 1);
+  const createdAt = new Date(decoded.slice(0, sep));
+  if (id === "" || Number.isNaN(createdAt.getTime())) return null;
+  return { createdAt, id };
+}
+
+function encodeTimelineCursor(createdAt: Date, id: string): string {
+  return Buffer.from(`${createdAt.toISOString()}:${id}`, "utf8").toString("base64url");
+}
+
+const TIMELINE_DEFAULT_LIMIT = 100;
+
 apiRouter.get(
   "/alerts/incidents/:id/timeline",
   asyncHandler(async (req, res) => {
@@ -1697,8 +1727,36 @@ apiRouter.get(
     if (userId === null) return;
     const teamId = await requireIncidentTeam(String(req.params.id), userId, res);
     if (teamId === null) return;
-    const events = await alertService.getIncidentTimeline(String(req.params.id), teamId);
-    res.json({ events });
+    let limit = TIMELINE_DEFAULT_LIMIT;
+    if (req.query.limit !== undefined) {
+      const parsed = Number(req.query.limit);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        res.status(400).json({ error: "limit must be a positive integer" });
+        return;
+      }
+      // Same message shape as the search limit clamp (enforceSearchLimits).
+      if (parsed > config.maxPageSize) {
+        res.status(400).json({ error: `limit exceeds maximum of ${config.maxPageSize}` });
+        return;
+      }
+      limit = parsed;
+    }
+    let after: { createdAt: Date; id: string } | undefined;
+    if (req.query.cursor !== undefined) {
+      const decoded = decodeTimelineCursor(String(req.query.cursor));
+      if (decoded === null) {
+        res.status(400).json({ error: "Invalid cursor" });
+        return;
+      }
+      after = decoded;
+    }
+    const { events, hasMore } = await alertService.getIncidentTimeline(String(req.params.id), teamId, {
+      limit,
+      after,
+    });
+    const last = events[events.length - 1];
+    const nextCursor = hasMore && last !== undefined ? encodeTimelineCursor(last.createdAt, last.id) : null;
+    res.json({ events, nextCursor });
   }),
 );
 

@@ -70,6 +70,7 @@ const mockConfig = vi.hoisted(() => ({
   notificationTestRateLimitMax: 3,
   naturalQueryRateLimitWindowMs: 60_000,
   naturalQueryRateLimitMax: 20,
+  alertRulesMaxPerTeam: 100,
   metricsToken: undefined as string | undefined,
   trustProxy: undefined as number | undefined,
 }));

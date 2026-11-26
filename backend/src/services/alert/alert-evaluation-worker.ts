@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../repositories/prisma.js";
 import { clickhouse } from "../../repositories/clickhouse.js";
 import { createChildLogger } from "../../logger.js";
@@ -12,6 +13,12 @@ const log = createChildLogger("alert-eval");
 function toClickHouseTimestamp(date: Date): string {
   return date.toISOString().replace("T", " ").replace("Z", "");
 }
+
+// Enabled rules are loaded in constant-size pages (keyset on id, ascending)
+// instead of one findMany, so one run cannot pull an unbounded rule list into
+// memory. Every enabled rule still gets evaluated once per run: the pages are
+// walked to the end before the run reports done.
+export const ALERT_RULE_EVAL_BATCH_SIZE = 500;
 
 export class AlertEvaluationWorker {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -44,18 +51,36 @@ export class AlertEvaluationWorker {
     this.running = true;
 
     try {
-      const rules = await prisma.alertRule.findMany({ where: { enabled: true } });
-      log.debug({ ruleCount: rules.length }, "Evaluating alert rules");
+      let ruleCount = 0;
+      let afterId: string | null = null;
+      for (;;) {
+        // Keyset paging over id, ascending. The where clause is annotated:
+        // built as a bare ternary its inference runs through this loop's
+        // cursor assignment below and TS refuses to resolve the cycle.
+        const where: Prisma.AlertRuleWhereInput = { enabled: true };
+        if (afterId !== null) where.id = { gt: afterId };
+        const rules = await prisma.alertRule.findMany({
+          where,
+          orderBy: { id: "asc" },
+          take: ALERT_RULE_EVAL_BATCH_SIZE,
+        });
+        ruleCount += rules.length;
 
-      for (const rule of rules) {
-        try {
-          await this.evaluateRule(rule);
-          alertEvaluationsTotal.inc({ status: "ok" });
-        } catch (err) {
-          alertEvaluationsTotal.inc({ status: "error" });
-          log.error({ err, ruleId: rule.id }, "Failed to evaluate rule");
+        for (const rule of rules) {
+          try {
+            await this.evaluateRule(rule);
+            alertEvaluationsTotal.inc({ status: "ok" });
+          } catch (err) {
+            alertEvaluationsTotal.inc({ status: "error" });
+            log.error({ err, ruleId: rule.id }, "Failed to evaluate rule");
+          }
         }
+
+        if (rules.length < ALERT_RULE_EVAL_BATCH_SIZE) break;
+        // Keyset cursor: the next page starts after this page's last id.
+        afterId = rules[rules.length - 1].id;
       }
+      log.debug({ ruleCount }, "Evaluating alert rules");
     } catch (err) {
       log.error({ err }, "Failed to load alert rules");
     } finally {

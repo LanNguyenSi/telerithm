@@ -32,12 +32,12 @@ All endpoints are under `/api/v1`. Bearer-token auth applies except `/health`, `
 | `POST` | `/query/natural`                  | Translate NL to query plan        |
 | `POST` | `/stream/ticket`                  | One-time ticket for `/stream/logs`; body `{ "teamId" }`, any team role may ask, answer `201` `{ "ticket", "expiresInSeconds": 60 }` with `Cache-Control: no-store` (see Live tail below) |
 | `GET`  | `/stream/logs`                    | SSE live tail; authenticated by the `Authorization` header or a one-time `?ticket=`; closed by the server within 15 seconds once the user is no longer `ACTIVE` or no longer a member of the team; at most `MAX_STREAMS_PER_USER` (default 5) open streams per user and backend process, the next one answers `429` (see Live tail below) |
-| `GET`, `POST` | `/alerts/rules`            | Alert rules (list, create)        |
+| `GET`, `POST` | `/alerts/rules`            | Alert rules (list; create, capped per team, see Alert rule create limit below) |
 | `PUT`, `DELETE` | `/alerts/rules/:id`      | Update (partial), delete an alert rule |
 | `POST` | `/alerts/rules/:id/mute`, `/alerts/rules/:id/unmute` | Mute and unmute a rule |
 | `GET`  | `/alerts/incidents`               | Alert incidents (list)            |
 | `POST` | `/alerts/incidents/:id/acknowledge`, `/resolve`, `/reopen` | Incident workflow |
-| `GET`  | `/alerts/incidents/:id/timeline`  | Incident event timeline           |
+| `GET`  | `/alerts/incidents/:id/timeline`  | Incident event timeline (paginated, see Incident timeline pagination below) |
 | `GET`  | `/dashboards/overview`            | Overview dashboard                |
 | `GET`  | `/issues`, `/issues/:id`          | Grouped errors                    |
 | `PUT`  | `/issues/:id`                     | Update an issue (status, assignment) |
@@ -81,6 +81,14 @@ An incident is `OPEN`, `ACKNOWLEDGED` or `RESOLVED`. The actions only apply from
 Any other combination answers `409` with a message such as `Cannot acknowledge an incident that is RESOLVED; acknowledge applies to OPEN incidents`, and writes nothing (no status change, no timeline event). `409` is also the answer when another request changed the status between the check and the write. An unknown id answers `404`, and so does an incident of a team the caller does not belong to (same body), so the answer does not reveal whether an id exists. A member of the incident's team without write access (`VIEWER`) gets `403`.
 
 The by-id read routes follow the same rule: `GET /issues/:id`, `GET /alerts/incidents/:id/timeline` and `GET /query/jobs/:id` answer a caller who is not a member of the owning team with the `404` and the body they give for an unknown id (`Issue not found`, `Incident not found`, `Job not found`), and so does `DELETE /invites/:id` (`Invite not found`). A member of the invite's team who may not manage invites gets the same `404` and body (`Invite not found`), so the status does not reveal inside a team either whether an invite exists. If the membership lookup itself fails, the route answers `500`, never `403` or `404`.
+
+### Alert rule create limit
+
+`POST /alerts/rules` enforces a per-team cap on the number of alert rules: a team may own at most `ALERT_RULES_MAX_PER_TEAM` rules (default 100; see [configuration.md](configuration.md)). The count covers every rule of the team, enabled or disabled, so disabling rules does not open room for new ones. At the cap the route answers `409` with `{ "error": "Team already has 100 alert rules and the per-team limit is 100; delete a rule first" }` and creates nothing; below the cap the answer is the unchanged `201`. The check counts and then creates in two steps (not one transaction), so concurrent creates can overshoot the cap by at most the requests in flight. Teams that already have more rules than the cap keep them and stay listed; only new creates are refused until they delete. `GET /alerts/rules` stays unpaginated: the cap bounds what a team can own, so the list is bounded too.
+
+### Incident timeline pagination
+
+`GET /alerts/incidents/:id/timeline` answers one page of the incident's events, ordered by `createdAt` then `id` ascending, as `{ "events": [...], "nextCursor": "..." }`. `limit` (query parameter) is 1 to `MAX_PAGE_SIZE` (default 100); above it the answer is `400 {"error":"limit exceeds maximum of 500"}` (the same message shape as the search limits) and a non-integer or non-positive `limit` answers `400 {"error":"limit must be a positive integer"}`. `nextCursor` is an opaque string, `null` on the last page; send it back as `?cursor=` to get the events after the last row of the page. A `cursor` that does not decode answers `400 {"error":"Invalid cursor"}`; a well-formed cursor that came from another incident is only a position: the query stays scoped to the requested incident and its team, so such a cursor yields at most an empty page of this incident's events, never another incident's. Authz is unchanged: any member of the incident's team may read it (a `VIEWER` included), and a non-member gets the same `404` as for an unknown id.
 
 ### Sessions
 
