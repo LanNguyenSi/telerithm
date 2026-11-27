@@ -337,6 +337,23 @@ describe("Select highlight across re-renders", () => {
     expect(activeDescendant(trigger)).toBe(idOf("Alpha"));
   });
 
+  it("resets the highlight to the selected option of the new list when the values change while open", () => {
+    const onChange = vi.fn();
+    const ui = (opts: { value: string; label: string }[]) => (
+      <Select aria-label="Letter" options={opts} value="c" onChange={onChange} />
+    );
+    const { rerender } = render(ui([OPTIONS[0], OPTIONS[2]]));
+    const trigger = screen.getByRole("combobox", { name: "Letter" });
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    expect(activeDescendant(trigger)).toBe(idOf("Charlie"));
+
+    // The selected option moves from index 1 to index 2 of the list.
+    rerender(ui([{ value: "z", label: "Zulu" }, OPTIONS[0], OPTIONS[2]]));
+
+    expect(activeDescendant(trigger)).toBe(idOf("Charlie"));
+    expect(idOf("Charlie")).toMatch(/-opt-2$/);
+  });
+
   it("resets the highlight when a disabled flag changes", () => {
     const { trigger, rerender } = renderControlled([...OPTIONS]);
     fireEvent.keyDown(trigger, { key: "Enter" });
