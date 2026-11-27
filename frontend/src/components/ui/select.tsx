@@ -55,6 +55,13 @@ export function Select({
 
   const selectedOption = useMemo(() => options.find((option) => option.value === value), [options, value]);
 
+  // Callers often pass a fresh array on every render (`[...OPTIONS]`). The
+  // highlight must only reset when what the list can show changes, so the
+  // effect below keys on the values and disabled flags, not the identity.
+  const optionsKey = JSON.stringify(options.map((option) => [option.value, Boolean(option.disabled)]));
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
   // Position dropdown relative to button
   useEffect(() => {
     if (!isOpen || !buttonRef.current) return;
@@ -84,10 +91,11 @@ export function Select({
 
   useEffect(() => {
     if (!isOpen) return;
-    const selectedIndex = options.findIndex((option) => option.value === value && !option.disabled);
-    const firstEnabledIndex = options.findIndex((option) => !option.disabled);
+    const current = optionsRef.current;
+    const selectedIndex = current.findIndex((option) => option.value === value && !option.disabled);
+    const firstEnabledIndex = current.findIndex((option) => !option.disabled);
     setFocusedIndex(selectedIndex >= 0 ? selectedIndex : firstEnabledIndex);
-  }, [isOpen, options, value]);
+  }, [isOpen, optionsKey, value]);
 
   useEffect(() => {
     if (!isOpen || focusedIndex < 0) return;
@@ -121,6 +129,9 @@ export function Select({
       aria-label={ariaLabel}
       aria-labelledby={ariaLabelledby ?? (ariaLabel ? undefined : buttonId)}
       tabIndex={-1}
+      // Keep focus on the trigger while the pointer is down in the list, so the
+      // trigger's blur (which closes the list) never fires before the click.
+      onMouseDown={(event) => event.preventDefault()}
       style={dropdownStyle}
       className={clsx(
         "max-h-60 overflow-y-auto rounded-xl border border-line bg-white/95 p-1 shadow-2xl backdrop-blur-sm dark:bg-slate-900/95",
@@ -178,6 +189,13 @@ export function Select({
         aria-expanded={isOpen}
         aria-activedescendant={isOpen && focusedIndex >= 0 && options[focusedIndex] ? optionId(focusedIndex) : undefined}
         onClick={() => { if (!disabled) setIsOpen((open) => !open); }}
+        onBlur={(event) => {
+          // Focus leaving the combobox (Tab, Shift+Tab, programmatic blur) closes
+          // the list without committing; focus moving into the list does not.
+          const next = event.relatedTarget as Node | null;
+          if (next && listboxRef.current?.contains(next)) return;
+          setIsOpen(false);
+        }}
         onKeyDown={(event) => {
           if (disabled) return;
           switch (event.key) {
