@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { Select } from "@/components/ui/select";
 
 // jsdom has no layout engine and no scrollIntoView; the component calls it to
@@ -188,5 +188,163 @@ describe("Select accessible name", () => {
     const { trigger } = renderSelect({ disabled: true });
     fireEvent.keyDown(trigger, { key: "ArrowDown" });
     expect(screen.queryByRole("listbox")).toBeNull();
+  });
+});
+
+describe("Select focus leaving the combobox", () => {
+  function renderBetweenButtons(props: Partial<React.ComponentProps<typeof Select>> = {}) {
+    const onChange = vi.fn();
+    render(
+      <>
+        <button type="button">Before</button>
+        <Select aria-label="Letter" options={OPTIONS} value="a" onChange={onChange} {...props} />
+        <button type="button">After</button>
+      </>,
+    );
+    return {
+      onChange,
+      trigger: screen.getByRole("combobox", { name: "Letter" }),
+      before: screen.getByRole("button", { name: "Before" }),
+      after: screen.getByRole("button", { name: "After" }),
+    };
+  }
+
+  function expectClosedWithoutCommit(trigger: HTMLElement, onChange: ReturnType<typeof vi.fn>) {
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).not.toHaveAttribute("aria-activedescendant");
+    expect(onChange).not.toHaveBeenCalled();
+  }
+
+  it("closes when Tab moves focus on and does not swallow the Tab", () => {
+    const { onChange, trigger, after } = renderBetweenButtons();
+    act(() => trigger.focus());
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+    // fireEvent returns false when a handler called preventDefault.
+    expect(fireEvent.keyDown(trigger, { key: "Tab" })).toBe(true);
+    act(() => after.focus());
+
+    expect(document.activeElement).toBe(after);
+    expectClosedWithoutCommit(trigger, onChange);
+  });
+
+  it("closes when Shift+Tab moves focus back and does not swallow the Tab", () => {
+    const { onChange, trigger, before } = renderBetweenButtons();
+    act(() => trigger.focus());
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+
+    expect(fireEvent.keyDown(trigger, { key: "Tab", shiftKey: true })).toBe(true);
+    act(() => before.focus());
+
+    expect(document.activeElement).toBe(before);
+    expectClosedWithoutCommit(trigger, onChange);
+  });
+
+  it("closes on a programmatic blur", () => {
+    const { onChange, trigger } = renderBetweenButtons();
+    act(() => trigger.focus());
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    act(() => trigger.blur());
+    expectClosedWithoutCommit(trigger, onChange);
+  });
+
+  it("keeps the list open while focus moves into the listbox", () => {
+    const { trigger } = renderBetweenButtons();
+    act(() => trigger.focus());
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const listbox = screen.getByRole("listbox");
+    fireEvent.blur(trigger, { relatedTarget: listbox });
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("still selects with the mouse when the trigger blur fires before the click", () => {
+    const { onChange, trigger } = renderBetweenButtons();
+    act(() => trigger.focus());
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const delta = within(screen.getByRole("listbox")).getByRole("option", { name: "Delta" });
+
+    fireEvent.mouseDown(delta);
+    fireEvent.blur(trigger, { relatedTarget: delta });
+    fireEvent.click(delta);
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith("d");
+    expect(screen.queryByRole("listbox")).toBeNull();
+  });
+
+  it("keeps focus on the trigger when the pointer goes down in the list", () => {
+    const { trigger } = renderBetweenButtons();
+    act(() => trigger.focus());
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    const listbox = screen.getByRole("listbox");
+    const delta = within(listbox).getByRole("option", { name: "Delta" });
+
+    // fireEvent returns false when a handler called preventDefault, which is
+    // what stops the browser from moving focus off the trigger.
+    expect(fireEvent.mouseDown(delta)).toBe(false);
+    expect(fireEvent.mouseDown(listbox)).toBe(false);
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+  });
+});
+
+describe("Select highlight across re-renders", () => {
+  function renderControlled(options: typeof OPTIONS) {
+    const onChange = vi.fn();
+    const ui = (opts: typeof OPTIONS) => (
+      <Select aria-label="Letter" options={opts} value="a" onChange={onChange} />
+    );
+    const { rerender } = render(ui(options));
+    const trigger = screen.getByRole("combobox", { name: "Letter" });
+    return { trigger, rerender: (opts: typeof OPTIONS) => rerender(ui(opts)) };
+  }
+
+  const idOf = (name: string) => within(screen.getByRole("listbox")).getByRole("option", { name }).id;
+
+  it("keeps the moved highlight when the parent passes a new but equal array", () => {
+    const { trigger, rerender } = renderControlled([...OPTIONS]);
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(activeDescendant(trigger)).toBe(idOf("Charlie"));
+
+    rerender(OPTIONS.map((option) => ({ ...option })));
+    rerender([...OPTIONS]);
+
+    expect(activeDescendant(trigger)).toBe(idOf("Charlie"));
+  });
+
+  it("keeps the moved highlight when only labels change", () => {
+    const { trigger, rerender } = renderControlled([...OPTIONS]);
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    rerender(OPTIONS.map((option) => ({ ...option, label: `${option.label}!` })));
+    expect(activeDescendant(trigger)).toBe(idOf("Charlie!"));
+  });
+
+  it("resets the highlight when the option values change", () => {
+    const { trigger, rerender } = renderControlled([...OPTIONS]);
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(activeDescendant(trigger)).toBe(idOf("Charlie"));
+
+    rerender([...OPTIONS, { value: "e", label: "Echo" }]);
+
+    expect(activeDescendant(trigger)).toBe(idOf("Alpha"));
+  });
+
+  it("resets the highlight when a disabled flag changes", () => {
+    const { trigger, rerender } = renderControlled([...OPTIONS]);
+    fireEvent.keyDown(trigger, { key: "Enter" });
+    fireEvent.keyDown(trigger, { key: "ArrowDown" });
+    expect(activeDescendant(trigger)).toBe(idOf("Charlie"));
+
+    rerender(OPTIONS.map((option) => (option.value === "d" ? { ...option, disabled: true } : option)));
+
+    expect(activeDescendant(trigger)).toBe(idOf("Alpha"));
   });
 });
