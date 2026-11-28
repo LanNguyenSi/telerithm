@@ -41,6 +41,8 @@ vi.mock("../../src/config/index.js", () => ({
     maxSyncRuntimeMs: 1500,
     notificationTestRateLimitWindowMs: 200,
     notificationTestRateLimitMax: 3,
+    streamTicketRateLimitWindowMs: 60_000,
+    streamTicketRateLimitMax: 1000,
     naturalQueryRateLimitWindowMs: 1000,
     naturalQueryRateLimitMax: 5,
     // One trusted hop, so an X-Forwarded-For value moves req.ip: used by

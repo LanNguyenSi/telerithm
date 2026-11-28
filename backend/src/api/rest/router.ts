@@ -127,7 +127,7 @@ function rateLimitHandler(message: string, windowMs: number) {
 // Resolves the caller and attaches the user id to the request BEFORE any
 // downstream middleware runs, unlike requireAuth (called inline inside each
 // handler, after other middleware has already executed). This runs in front
-// of notificationTestLimiter so the limiter can key on the resolved user
+// of notificationTestLimiter and streamTicketLimiter so the limiter can key on the resolved user
 // id instead of the raw bearer token: keying on the token would let one
 // user multiply their budget for free by logging in again (N sessions = N
 // budgets, and sessions are cheap to create), and a limiter mounted before
@@ -147,7 +147,7 @@ async function requireAuthMiddleware(req: Request, res: Response, next: NextFunc
 // Keys the limiter per authenticated user, not per session token: two
 // sessions of the same user (e.g. two logged-in devices) intentionally
 // share one budget. The caller is resolved first, ahead of the limiter, by
-// requireAuthMiddleware (notificationTestLimiter) or naturalQueryRateGate
+// requireAuthMiddleware (notificationTestLimiter, streamTicketLimiter) or naturalQueryRateGate
 // (naturalQueryLimiter); both settle an invalid caller before counting, so
 // req.userId is set by the time this runs. The IP fallback is defensive
 // only, unreachable while every mount keeps its resolver in front.
@@ -169,6 +169,21 @@ const notificationTestLimiter = rateLimit({
     "Too many test notifications, try again later",
     config.notificationTestRateLimitWindowMs,
   ),
+});
+
+// Per-user limit for POST /stream/ticket. The route needs a session and a
+// team membership but is otherwise bounded only by the global per-IP limiter,
+// and every ticket is a Redis write, so one user with several sessions or
+// tabs could issue tickets without a per-user budget. Keyed by perUserKey like
+// notificationTestLimiter, behind requireAuthMiddleware. Configurable via env
+// (STREAM_TICKET_RATE_LIMIT_WINDOW_MS / _MAX); see docs/api.md.
+const streamTicketLimiter = rateLimit({
+  windowMs: config.streamTicketRateLimitWindowMs,
+  limit: config.streamTicketRateLimitMax,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: perUserKey,
+  handler: rateLimitHandler("Too many stream tickets, try again later", config.streamTicketRateLimitWindowMs),
 });
 
 // Per-user limit for the LLM-backed natural-language query routes:
@@ -2409,6 +2424,8 @@ apiRouter.get(
 // GET /stream/logs?ticket=... without a header.
 apiRouter.post(
   "/stream/ticket",
+  requireAuthMiddleware,
+  streamTicketLimiter,
   asyncHandler(async (req, res) => {
     const session = await requireAuthSession(req, res);
     if (session === null) return;
