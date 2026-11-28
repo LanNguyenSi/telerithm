@@ -49,6 +49,8 @@ vi.mock("../../src/config/index.js", () => ({
     // make 2 calls total with the "sess_admin" token, under this limit of 3.
     notificationTestRateLimitWindowMs: 200,
     notificationTestRateLimitMax: 3,
+    streamTicketRateLimitWindowMs: 60_000,
+    streamTicketRateLimitMax: 1000,
     // Loose on purpose: the few natural-query requests this file makes as
     // one user must never trip the natural-query limiter. The limiter's
     // own behaviour is pinned in tests/integration/natural-query-limit.test.ts.

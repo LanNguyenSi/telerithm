@@ -526,6 +526,10 @@ export const openApiSpec = {
           400: { description: "teamId missing" },
           401: { description: "Missing or invalid bearer token" },
           403: { description: "Not a member of the team" },
+          429: {
+            description:
+              "Too many ticket requests from this user (STREAM_TICKET_RATE_LIMIT_MAX per STREAM_TICKET_RATE_LIMIT_WINDOW_MS, default 30 per 60 seconds, shared by all the user's sessions); body { error, retryAfter }, with a Retry-After header",
+          },
         },
       },
     },

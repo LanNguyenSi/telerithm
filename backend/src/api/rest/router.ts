@@ -171,6 +171,21 @@ const notificationTestLimiter = rateLimit({
   ),
 });
 
+// Per-user limit for POST /stream/ticket. The route needs a session and a
+// team membership but is otherwise bounded only by the global per-IP limiter,
+// and every ticket is a Redis write, so one user with several sessions or
+// tabs could issue tickets without a per-user budget. Keyed by perUserKey like
+// notificationTestLimiter, behind requireAuthMiddleware. Configurable via env
+// (STREAM_TICKET_RATE_LIMIT_WINDOW_MS / _MAX); see docs/api.md.
+const streamTicketLimiter = rateLimit({
+  windowMs: config.streamTicketRateLimitWindowMs,
+  limit: config.streamTicketRateLimitMax,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  keyGenerator: perUserKey,
+  handler: rateLimitHandler("Too many stream tickets, try again later", config.streamTicketRateLimitWindowMs),
+});
+
 // Per-user limit for the LLM-backed natural-language query routes:
 // POST /query/natural, POST /logs/search with queryType "natural" and
 // GET /logs?queryType=natural. All three can reach the model
@@ -2409,6 +2424,8 @@ apiRouter.get(
 // GET /stream/logs?ticket=... without a header.
 apiRouter.post(
   "/stream/ticket",
+  requireAuthMiddleware,
+  streamTicketLimiter,
   asyncHandler(async (req, res) => {
     const session = await requireAuthSession(req, res);
     if (session === null) return;

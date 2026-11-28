@@ -30,6 +30,8 @@ All configuration is environment-driven. The backend validates its env vars on s
 | `SEED_DEMO_DATA`     | unset                         | Set to `true` to allow demo seeding when `NODE_ENV=production` (otherwise seeding is skipped in production) |
 | `NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS` | `300000` (5 minutes) | Rate-limit window for `POST /subscriptions/:id/test`, see [api.md](api.md) |
 | `NOTIFICATION_TEST_RATE_LIMIT_MAX`       | `5`                  | Max `POST /subscriptions/:id/test` requests per window, per caller               |
+| `STREAM_TICKET_RATE_LIMIT_WINDOW_MS`     | `60000` (1 minute)   | Rate-limit window for `POST /stream/ticket` (one bucket per user), see [api.md](api.md) |
+| `STREAM_TICKET_RATE_LIMIT_MAX`           | `30`                 | Max `POST /stream/ticket` requests per window, per caller; each live tail connection, reconnects included, uses one |
 | `NATURAL_QUERY_RATE_LIMIT_WINDOW_MS`     | `60000` (1 minute)   | Rate-limit window for natural-language queries (`POST /query/natural` and the `queryType: "natural"` paths of `POST /logs/search` and `GET /logs`, one shared bucket per user), see [api.md](api.md) |
 | `NATURAL_QUERY_RATE_LIMIT_MAX`           | `20`                 | Max natural-language queries per window, per caller; SQL search is not counted   |
 | `ALERT_RULES_MAX_PER_TEAM` | `100`                  | Max alert rules one team may own (enabled and disabled count). `POST /alerts/rules` answers `409` at the cap; teams already above it keep their rules and cannot create until they delete. See [api.md](api.md#alert-rule-create-limit). A value below 1 or a non-numeric value fails startup |

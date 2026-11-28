@@ -208,6 +208,10 @@ const configSchema = z.object({
   // (currently POST /subscriptions/:id/test). Default: 5 requests / 5 minutes.
   notificationTestRateLimitWindowMs: coercedIntSchema.positive().default(5 * 60_000),
   notificationTestRateLimitMax: coercedIntSchema.positive().default(5),
+  // Per-user limit on POST /stream/ticket (one ticket per live tail connection,
+  // reconnects included). Default: 30 requests / 60 seconds.
+  streamTicketRateLimitWindowMs: coercedIntSchema.positive().default(60_000),
+  streamTicketRateLimitMax: coercedIntSchema.positive().default(30),
   // Per-user limit for the LLM-backed natural-language query routes
   // (POST /query/natural, plus POST /logs/search and GET /logs when
   // queryType is "natural"); all three share one bucket per user.
@@ -281,6 +285,8 @@ function loadConfig(): Config {
     maxStreamsPerUser: process.env.MAX_STREAMS_PER_USER,
     notificationTestRateLimitWindowMs: process.env.NOTIFICATION_TEST_RATE_LIMIT_WINDOW_MS,
     notificationTestRateLimitMax: process.env.NOTIFICATION_TEST_RATE_LIMIT_MAX,
+    streamTicketRateLimitWindowMs: process.env.STREAM_TICKET_RATE_LIMIT_WINDOW_MS,
+    streamTicketRateLimitMax: process.env.STREAM_TICKET_RATE_LIMIT_MAX,
     naturalQueryRateLimitWindowMs: process.env.NATURAL_QUERY_RATE_LIMIT_WINDOW_MS,
     naturalQueryRateLimitMax: process.env.NATURAL_QUERY_RATE_LIMIT_MAX,
     alertRulesMaxPerTeam: process.env.ALERT_RULES_MAX_PER_TEAM,

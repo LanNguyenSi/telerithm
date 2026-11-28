@@ -55,6 +55,8 @@ vi.mock("../../src/config/index.js", () => ({
     asyncJobsMaxInflight: 100,
     notificationTestRateLimitWindowMs: 200,
     notificationTestRateLimitMax: 3,
+    streamTicketRateLimitWindowMs: 60_000,
+    streamTicketRateLimitMax: 1000,
     maxStreamsPerUser: 5,
   },
 }));
