@@ -4,7 +4,7 @@ import supertest from "supertest";
 
 // The per-user rate limit on POST /stream/ticket (streamTicketLimiter in
 // backend/src/api/rest/router.ts). The limit is mocked to 3 requests per
-// 60 s. Each test uses its own user ids, so a bucket never carries over from
+// 45 s. Each test uses its own user ids, so a bucket never carries over from
 // one test to the next (the window is longer than the run). Own app instance,
 // to stay clear of the shared app's rate-limit budget.
 
@@ -43,7 +43,7 @@ vi.mock("../../src/config/index.js", () => ({
     asyncJobsMaxInflight: 100,
     notificationTestRateLimitWindowMs: 60_000,
     notificationTestRateLimitMax: 1000,
-    streamTicketRateLimitWindowMs: 60_000,
+    streamTicketRateLimitWindowMs: 45_000,
     streamTicketRateLimitMax: 3,
     naturalQueryRateLimitWindowMs: 60_000,
     naturalQueryRateLimitMax: 1000,
@@ -157,9 +157,12 @@ describe("POST /stream/ticket per-user rate limit", () => {
     const res = await ticket("tok_shape");
     expect(res.status).toBe(429);
     expect(res.body.error).toBe("Too many stream tickets, try again later");
-    expect(res.body.retryAfter).toBeGreaterThanOrEqual(1);
-    expect(res.body.retryAfter).toBeLessThanOrEqual(60);
+    // The configured window (45 s) is distinct from every other window in the
+    // mocked config, so a limiter built on another window fails here.
+    expect(res.body.retryAfter).toBeGreaterThan(40);
+    expect(res.body.retryAfter).toBeLessThanOrEqual(45);
     expect(res.headers["retry-after"]).toBeDefined();
+    expect(res.headers["ratelimit-policy"]).toBe("3;w=45");
   });
 
   it("keeps the handler's answers under the limit: 201 no-store, 400 and 403", async () => {

@@ -127,7 +127,7 @@ function rateLimitHandler(message: string, windowMs: number) {
 // Resolves the caller and attaches the user id to the request BEFORE any
 // downstream middleware runs, unlike requireAuth (called inline inside each
 // handler, after other middleware has already executed). This runs in front
-// of notificationTestLimiter so the limiter can key on the resolved user
+// of notificationTestLimiter and streamTicketLimiter so the limiter can key on the resolved user
 // id instead of the raw bearer token: keying on the token would let one
 // user multiply their budget for free by logging in again (N sessions = N
 // budgets, and sessions are cheap to create), and a limiter mounted before
@@ -147,7 +147,7 @@ async function requireAuthMiddleware(req: Request, res: Response, next: NextFunc
 // Keys the limiter per authenticated user, not per session token: two
 // sessions of the same user (e.g. two logged-in devices) intentionally
 // share one budget. The caller is resolved first, ahead of the limiter, by
-// requireAuthMiddleware (notificationTestLimiter) or naturalQueryRateGate
+// requireAuthMiddleware (notificationTestLimiter, streamTicketLimiter) or naturalQueryRateGate
 // (naturalQueryLimiter); both settle an invalid caller before counting, so
 // req.userId is set by the time this runs. The IP fallback is defensive
 // only, unreachable while every mount keeps its resolver in front.
